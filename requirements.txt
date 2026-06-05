@@ -1,0 +1,24 @@
+# GaussianImageDistribution - Baseline CLIP Fine-tuning Requirements
+# PyTorch and torchvision
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Transformers for CLIP model
+transformers>=4.30.0
+
+# Data processing
+pandas>=2.0.0
+pyarrow>=12.0.0
+Pillow>=9.5.0
+
+# Progress bar
+tqdm>=4.65.0
+
+# Numerical computing
+numpy>=1.24.0
+
+# Metrics and evaluation
+scikit-learn>=1.2.0
+
+# Optional: accelerate for distributed training
+# accelerate>=0.20.0

@@ -1,0 +1,44 @@
+# Dataset
+TrainDatasets/
+
+# Pre-trained models
+PreTrainedModels/
+
+# Output
+outputs/
+
+# Logs
+logs/
+
+# Checkpoints
+checkpoints/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Environment
+.env
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Jupyter
+.ipynb_checkpoints/
