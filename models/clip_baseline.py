@@ -35,8 +35,7 @@ class CLIPFineTuneBaseline(nn.Module):
         self,
         model_path: Optional[str] = None,
         freeze_image: bool = False,
-        freeze_text: bool = False,
-        projection_dim: int = 512
+        freeze_text: bool = False
     ):
         """
         Initialize CLIP fine-tuning model.
@@ -46,14 +45,12 @@ class CLIPFineTuneBaseline(nn.Module):
                       (uses config.CLIP_VIT_L_14_PATH if None)
             freeze_image: Whether to freeze image encoder
             freeze_text: Whether to freeze text encoder
-            projection_dim: Projection dimension for features (default: 512)
         """
         super().__init__()
 
         self.model_path = model_path or str(config.CLIP_VIT_L_14_PATH)
         self.freeze_image = freeze_image
         self.freeze_text = freeze_text
-        self.projection_dim = projection_dim
 
         # Load CLIP model from local files
         logger.info(f"Loading CLIP model from: {self.model_path}")
@@ -78,11 +75,7 @@ class CLIPFineTuneBaseline(nn.Module):
             self._freeze_text_encoder()
             logger.info("Text encoder frozen")
 
-        # Get embedding dimensions
-        self.image_dim = self.clip_model.config.vision_config.projection_dim
-        self.text_dim = self.clip_model.config.text_config.projection_dim
-
-        logger.info(f"CLIP model loaded: image_dim={self.image_dim}, text_dim={self.text_dim}")
+        logger.info(f"CLIP model loaded: freeze_image={freeze_image}, freeze_text={freeze_text}")
 
     def _freeze_image_encoder(self) -> None:
         """Freeze the image encoder parameters."""
@@ -219,7 +212,7 @@ class CLIPFineTuneBaseline(nn.Module):
         Returns:
             Dictionary with input_ids and attention_mask
         """
-        return self.processor(text=texts, return_tensors="pt", padding=True, truncation=True)
+        return self.processor(text=texts, return_tensors="pt", padding=True, truncation=True, max_length=77)
 
     def get_similarity(
         self,
@@ -280,7 +273,7 @@ class CLIPFineTuneBaseline(nn.Module):
             path: Path to checkpoint
             strict: Whether to strictly enforce state dict matching
         """
-        state = torch.load(path, map_location="cpu")
+        state = torch.load(path, map_location="cpu", weights_only=False)
         self.load_state_dict(state["model_state_dict"], strict=strict)
         logger.info(f"Model loaded from: {path}")
 

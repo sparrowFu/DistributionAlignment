@@ -2,7 +2,7 @@
 GaussianImageDistribution - CLIP Baseline Training Script
 
 This script trains the CLIP baseline model on image-caption pairs
-using contrastive learning.
+using contrastive learning with full fine-tuning.
 
 Usage:
     python scripts/train_clip_baseline.py
@@ -11,7 +11,6 @@ Usage:
 
 import argparse
 import random
-import time
 from pathlib import Path
 from typing import Dict
 
@@ -30,7 +29,6 @@ from models.clip_baseline import CLIPFineTuneBaseline
 from losses.clip_losses import clip_contrastive_loss
 from utils.logger import get_logger, log_exception
 from utils.seed import set_seed
-from utils.io_utils import save_checkpoint
 
 
 # Setup logger
@@ -62,8 +60,12 @@ def parse_args():
     # Model arguments
     parser.add_argument("--freeze-image", action="store_true",
                         help="Freeze image encoder")
+    parser.add_argument("--no-freeze-image", action="store_false", dest="freeze_image",
+                        help="Don't freeze image encoder")
     parser.add_argument("--freeze-text", action="store_true",
                         help="Freeze text encoder")
+    parser.add_argument("--no-freeze-text", action="store_false", dest="freeze_text",
+                        help="Don't freeze text encoder")
 
     # System arguments
     parser.add_argument("--seed", type=int, default=config.SEED,
@@ -88,12 +90,24 @@ def parse_args():
     return parser.parse_args()
 
 
+def filter_none_collate(batch):
+    """Collate function that filters out None values."""
+    filtered = [item for item in batch if item is not None]
+    if not filtered:
+        return None
+
+    return {
+        "image": [item["image"] for item in filtered],
+        "captions": [item["captions"] for item in filtered],
+    }
+
+
 def train_epoch(
     model: CLIPFineTuneBaseline,
     dataloader: DataLoader,
     optimizer: optim.Optimizer,
     temperature: float,
-    device: str,
+    device: torch.device,
     epoch: int
 ) -> Dict[str, float]:
     """Train for one epoch."""
@@ -101,7 +115,6 @@ def train_epoch(
 
     total_loss = 0.0
     total_acc = 0.0
-    num_batches = 0
 
     pbar = tqdm(dataloader, desc=f"Epoch {epoch + 1}")
 
@@ -110,8 +123,8 @@ def train_epoch(
             continue
 
         # Get data - PIL images and text lists
-        pil_images = batch["image"]  # List[PIL.Image]
-        captions_list = batch["captions"]  # List[List[str]]
+        pil_images = batch["image"]
+        captions_list = batch["captions"]
 
         # Randomly select one caption per image
         selected_captions = [random.choice(captions) for captions in captions_list]
@@ -143,19 +156,28 @@ def train_epoch(
         # Accumulate metrics
         total_loss += loss_info["loss"]
         total_acc += loss_info["acc"]
-        num_batches += 1
 
         # Update progress bar
         pbar.set_postfix({
-            "loss": f"{loss_info['loss']:.4f}",
-            "acc": f"{loss_info['acc']:.4f}"
+            'loss': f"{loss_info['loss']:.4f}",
+            'acc': f"{loss_info['acc']:.4f}"
         })
 
-    # Compute averages
-    avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
-    avg_acc = total_acc / num_batches if num_batches > 0 else 0.0
+        # Log every N batches
+        if (batch_idx + 1) % 10 == 0:
+            logger.debug(
+                f"Epoch {epoch + 1}, Batch {batch_idx + 1}/{len(dataloader)}, "
+                f"Loss: {loss_info['loss']:.4f}, Acc: {loss_info['acc']:.4f}"
+            )
 
-    return {"loss": avg_loss, "acc": avg_acc}
+    # Compute averages
+    num_batches = len(dataloader)
+    metrics = {
+        'loss': total_loss / num_batches,
+        'acc': total_acc / num_batches,
+    }
+
+    return metrics
 
 
 @torch.no_grad()
@@ -163,14 +185,13 @@ def evaluate(
     model: CLIPFineTuneBaseline,
     dataloader: DataLoader,
     temperature: float,
-    device: str
+    device: torch.device
 ) -> Dict[str, float]:
     """Evaluate the model."""
     model.eval()
 
     total_loss = 0.0
     total_acc = 0.0
-    num_batches = 0
 
     pbar = tqdm(dataloader, desc="Evaluating")
 
@@ -206,17 +227,17 @@ def evaluate(
 
         total_loss += loss_info["loss"]
         total_acc += loss_info["acc"]
-        num_batches += 1
 
-        pbar.set_postfix({
-            "loss": f"{loss_info['loss']:.4f}",
-            "acc": f"{loss_info['acc']:.4f}"
-        })
+        pbar.set_postfix({'loss': f"{loss_info['loss']:.4f}"})
 
-    avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
-    avg_acc = total_acc / num_batches if num_batches > 0 else 0.0
+    # Compute averages
+    num_batches = len(dataloader)
+    metrics = {
+        'loss': total_loss / num_batches,
+        'acc': total_acc / num_batches,
+    }
 
-    return {"loss": avg_loss, "acc": avg_acc}
+    return metrics
 
 
 def main():
@@ -250,7 +271,7 @@ def main():
     logger.info(f"Model created with {model.num_trainable_parameters():,} trainable parameters")
 
     # Create optimizer
-    optimizer = optim.AdamW(
+    optimizer = optim.Adam(
         model.trainable_parameters(),
         lr=args.lr,
         weight_decay=args.weight_decay
@@ -343,20 +364,6 @@ def main():
     logger.info(f"Final model saved to {final_checkpoint_path}")
     logger.info(f"Best validation loss: {best_val_loss:.4f}")
     logger.info("Training completed!")
-
-
-def filter_none_collate(batch):
-    """Collate function that filters out None values."""
-    filtered = [item for item in batch if item is not None]
-    if not filtered:
-        return None
-
-    return {
-        "image": [item["image"] for item in filtered],
-        "captions": [item["captions"] for item in filtered],
-        "image_path": [item["image_path"] for item in filtered],
-        "image_name": [item["image_name"] for item in filtered],
-    }
 
 
 if __name__ == "__main__":

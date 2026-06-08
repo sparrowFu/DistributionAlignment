@@ -445,7 +445,7 @@ class DistributionAlignmentModel(nn.Module):
             path: Path to checkpoint
             strict: Whether to strictly enforce state dict matching
         """
-        state = torch.load(path, map_location="cpu")
+        state = torch.load(path, map_location="cpu", weights_only=False)
         self.load_state_dict(state["model_state_dict"], strict=strict)
         logger.info(f"Model loaded from: {path}")
 

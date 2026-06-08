@@ -1,11 +1,13 @@
 """
-GaussianImageDistribution - CLIP Baseline Evaluation Script
+GaussianImageDistribution - CLIP Zero-Shot Evaluation Script
 
-This script evaluates the CLIP baseline model using image-text retrieval.
+This script evaluates the CLIP Zero-Shot baseline using image-text retrieval
+with Recall@K metrics. No training required - uses frozen CLIP directly.
+Uses a random subset of samples for efficiency.
 
 Usage:
-    python scripts/evaluate_clip_baseline.py
-    python main.py --task eval_clip_baseline
+    python scripts/evaluate_clip_zero_shot.py
+    python main.py --task eval_clip_zero_shot
 """
 
 import argparse
@@ -13,6 +15,7 @@ import json
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
@@ -26,29 +29,22 @@ from utils.logger import get_logger, log_exception
 from utils.seed import set_seed
 
 
-logger = get_logger("eval_clip_baseline", config.EVAL_CLIP_BASELINE_LOG_PATH)
+logger = get_logger("eval_clip_zero_shot", config.LOG_DIR / "evaluate_clip_zero_shot.log")
 
 
 def parse_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Evaluate CLIP Baseline Model")
+    parser = argparse.ArgumentParser(description="Evaluate CLIP Zero-Shot Baseline")
 
-    parser.add_argument("--checkpoint", type=str, default=None,
-                        help="Path to checkpoint (uses best checkpoint if None)")
-    parser.add_argument("--captions-path", type=str, default=None,
-                        help="Path to captions file (uses config default if None)")
-    parser.add_argument("--images-dir", type=str, default=None,
-                        help="Path to images directory (uses config default if None)")
-    parser.add_argument("--batch-size", type=int, default=config.EVAL_BATCH_SIZE,
-                        help="Evaluation batch size")
-    parser.add_argument("--recall-at-k", type=int, nargs="+", default=config.RECALL_AT_K,
-                        help="Recall@K values to compute")
+    parser.add_argument("--captions-path", type=str, default=None)
+    parser.add_argument("--images-dir", type=str, default=None)
+    parser.add_argument("--batch-size", type=int, default=config.EVAL_BATCH_SIZE)
+    parser.add_argument("--recall-at-k", type=int, nargs="+", default=config.RECALL_AT_K)
     parser.add_argument("--num-samples", type=int, default=5000,
                         help="Number of samples to evaluate (default: 5000)")
-    parser.add_argument("--output-path", type=str, default=None,
-                        help="Output JSON path (uses config default if None)")
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
-                        help="Device to use")
+    parser.add_argument("--output-path", type=str, default=None)
+    parser.add_argument("--device", type=str,
+                        default="cuda" if torch.cuda.is_available() else "cpu")
 
     return parser.parse_args()
 
@@ -58,7 +54,6 @@ def filter_none_collate(batch):
     filtered = [item for item in batch if item is not None]
     if not filtered:
         return None
-
     return {
         "image": [item["image"] for item in filtered],
         "captions": [item["captions"] for item in filtered],
@@ -70,9 +65,9 @@ def extract_features(
     model: CLIPFineTuneBaseline,
     dataloader: DataLoader,
     device: torch.device,
-    num_samples: int = None
+    num_samples: int = None,
 ):
-    """Extract image and text features."""
+    """Extract normalized CLIP image and text features (no training)."""
     model.eval()
 
     all_img_features = []
@@ -84,34 +79,31 @@ def extract_features(
         if batch is None:
             continue
 
-        # Get data - PIL images and text lists
         pil_images = batch["image"]
         caption_lists = batch["captions"]
 
-        # Use first caption for evaluation consistency
-        selected_captions = [captions[0] for captions in caption_lists]
-
-        # Process with CLIP processor
         pixel_values = model.process_images(pil_images).to(device)
+
+        selected_captions = [captions[0] for captions in caption_lists]
         text_inputs = model.process_text(selected_captions)
         input_ids = text_inputs["input_ids"].to(device)
         attention_mask = text_inputs["attention_mask"].to(device)
 
-        # Forward pass
-        image_features, text_features = model(
+        # Extract normalized features from frozen CLIP
+        img_feat, text_feat = model(
             images=pixel_values,
             input_ids=input_ids,
-            attention_mask=attention_mask
+            attention_mask=attention_mask,
+            normalize=True,
         )
 
-        all_img_features.append(image_features.cpu())
-        all_text_features.append(text_features.cpu())
+        all_img_features.append(img_feat.cpu())
+        all_text_features.append(text_feat.cpu())
 
         sample_count += len(pil_images)
         if num_samples and sample_count >= num_samples:
             break
 
-    # Concatenate features
     img_features = torch.cat(all_img_features, dim=0)
     text_features = torch.cat(all_text_features, dim=0)
 
@@ -120,7 +112,6 @@ def extract_features(
         text_features = text_features[:num_samples]
 
     logger.info(f"Features shape: Images {img_features.shape}, Texts {text_features.shape}")
-
     return img_features, text_features
 
 
@@ -128,23 +119,16 @@ def compute_recall_chunked(
     img_features: torch.Tensor,
     text_features: torch.Tensor,
     k_values: list,
-    chunk_size: int = 1000
+    chunk_size: int = 1000,
 ) -> dict:
-    """Compute Recall@K in chunks to avoid OOM on large matrices."""
+    """Compute Recall@K in chunks to avoid OOM."""
     n = img_features.shape[0]
-
-    # Track hits for each k
     hits = {k: 0 for k in k_values}
 
     logger.info(f"Computing Recall@K with chunk_size={chunk_size}...")
-
     for start in tqdm(range(0, n, chunk_size), desc="Recall chunks"):
         end = min(start + chunk_size, n)
-
-        # Compute partial similarity matrix: [chunk, n]
         sim_chunk = torch.matmul(img_features[start:end], text_features.T)
-
-        # Get rankings
         ranked_indices = torch.argsort(sim_chunk, dim=1, descending=True)
 
         for k in k_values:
@@ -155,7 +139,7 @@ def compute_recall_chunked(
 
     recall_metrics = {}
     for k in k_values:
-        recall_metrics[f'recall@{k}'] = hits[k] / n
+        recall_metrics[f"recall@{k}"] = hits[k] / n
         logger.info(f"Recall@{k}: {recall_metrics[f'recall@{k}']:.4f}")
 
     return recall_metrics
@@ -164,17 +148,14 @@ def compute_recall_chunked(
 def main():
     """Main evaluation function."""
     args = parse_args()
-
-    # Set random seed
     set_seed(config.SEED)
 
-    # Load model
-    checkpoint_path = args.checkpoint or str(config.CLIP_BASELINE_BEST_CKPT)
-    logger.info(f"Loading model from {checkpoint_path}")
-
-    model = CLIPFineTuneBaseline()
-
-    model.load(checkpoint_path)
+    # Use frozen CLIP baseline (no checkpoint needed)
+    logger.info("Loading frozen CLIP model (zero-shot, no training)...")
+    model = CLIPFineTuneBaseline(
+        freeze_image=True,
+        freeze_text=True,
+    )
     model = model.to(args.device)
 
     # Load dataset
@@ -184,47 +165,41 @@ def main():
     dataset = ImageCaptionDataset(
         captions_path=captions_path,
         images_dir=images_dir,
-        num_captions=config.NUM_CAPTIONS
+        num_captions=config.NUM_CAPTIONS,
     )
 
-    # Use subset for evaluation
     num_samples = args.num_samples
     if num_samples and num_samples < len(dataset):
-        # Use fixed seed for reproducible subset
         generator = torch.Generator().manual_seed(config.SEED)
         indices = torch.randperm(len(dataset), generator=generator)[:num_samples].tolist()
         dataset = Subset(dataset, indices)
         logger.info(f"Using {num_samples} samples (random subset)")
 
     dataloader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=config.NUM_WORKERS,
-        collate_fn=filter_none_collate
+        dataset, batch_size=args.batch_size, shuffle=False,
+        num_workers=config.NUM_WORKERS, collate_fn=filter_none_collate,
     )
-
     logger.info(f"Dataset loaded: {len(dataset)} samples")
 
     # Extract features
     img_features, text_features = extract_features(
-        model, dataloader, args.device, args.num_samples
+        model, dataloader, args.device, args.num_samples,
     )
 
-    # Compute Recall@K (chunked to avoid OOM)
+    # Compute Recall@K
     recall_metrics = compute_recall_chunked(
-        img_features, text_features, args.recall_at_k, chunk_size=1000
+        img_features, text_features, args.recall_at_k, chunk_size=1000,
     )
 
     # Save results
-    output_path = args.output_path or str(config.CLIP_BASELINE_EVAL_RESULTS_PATH)
+    output_path = args.output_path or str(config.OUTPUT_DIR / "clip_zero_shot_eval_results.json")
     results = {
-        'checkpoint': str(checkpoint_path),
-        'num_samples': len(dataset) if not args.num_samples else args.num_samples,
-        'metrics': recall_metrics
+        "model": "CLIP ViT-L/14 (zero-shot, frozen)",
+        "num_samples": args.num_samples,
+        "metrics": recall_metrics,
     }
 
-    with open(output_path, 'w') as f:
+    with open(output_path, "w") as f:
         json.dump(results, f, indent=2)
 
     logger.info(f"Results saved to {output_path}")

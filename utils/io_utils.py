@@ -107,7 +107,7 @@ def load_checkpoint(file_path: Path, device: str = "cpu") -> Dict[str, Any]:
     if not file_path.exists():
         raise FileNotFoundError(f"Checkpoint file not found: {file_path}")
 
-    state = torch.load(file_path, map_location=device)
+    state = torch.load(file_path, map_location=device, weights_only=False)
     return state
 
 

@@ -119,7 +119,7 @@ NUM_WORKERS = 0
 # CLIP Baseline Training Hyperparameters
 # =============================================================================
 # Number of training epochs
-CLIP_BASELINE_EPOCHS = 10
+CLIP_BASELINE_EPOCHS = 1
 
 # Training batch size
 CLIP_BASELINE_BATCH_SIZE = 16
@@ -186,6 +186,153 @@ DIST_ALIGN_DISTRIBUTION_MERGING = "moment_matching"  # Method: "moment_matching"
 DIST_ALIGN_KL_TYPE = "symmetric"      # KL divergence type: "symmetric", "forward", "reverse", "wasserstein"
 DIST_ALIGN_TARGET_VARIANCE = 0.5      # Target variance for regularization
 DIST_ALIGN_USE_VARIANCE_LOSS = False # Whether to use variance regularization loss
+
+
+# =============================================================================
+# VQA Dataset Paths
+# =============================================================================
+VQA_TRAIN_QUESTIONS = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "train" / "questions.txt"
+VQA_TRAIN_IMG_FILENAMES = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "train" / "img_filenames.txt"
+VQA_TRAIN_TYPES = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "train" / "types.txt"
+VQA_TRAIN_ANSWERS = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "train" / "answers.txt"
+
+VQA_TEST_QUESTIONS = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "test" / "questions_filtered.txt"
+VQA_TEST_IMG_FILENAMES = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "test" / "img_filenames_filtered.txt"
+VQA_TEST_TYPES = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "test" / "types_filtered.txt"
+VQA_TEST_ANSWERS = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "test" / "answers_filtered.txt"
+
+# VQA images share the same directory as MSCOCO captions
+VQA_IMAGES_DIR = IMAGES_DIR
+
+# =============================================================================
+# VQA Training Hyperparameters
+# =============================================================================
+VQA_EPOCHS = 10
+VQA_BATCH_SIZE = 32
+VQA_LR = 1e-3
+VQA_WEIGHT_DECAY = 1e-4
+VQA_HIDDEN_DIM = 512
+VQA_DROPOUT = 0.1
+VQA_NUM_WORKERS = 0
+VQA_VAL_SPLIT = 0.1
+VQA_EARLY_STOP_PATIENCE = 3
+
+# =============================================================================
+# VQA Checkpoint Paths
+# =============================================================================
+VQA_DIST_ALIGN_CKPT = CHECKPOINT_DIR / "vqa_dist_align_best.pt"
+VQA_CLIP_BASELINE_CKPT = CHECKPOINT_DIR / "vqa_clip_baseline_best.pt"
+VQA_FREEZE_ALIGN_CKPT = CHECKPOINT_DIR / "vqa_freeze_align_best.pt"
+VQA_FATE_CKPT = CHECKPOINT_DIR / "vqa_fate_best.pt"
+VQA_CLIP_AST_CKPT = CHECKPOINT_DIR / "vqa_clip_ast_best.pt"
+VQA_LOG_PATH = LOG_DIR / "train_vqa.log"
+
+
+# =============================================================================
+# Freeze-Align Model Configuration
+# =============================================================================
+# Checkpoint paths
+FREEZE_ALIGN_BEST_CKPT = CHECKPOINT_DIR / "freeze_align_best.pt"
+FREEZE_ALIGN_LAST_CKPT = CHECKPOINT_DIR / "freeze_align_last.pt"
+
+# Log paths
+TRAIN_FREEZE_ALIGN_LOG_PATH = LOG_DIR / "train_freeze_align.log"
+EVAL_FREEZE_ALIGN_LOG_PATH = LOG_DIR / "evaluate_freeze_align.log"
+
+# Evaluation results path
+FREEZE_ALIGN_EVAL_RESULTS_PATH = OUTPUT_DIR / "freeze_align_eval_results.json"
+
+# Model hyperparameters
+FREEZE_ALIGN_PROJ_DIM = 256        # Bottleneck dimension for projectors
+FREEZE_ALIGN_DROPOUT_RATE = 0.1    # Dropout rate for projectors
+FREEZE_ALIGN_STRUCTURE_WEIGHT = 0.1  # Weight for STRUCTURE regularization loss
+
+# Stage 1 training hyperparameters (image-caption alignment)
+FREEZE_ALIGN_EPOCHS = 10
+FREEZE_ALIGN_BATCH_SIZE = 32
+FREEZE_ALIGN_LR = 1e-3             # Learning rate for projectors
+FREEZE_ALIGN_WEIGHT_DECAY = 1e-4
+FREEZE_ALIGN_TEMPERATURE = 0.07
+
+
+# =============================================================================
+# FATE Model Configuration
+# =============================================================================
+# Checkpoint paths
+FATE_BEST_CKPT = CHECKPOINT_DIR / "fate_best.pt"
+FATE_LAST_CKPT = CHECKPOINT_DIR / "fate_last.pt"
+
+# Log paths
+TRAIN_FATE_LOG_PATH = LOG_DIR / "train_fate.log"
+EVAL_FATE_LOG_PATH = LOG_DIR / "evaluate_fate.log"
+
+# Evaluation results path
+FATE_EVAL_RESULTS_PATH = OUTPUT_DIR / "fate_eval_results.json"
+
+# Model hyperparameters
+FATE_BOTTLENECK_DIM = 64   # Bottleneck dimension for projector
+FATE_ALPHA = 0.001          # Scaling factor for vision perturbation
+
+# Stage 1 training hyperparameters (image-caption alignment)
+FATE_EPOCHS = 10
+FATE_BATCH_SIZE = 32
+FATE_LR = 2e-3              # Learning rate for projector (paper: SGD lr=0.002)
+FATE_WEIGHT_DECAY = 1e-4
+FATE_TEMPERATURE = 0.07
+
+
+# =============================================================================
+# CLIP-AST Model Configuration
+# =============================================================================
+# Checkpoint paths
+CLIP_AST_BEST_CKPT = CHECKPOINT_DIR / "clip_ast_best.pt"
+CLIP_AST_LAST_CKPT = CHECKPOINT_DIR / "clip_ast_last.pt"
+
+# Log paths
+TRAIN_CLIP_AST_LOG_PATH = LOG_DIR / "train_clip_ast.log"
+EVAL_CLIP_AST_LOG_PATH = LOG_DIR / "evaluate_clip_ast.log"
+
+# Evaluation results path
+CLIP_AST_EVAL_RESULTS_PATH = OUTPUT_DIR / "clip_ast_eval_results.json"
+
+# Model hyperparameters
+CLIP_AST_SELECT_RATIO = 0.05  # Fraction of CLIP params to select for fine-tuning
+CLIP_AST_CLIP_LR = 1e-6       # Learning rate for selected CLIP params
+CLIP_AST_WARMUP_EPOCHS = 1    # Warmup epochs before parameter selection
+
+# Stage 1 training hyperparameters (image-caption alignment)
+CLIP_AST_EPOCHS = 10
+CLIP_AST_BATCH_SIZE = 32
+CLIP_AST_WEIGHT_DECAY = 1e-4
+CLIP_AST_TEMPERATURE = 0.07
+
+# =============================================================================
+# LLM VQA Evaluation Configuration
+# =============================================================================
+# API configuration file path (stores API keys, never commit this file)
+API_CONFIG_PATH = PROJECT_ROOT / "api_config.json"
+
+# LLM VQA evaluation log
+EVAL_LLM_VQA_LOG_PATH = LOG_DIR / "eval_llm_vqa.log"
+EVALUATE_LLM_VQA_LOG_PATH = LOG_DIR / "evaluate_llm_vqa.log"
+
+# LLM VQA results output (per model)
+LLM_VQA_RESULT_PATHS = {
+    "qwen3.5-4b": OUTPUT_DIR / "llm_vqa_qwen3.5-4b_results.json",
+    "kimi-k2.5": OUTPUT_DIR / "llm_vqa_kimi-k2.5_results.json",
+}
+
+# Models to evaluate
+LLM_MODELS = {
+    "Qwen/Qwen3.5-4B": "qwen3.5-4b",
+    "Pro/moonshotai/Kimi-K2.5": "kimi-k2.5",
+}
+
+# API call settings
+LLM_API_DELAY = 0.5          # Delay between API calls (seconds)
+LLM_API_MAX_RETRIES = 3      # Maximum retries for failed API calls
+LLM_API_RETRY_WAIT = 5       # Base wait time for retries (seconds)
+LLM_API_TIMEOUT = 60         # Request timeout (seconds)
 
 
 # =============================================================================

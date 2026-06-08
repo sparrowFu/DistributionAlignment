@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 import sys
@@ -45,8 +45,8 @@ def parse_args():
                         help="Evaluation batch size")
     parser.add_argument("--recall-at-k", type=int, nargs="+", default=config.RECALL_AT_K,
                         help="Recall@K values to compute")
-    parser.add_argument("--num-samples", type=int, default=None,
-                        help="Number of samples to evaluate (None for all)")
+    parser.add_argument("--num-samples", type=int, default=5000,
+                        help="Number of samples to evaluate (default: 5000)")
     parser.add_argument("--output-path", type=str, default=None,
                         help="Output JSON path (uses config default if None)")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
@@ -68,18 +68,18 @@ def filter_none_collate(batch):
 
 
 @torch.no_grad()
-def evaluate(
+def extract_features(
     model: DistributionAlignmentModel,
     dataloader: DataLoader,
-    recall_at_k: list,
     device: torch.device,
     num_samples: int = None
 ):
-    """Evaluate model and compute Recall@K metrics."""
+    """Extract image and text distribution features."""
     model.eval()
 
     all_img_features = []
     all_text_features = []
+    sample_count = 0
 
     logger.info("Extracting features...")
     for batch in tqdm(dataloader):
@@ -112,10 +112,11 @@ def evaluate(
         # Forward pass
         outputs = model(pixel_values, input_ids, attention_mask)
 
-        all_img_features.append(outputs['img_mu'].cpu())  # Use distribution mean
+        all_img_features.append(outputs['img_mu'].cpu())
         all_text_features.append(outputs['text_mu'].cpu())
 
-        if num_samples and len(all_img_features) * dataloader.batch_size >= num_samples:
+        sample_count += batch_size
+        if num_samples and sample_count >= num_samples:
             break
 
     # Concatenate features
@@ -128,16 +129,43 @@ def evaluate(
 
     logger.info(f"Features shape: Images {img_features.shape}, Texts {text_features.shape}")
 
-    # Compute similarity matrix
-    similarity_matrix = torch.matmul(img_features, text_features.T)
+    return img_features, text_features
 
-    # Compute Recall@K
-    logger.info("Computing Recall@K...")
+
+def compute_recall_chunked(
+    img_features: torch.Tensor,
+    text_features: torch.Tensor,
+    k_values: list,
+    chunk_size: int = 1000
+) -> dict:
+    """Compute Recall@K in chunks to avoid OOM on large matrices."""
+    n = img_features.shape[0]
+    max_k = max(k_values)
+
+    # Track hits for each k
+    hits = {k: 0 for k in k_values}
+
+    logger.info(f"Computing Recall@K with chunk_size={chunk_size}...")
+
+    for start in tqdm(range(0, n, chunk_size), desc="Recall chunks"):
+        end = min(start + chunk_size, n)
+
+        # Compute partial similarity matrix: [chunk, n]
+        sim_chunk = torch.matmul(img_features[start:end], text_features.T)
+
+        # Get rankings
+        ranked_indices = torch.argsort(sim_chunk, dim=1, descending=True)
+
+        for k in k_values:
+            top_k = ranked_indices[:, :k]
+            gt = torch.arange(start, end).unsqueeze(1)
+            is_in_top_k = (top_k == gt).any(dim=1)
+            hits[k] += is_in_top_k.sum().item()
+
     recall_metrics = {}
-    for k in recall_at_k:
-        recall_at_k_value = compute_recall_at_k(similarity_matrix, k)
-        recall_metrics[f'recall@{k}'] = recall_at_k_value
-        logger.info(f"Recall@{k}: {recall_at_k_value:.4f}")
+    for k in k_values:
+        recall_metrics[f'recall@{k}'] = hits[k] / n
+        logger.info(f"Recall@{k}: {recall_metrics[f'recall@{k}']:.4f}")
 
     return recall_metrics
 
@@ -171,6 +199,15 @@ def main():
         num_captions=config.NUM_CAPTIONS
     )
 
+    # Use subset for evaluation
+    num_samples = args.num_samples
+    if num_samples and num_samples < len(dataset):
+        # Use fixed seed for reproducible subset
+        generator = torch.Generator().manual_seed(config.SEED)
+        indices = torch.randperm(len(dataset), generator=generator)[:num_samples].tolist()
+        dataset = Subset(dataset, indices)
+        logger.info(f"Using {num_samples} samples (random subset)")
+
     dataloader = DataLoader(
         dataset,
         batch_size=args.batch_size,
@@ -181,10 +218,14 @@ def main():
 
     logger.info(f"Dataset loaded: {len(dataset)} samples")
 
-    # Evaluate
-    metrics = evaluate(
-        model, dataloader, args.recall_at_k,
-        args.device, args.num_samples
+    # Extract features
+    img_features, text_features = extract_features(
+        model, dataloader, args.device, args.num_samples
+    )
+
+    # Compute Recall@K (chunked to avoid OOM)
+    recall_metrics = compute_recall_chunked(
+        img_features, text_features, args.recall_at_k, chunk_size=1000
     )
 
     # Save results
@@ -192,7 +233,7 @@ def main():
     results = {
         'checkpoint': str(checkpoint_path),
         'num_samples': len(dataset) if not args.num_samples else args.num_samples,
-        'metrics': metrics
+        'metrics': recall_metrics
     }
 
     with open(output_path, 'w') as f:

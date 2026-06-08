@@ -34,12 +34,22 @@ Available tasks:
   eval_clip_baseline     Evaluate CLIP baseline model
   train_dist_align       Train distribution alignment model
   eval_dist_align        Evaluate distribution alignment model
+  train_freeze_align     Train Freeze-Align model
+  eval_freeze_align      Evaluate Freeze-Align model
+  train_fate             Train FATE model
+  eval_fate              Evaluate FATE model
+  train_clip_ast         Train CLIP-AST model
+  eval_clip_ast          Evaluate CLIP-AST model
+  eval_clip_zero_shot    Evaluate CLIP Zero-Shot baseline
+  train_vqa              Train VQA classification head
+  eval_llm_vqa           Query LLMs on VQA test set (API calls)
+  evaluate_llm_vqa       Compute LLM VQA metrics (answer mapping + accuracy)
 
 Examples:
-  python main.py --task train_clip_baseline
-  python main.py --task eval_clip_baseline
-  python main.py --task train_dist_align
-  python main.py --task eval_dist_align
+  python main.py --task train_freeze_align
+  python main.py --task eval_freeze_align
+  python main.py --task train_vqa --model-type freeze_align
+  python main.py --task train_vqa --model-type clip_zero_shot
         """
     )
 
@@ -47,11 +57,19 @@ Examples:
         "--task",
         type=str,
         required=True,
-        choices=["train_clip_baseline", "eval_clip_baseline", "train_dist_align", "eval_dist_align"],
+        choices=["train_clip_baseline", "eval_clip_baseline", "train_dist_align", "eval_dist_align", "train_freeze_align", "eval_freeze_align", "train_fate", "eval_fate", "train_clip_ast", "eval_clip_ast", "eval_clip_zero_shot", "train_vqa", "eval_llm_vqa", "evaluate_llm_vqa"],
         help="Task to run"
     )
 
     # Pass-through arguments for scripts
+    parser.add_argument(
+        "--model-type",
+        type=str,
+        default=None,
+        choices=["dist_align", "clip_baseline", "freeze_align", "fate", "clip_ast", "clip_zero_shot"],
+        help="Base model type for VQA training"
+    )
+
     parser.add_argument(
         "--captions-path",
         type=str,
@@ -102,6 +120,20 @@ Examples:
     parser.add_argument("--output-path", type=str, default=None,
                         help="Output JSON path (for evaluation)")
 
+    # LLM VQA evaluation arguments
+    parser.add_argument("--models", type=str, nargs="+", default=None,
+                        help="LLM model shortnames to evaluate (qwen3.5-4b, kimi-k2.5)")
+    parser.add_argument("--api-config", type=str, default=None,
+                        help="Path to API configuration JSON file")
+    parser.add_argument("--start-idx", type=int, default=None,
+                        help="Start index in test set")
+    parser.add_argument("--end-idx", type=int, default=None,
+                        help="End index in test set (-1 for all)")
+    parser.add_argument("--delay", type=float, default=None,
+                        help="Delay between API calls in seconds")
+    parser.add_argument("--max-retries", type=int, default=None,
+                        help="Maximum retries for failed API calls")
+
     return parser.parse_args()
 
 
@@ -118,6 +150,10 @@ def run_python_script(script_path: Path, args: argparse.Namespace) -> int:
     """
     # Build command list
     cmd = [sys.executable, str(script_path)]
+
+    # Add model type (for VQA)
+    if args.model_type:
+        cmd.extend(["--model-type", args.model_type])
 
     # Add relevant arguments
     if args.captions_path:
@@ -160,6 +196,20 @@ def run_python_script(script_path: Path, args: argparse.Namespace) -> int:
         cmd.extend(["--num-samples", str(args.num_samples)])
     if args.output_path:
         cmd.extend(["--output-path", args.output_path])
+
+    # LLM VQA evaluation arguments
+    if args.models:
+        cmd.extend(["--models"] + args.models)
+    if args.api_config:
+        cmd.extend(["--api-config", args.api_config])
+    if args.start_idx is not None:
+        cmd.extend(["--start-idx", str(args.start_idx)])
+    if args.end_idx is not None:
+        cmd.extend(["--end-idx", str(args.end_idx)])
+    if args.delay is not None:
+        cmd.extend(["--delay", str(args.delay)])
+    if args.max_retries is not None:
+        cmd.extend(["--max-retries", str(args.max_retries)])
 
     logger.info(f"Running: {' '.join(cmd)}")
 
@@ -209,6 +259,36 @@ def main():
     elif args.task == "eval_dist_align":
         script_path = scripts_dir / "evaluate_dist_align.py"
         logger.info("Starting distribution alignment evaluation...")
+    elif args.task == "train_freeze_align":
+        script_path = scripts_dir / "train_freeze_align.py"
+        logger.info("Starting Freeze-Align training...")
+    elif args.task == "eval_freeze_align":
+        script_path = scripts_dir / "evaluate_freeze_align.py"
+        logger.info("Starting Freeze-Align evaluation...")
+    elif args.task == "train_fate":
+        script_path = scripts_dir / "train_fate.py"
+        logger.info("Starting FATE training...")
+    elif args.task == "eval_fate":
+        script_path = scripts_dir / "evaluate_fate.py"
+        logger.info("Starting FATE evaluation...")
+    elif args.task == "train_clip_ast":
+        script_path = scripts_dir / "train_clip_ast.py"
+        logger.info("Starting CLIP-AST training...")
+    elif args.task == "eval_clip_ast":
+        script_path = scripts_dir / "evaluate_clip_ast.py"
+        logger.info("Starting CLIP-AST evaluation...")
+    elif args.task == "eval_clip_zero_shot":
+        script_path = scripts_dir / "evaluate_clip_zero_shot.py"
+        logger.info("Starting CLIP Zero-Shot evaluation...")
+    elif args.task == "train_vqa":
+        script_path = scripts_dir / "train_vqa.py"
+        logger.info("Starting VQA fine-tuning training...")
+    elif args.task == "eval_llm_vqa":
+        script_path = scripts_dir / "eval_llm_vqa.py"
+        logger.info("Starting LLM VQA evaluation...")
+    elif args.task == "evaluate_llm_vqa":
+        script_path = scripts_dir / "evaluate_llm_vqa.py"
+        logger.info("Starting LLM VQA metrics computation...")
     else:
         logger.error(f"Unknown task: {args.task}")
         return 1
