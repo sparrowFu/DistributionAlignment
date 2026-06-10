@@ -24,7 +24,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
-from data.caption_dataset import ImageCaptionDataset
+from data.caption_dataset import ImageCaptionDataset, filter_none_collate
 from models.clip_baseline import CLIPFineTuneBaseline
 from losses.clip_losses import clip_contrastive_loss
 from utils.logger import get_logger, log_exception
@@ -88,18 +88,6 @@ def parse_args():
                         help="Checkpoint directory (uses config default if None)")
 
     return parser.parse_args()
-
-
-def filter_none_collate(batch):
-    """Collate function that filters out None values."""
-    filtered = [item for item in batch if item is not None]
-    if not filtered:
-        return None
-
-    return {
-        "image": [item["image"] for item in filtered],
-        "captions": [item["captions"] for item in filtered],
-    }
 
 
 def train_epoch(

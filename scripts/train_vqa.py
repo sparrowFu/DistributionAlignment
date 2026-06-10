@@ -1,15 +1,12 @@
 """
 GaussianImageDistribution - VQA Fine-tuning Training Script
 
-This script fine-tunes a VQA classification head on top of a frozen (or
-partially frozen) base model. Supports multiple model types with unified
-training and evaluation interfaces.
+This script fine-tunes a VQA classification head on top of a frozen base model.
+Supports multiple model types with unified training and evaluation interfaces.
 
 Usage:
     python scripts/train_vqa.py --model-type dist_align
-    python scripts/train_vqa.py --model-type freeze_align
-    python scripts/train_vqa.py --model-type fate
-    python scripts/train_vqa.py --model-type clip_ast
+    python scripts/train_vqa.py --model-type clip_baseline
     python scripts/train_vqa.py --model-type clip_zero_shot
     python main.py --task train_vqa --model-type dist_align
 """
@@ -93,15 +90,9 @@ def parse_args():
     parser.add_argument("--checkpoint-dir", type=str, default=None,
                         help="Checkpoint save directory")
 
-    # CLIP-AST specific
-    parser.add_argument("--clip-lr", type=float, default=1e-6,
-                        help="Learning rate for CLIP params (clip_ast only)")
-    parser.add_argument("--warmup-epochs", type=int, default=1,
-                        help="Warmup epochs before parameter selection (clip_ast only)")
-
-    # Freeze-Align specific
-    parser.add_argument("--structure-weight", type=float, default=0.1,
-                        help="Weight for STRUCTURE regularization loss (freeze_align only)")
+    # Distribution-Aware specific (dist_align only)
+    parser.add_argument("--num-mc-samples", type=int, default=config.VQA_DIST_NUM_MC_SAMPLES,
+                        help="Number of MC samples for dist_align evaluation (0 = disabled)")
 
     return parser.parse_args()
 
@@ -111,9 +102,9 @@ def get_default_base_ckpt(model_type: str) -> str:
     ckpt_map = {
         "dist_align": str(config.DIST_ALIGN_BEST_CKPT),
         "clip_baseline": str(config.CLIP_BASELINE_BEST_CKPT),
-        "freeze_align": str(config.FREEZE_ALIGN_BEST_CKPT),
-        "fate": str(config.FATE_BEST_CKPT),
-        "clip_ast": str(config.CLIP_AST_BEST_CKPT),
+        "prolip": str(config.PROLIP_BEST_CKPT),
+        "grove": str(config.GROVE_BEST_CKPT),
+        "d2p": str(config.D2P_BEST_CKPT),
     }
     return ckpt_map.get(model_type, None)
 
@@ -125,47 +116,18 @@ def get_vqa_ckpt_name(model_type: str) -> str:
 
 def get_optimizer_for_model(
     model: VQAModel,
-    model_type: str,
     lr: float,
-    clip_lr: float,
     weight_decay: float,
 ) -> optim.Optimizer:
     """
-    Create optimizer appropriate for the model type.
+    Create optimizer for the VQA model.
 
-    Different model types have different parameter groups:
-        - dist_align, clip_baseline, freeze_align, fate:
-            Only classifier params (and adapter params) are trainable
-        - clip_ast: classifier params + selected CLIP params (differential LR)
+    All model types use the same optimizer: only classifier params are trainable,
+    base model parameters are frozen.
     """
-    if model_type == "clip_ast":
-        # CLIP-AST: differential learning rates
-        clip_params = []
-        classifier_params = []
-        for name, param in model.named_parameters():
-            if not param.requires_grad:
-                continue
-            if "classifier" in name:
-                classifier_params.append(param)
-            else:
-                clip_params.append(param)
-
-        param_groups = [
-            {"params": classifier_params, "lr": lr},
-            {"params": clip_params, "lr": clip_lr},
-        ]
-        logger.info(
-            f"CLIP-AST optimizer: classifier LR={lr}, CLIP LR={clip_lr}, "
-            f"classifier params={sum(p.numel() for p in classifier_params):,}, "
-            f"CLIP params={sum(p.numel() for p in clip_params):,}"
-        )
-        return optim.AdamW(param_groups, weight_decay=weight_decay)
-
-    else:
-        # Standard: only classifier and adapter params
-        trainable = model.trainable_parameters()
-        logger.info(f"Trainable parameters: {sum(p.numel() for p in trainable):,}")
-        return optim.Adam(trainable, lr=lr, weight_decay=weight_decay)
+    trainable = model.trainable_parameters()
+    logger.info(f"Trainable parameters: {sum(p.numel() for p in trainable):,}")
+    return optim.Adam(trainable, lr=lr, weight_decay=weight_decay)
 
 
 def train_epoch(
@@ -175,13 +137,11 @@ def train_epoch(
     optimizer: optim.Optimizer,
     device: torch.device,
     epoch: int,
-    structure_weight: float = 0.1,
 ) -> Dict[str, float]:
     """Train for one epoch."""
     model.train()
     # Ensure base model stays in eval mode (for dropout/batchnorm in frozen parts)
-    if model.model_type != "clip_ast":
-        model.base_model.eval()
+    model.base_model.eval()
 
     total_loss = 0.0
     total_correct = 0
@@ -215,22 +175,15 @@ def train_epoch(
         logits = model(pixel_values, input_ids, attention_mask)
 
         # Classification loss
-        ce_loss = criterion(logits, labels)
-
-        # Extra loss (e.g., STRUCTURE regularization for Freeze-Align)
-        extra_loss = model.extra_loss
-        if extra_loss is not None:
-            total_loss_val = ce_loss + structure_weight * extra_loss
-        else:
-            total_loss_val = ce_loss
+        loss = criterion(logits, labels)
 
         # Backward
         optimizer.zero_grad()
-        total_loss_val.backward()
+        loss.backward()
         optimizer.step()
 
         # Metrics
-        total_loss += ce_loss.item()
+        total_loss += loss.item()
         preds = logits.argmax(dim=1)
         correct = (preds == labels).sum().item()
         total_correct += correct
@@ -244,12 +197,12 @@ def train_epoch(
 
         # Progress bar
         acc = total_correct / max(total_samples, 1)
-        pbar.set_postfix({"loss": f"{ce_loss.item():.4f}", "acc": f"{acc:.4f}"})
+        pbar.set_postfix({"loss": f"{loss.item():.4f}", "acc": f"{acc:.4f}"})
 
         if (batch_idx + 1) % 50 == 0:
             logger.debug(
                 f"Epoch {epoch + 1}, Batch {batch_idx + 1}/{len(dataloader)}, "
-                f"Loss: {ce_loss.item():.4f}, Acc: {acc:.4f}"
+                f"Loss: {loss.item():.4f}, Acc: {acc:.4f}"
             )
 
     num_batches = max(len(dataloader), 1)
@@ -388,11 +341,8 @@ def main():
     logger.info(f"Device: {args.device}")
     logger.info(f"Val split: {args.val_split}")
     logger.info(f"Images dir: {images_dir}")
-    if args.model_type == "clip_ast":
-        logger.info(f"CLIP LR: {args.clip_lr}")
-        logger.info(f"Warmup epochs: {args.warmup_epochs}")
-    if args.model_type == "freeze_align":
-        logger.info(f"STRUCTURE weight: {args.structure_weight}")
+    if args.model_type == "dist_align":
+        logger.info(f"MC samples (eval): {args.num_mc_samples}")
     logger.info("=" * 60)
 
     # Load full training dataset to build answer vocabulary
@@ -479,25 +429,22 @@ def main():
         answer_vocab=answer_vocab,
         base_ckpt_path=base_ckpt,
         device=args.device,
+        num_mc_samples=args.num_mc_samples,
     )
     model = model.to(args.device)
-
-    # CLIP-AST: unfreeze all CLIP params for warmup phase
-    if args.model_type == "clip_ast":
-        logger.info("CLIP-AST: Unfreezing all CLIP params for warmup phase...")
-        model.base_model.unfreeze_all_clip()
 
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = model.num_trainable_parameters()
     logger.info(f"Total parameters: {total_params:,}")
     logger.info(f"Trainable parameters: {trainable_params:,}")
     logger.info(f"Frozen parameters: {total_params - trainable_params:,}")
+    logger.info(f"Feature dim per modality: {model.feature_dim}")
+    if args.model_type == "dist_align":
+        logger.info(f"Distribution-aware features: sampling z=mu+eps*sigma during training, using mu during eval")
 
     # Loss and optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = get_optimizer_for_model(
-        model, args.model_type, args.lr, args.clip_lr, args.weight_decay
-    )
+    optimizer = get_optimizer_for_model(model, args.lr, args.weight_decay)
 
     # Training loop
     best_val_loss = float("inf")
@@ -507,22 +454,10 @@ def main():
 
     logger.info("Starting training...")
     for epoch in range(args.epochs):
-        # CLIP-AST: after warmup, select parameters
-        if (args.model_type == "clip_ast"
-                and epoch == args.warmup_epochs
-                and not model.base_model._param_selected):
-            logger.info(f"CLIP-AST: Selecting parameters after warmup epoch {epoch}...")
-            model.base_model.select_parameters()
-            # Recreate optimizer with updated parameter groups
-            optimizer = get_optimizer_for_model(
-                model, args.model_type, args.lr, args.clip_lr, args.weight_decay
-            )
-
         # Train
         train_metrics = train_epoch(
             model, train_dataloader, criterion, optimizer,
             args.device, epoch,
-            structure_weight=args.structure_weight,
         )
 
         # Validate

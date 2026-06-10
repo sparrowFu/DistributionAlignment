@@ -23,7 +23,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
-from data.caption_dataset import ImageCaptionDataset
+from data.caption_dataset import ImageCaptionDataset, filter_none_collate
 from models.clip_baseline import CLIPFineTuneBaseline
 from utils.logger import get_logger, log_exception
 from utils.seed import set_seed
@@ -36,28 +36,23 @@ def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Evaluate CLIP Zero-Shot Baseline")
 
-    parser.add_argument("--captions-path", type=str, default=None)
-    parser.add_argument("--images-dir", type=str, default=None)
-    parser.add_argument("--batch-size", type=int, default=config.EVAL_BATCH_SIZE)
-    parser.add_argument("--recall-at-k", type=int, nargs="+", default=config.RECALL_AT_K)
+    parser.add_argument("--captions-path", type=str, default=None,
+                        help="Path to captions file (uses config default if None)")
+    parser.add_argument("--images-dir", type=str, default=None,
+                        help="Path to images directory (uses config default if None)")
+    parser.add_argument("--batch-size", type=int, default=config.EVAL_BATCH_SIZE,
+                        help="Evaluation batch size")
+    parser.add_argument("--recall-at-k", type=int, nargs="+", default=config.RECALL_AT_K,
+                        help="Recall@K values to compute")
     parser.add_argument("--num-samples", type=int, default=5000,
                         help="Number of samples to evaluate (default: 5000)")
-    parser.add_argument("--output-path", type=str, default=None)
+    parser.add_argument("--output-path", type=str, default=None,
+                        help="Output JSON path (uses config default if None)")
     parser.add_argument("--device", type=str,
-                        default="cuda" if torch.cuda.is_available() else "cpu")
+                        default="cuda" if torch.cuda.is_available() else "cpu",
+                        help="Device to use")
 
     return parser.parse_args()
-
-
-def filter_none_collate(batch):
-    """Collate function that filters out None values."""
-    filtered = [item for item in batch if item is not None]
-    if not filtered:
-        return None
-    return {
-        "image": [item["image"] for item in filtered],
-        "captions": [item["captions"] for item in filtered],
-    }
 
 
 @torch.no_grad()

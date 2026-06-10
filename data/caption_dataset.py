@@ -199,23 +199,29 @@ class ImageCaptionDataset(Dataset):
         }
 
 
-def collate_fn(batch: List[Optional[Dict]]) -> Optional[List[Dict]]:
+def filter_none_collate(batch):
     """
-    Custom collate function that filters out None values (failed loads).
+    Collate function that filters out None values and converts to batch format.
+
+    Used by all training and evaluation scripts for image-caption data.
 
     Args:
-        batch: List of dataset samples (or None)
+        batch: List of dataset samples (may contain None for failed loads)
 
     Returns:
-        Filtered list of samples, or None if all failed
+        Dictionary with batched tensors, or None if all samples failed
     """
-    # Filter out None values
     filtered = [item for item in batch if item is not None]
 
     if not filtered:
         return None
 
-    return filtered
+    return {
+        "image": [item["image"] for item in filtered],
+        "captions": [item["captions"] for item in filtered],
+        "image_path": [item["image_path"] for item in filtered],
+        "image_name": [item["image_name"] for item in filtered],
+    }
 
 
 if __name__ == "__main__":

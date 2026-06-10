@@ -20,12 +20,10 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
-from data.caption_dataset import ImageCaptionDataset
+from data.caption_dataset import ImageCaptionDataset, filter_none_collate
 from models.dist_align_model import DistributionAlignmentModel
-from losses.dist_align_losses import DistributionAlignmentLoss, CombinedDistributionLoss
 from utils.logger import get_logger, log_exception
 from utils.seed import set_seed
-from utils.metrics import compute_recall_at_k
 
 
 logger = get_logger("eval_dist_align", config.EVAL_DIST_ALIGN_LOG_PATH)
@@ -51,20 +49,13 @@ def parse_args():
                         help="Output JSON path (uses config default if None)")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
                         help="Device to use")
+    parser.add_argument("--use-uc-similarity", action="store_true",
+                        default=config.DIST_ALIGN_USE_UC_CL,
+                        help="Use uncertainty-calibrated similarity for retrieval")
+    parser.add_argument("--uc-temperature", type=float, default=config.DIST_ALIGN_UC_TEMPERATURE,
+                        help="Temperature for uncertainty-calibrated similarity")
 
     return parser.parse_args()
-
-
-def filter_none_collate(batch):
-    """Collate function that filters out None values."""
-    filtered = [item for item in batch if item is not None]
-    if not filtered:
-        return None
-
-    return {
-        "image": [item["image"] for item in filtered],
-        "captions": [item["captions"] for item in filtered],
-    }
 
 
 @torch.no_grad()
@@ -74,11 +65,13 @@ def extract_features(
     device: torch.device,
     num_samples: int = None
 ):
-    """Extract image and text distribution features."""
+    """Extract image and text distribution features (mu and logvar)."""
     model.eval()
 
-    all_img_features = []
-    all_text_features = []
+    all_img_mu = []
+    all_text_mu = []
+    all_img_logvar = []
+    all_text_logvar = []
     sample_count = 0
 
     logger.info("Extracting features...")
@@ -112,24 +105,30 @@ def extract_features(
         # Forward pass
         outputs = model(pixel_values, input_ids, attention_mask)
 
-        all_img_features.append(outputs['img_mu'].cpu())
-        all_text_features.append(outputs['text_mu'].cpu())
+        all_img_mu.append(outputs['img_mu'].cpu())
+        all_text_mu.append(outputs['text_mu'].cpu())
+        all_img_logvar.append(outputs['img_logvar'].cpu())
+        all_text_logvar.append(outputs['text_logvar'].cpu())
 
         sample_count += batch_size
         if num_samples and sample_count >= num_samples:
             break
 
     # Concatenate features
-    img_features = torch.cat(all_img_features, dim=0)
-    text_features = torch.cat(all_text_features, dim=0)
+    img_mu = torch.cat(all_img_mu, dim=0)
+    text_mu = torch.cat(all_text_mu, dim=0)
+    img_logvar = torch.cat(all_img_logvar, dim=0)
+    text_logvar = torch.cat(all_text_logvar, dim=0)
 
     if num_samples:
-        img_features = img_features[:num_samples]
-        text_features = text_features[:num_samples]
+        img_mu = img_mu[:num_samples]
+        text_mu = text_mu[:num_samples]
+        img_logvar = img_logvar[:num_samples]
+        text_logvar = text_logvar[:num_samples]
 
-    logger.info(f"Features shape: Images {img_features.shape}, Texts {text_features.shape}")
+    logger.info(f"Features shape: Images {img_mu.shape}, Texts {text_mu.shape}")
 
-    return img_features, text_features
+    return img_mu, text_mu, img_logvar, text_logvar
 
 
 def compute_recall_chunked(
@@ -139,8 +138,14 @@ def compute_recall_chunked(
     chunk_size: int = 1000
 ) -> dict:
     """Compute Recall@K in chunks to avoid OOM on large matrices."""
+    import torch.nn.functional as F
+
     n = img_features.shape[0]
     max_k = max(k_values)
+
+    # L2 normalize features for cosine similarity
+    img_features = F.normalize(img_features, dim=-1)
+    text_features = F.normalize(text_features, dim=-1)
 
     # Track hits for each k
     hits = {k: 0 for k in k_values}
@@ -166,6 +171,67 @@ def compute_recall_chunked(
     for k in k_values:
         recall_metrics[f'recall@{k}'] = hits[k] / n
         logger.info(f"Recall@{k}: {recall_metrics[f'recall@{k}']:.4f}")
+
+    return recall_metrics
+
+
+def compute_recall_uc_chunked(
+    img_mu: torch.Tensor,
+    img_logvar: torch.Tensor,
+    text_mu: torch.Tensor,
+    text_logvar: torch.Tensor,
+    k_values: list,
+    temperature: float = 0.07,
+    chunk_size: int = 1000
+) -> dict:
+    """
+    Compute Recall@K using uncertainty-calibrated similarity.
+
+    sim(x,y) = μ_x · μ_y / (τ · √(1 + ‖σ_x‖²) · √(1 + ‖σ_y‖²))
+    """
+    import torch.nn.functional as F
+
+    n = img_mu.shape[0]
+    max_k = max(k_values)
+
+    # Precompute per-sample scaling factors (mean, not sum, for dimension-independence)
+    img_var_avg = torch.exp(img_logvar).mean(dim=-1)  # (n,)
+    text_var_avg = torch.exp(text_logvar).mean(dim=-1)  # (n,)
+    img_scale = torch.sqrt(1.0 + img_var_avg)  # (n,)
+    text_scale = torch.sqrt(1.0 + text_var_avg)  # (n,)
+
+    # Normalize means
+    img_mu_norm = F.normalize(img_mu, dim=-1)
+    text_mu_norm = F.normalize(text_mu, dim=-1)
+
+    # Track hits for each k
+    hits = {k: 0 for k in k_values}
+
+    logger.info(f"Computing Recall@K (UC similarity, τ={temperature}) with chunk_size={chunk_size}...")
+
+    for start in tqdm(range(0, n, chunk_size), desc="UC Recall chunks"):
+        end = min(start + chunk_size, n)
+
+        # Mean similarity: [chunk, n]
+        sim_chunk = torch.matmul(img_mu_norm[start:end], text_mu_norm.T)
+
+        # Apply uncertainty calibration
+        scale_matrix = img_scale[start:end].unsqueeze(1) * text_scale.unsqueeze(0)
+        sim_chunk = sim_chunk / (temperature * scale_matrix)
+
+        # Get rankings
+        ranked_indices = torch.argsort(sim_chunk, dim=1, descending=True)
+
+        for k in k_values:
+            top_k = ranked_indices[:, :k]
+            gt = torch.arange(start, end).unsqueeze(1)
+            is_in_top_k = (top_k == gt).any(dim=1)
+            hits[k] += is_in_top_k.sum().item()
+
+    recall_metrics = {}
+    for k in k_values:
+        recall_metrics[f'uc_recall@{k}'] = hits[k] / n
+        logger.info(f"UC-Recall@{k}: {recall_metrics[f'uc_recall@{k}']:.4f}")
 
     return recall_metrics
 
@@ -218,15 +284,23 @@ def main():
 
     logger.info(f"Dataset loaded: {len(dataset)} samples")
 
-    # Extract features
-    img_features, text_features = extract_features(
+    # Extract features (mu and logvar)
+    img_mu, text_mu, img_logvar, text_logvar = extract_features(
         model, dataloader, args.device, args.num_samples
     )
 
-    # Compute Recall@K (chunked to avoid OOM)
+    # Compute Recall@K using standard cosine similarity on mu
     recall_metrics = compute_recall_chunked(
-        img_features, text_features, args.recall_at_k, chunk_size=1000
+        img_mu, text_mu, args.recall_at_k, chunk_size=1000
     )
+
+    # Optionally also compute Recall@K using uncertainty-calibrated similarity
+    if args.use_uc_similarity:
+        uc_recall_metrics = compute_recall_uc_chunked(
+            img_mu, img_logvar, text_mu, text_logvar,
+            args.recall_at_k, temperature=args.uc_temperature, chunk_size=1000
+        )
+        recall_metrics.update(uc_recall_metrics)
 
     # Save results
     output_path = args.output_path or str(config.DIST_ALIGN_EVAL_RESULTS_PATH)

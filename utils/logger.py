@@ -123,25 +123,6 @@ def log_exception(logger: logging.Logger, exc: Exception, context: str = "") -> 
     logger.error(traceback.format_exc())
 
 
-# Pre-configured loggers for main modules
-def get_main_logger() -> logging.Logger:
-    """Get logger for main.py."""
-    import config
-    return get_logger("main", config.MAIN_LOG_PATH)
-
-
-def get_train_logger() -> logging.Logger:
-    """Get logger for training scripts."""
-    import config
-    return get_logger("train", config.TRAIN_CLIP_BASELINE_LOG_PATH)
-
-
-def get_eval_logger() -> logging.Logger:
-    """Get logger for evaluation scripts."""
-    import config
-    return get_logger("eval", config.EVAL_CLIP_BASELINE_LOG_PATH)
-
-
 if __name__ == "__main__":
     # Test logger
     from pathlib import Path

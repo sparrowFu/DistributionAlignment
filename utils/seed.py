@@ -41,16 +41,6 @@ def set_seed(seed: int) -> int:
     return _global_seed
 
 
-def get_seed() -> int:
-    """
-    Get the current global seed value.
-
-    Returns:
-        Current random seed
-    """
-    return _global_seed
-
-
 if __name__ == "__main__":
     # Test seed setting
     seed = set_seed(42)

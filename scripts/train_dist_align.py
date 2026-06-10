@@ -11,10 +11,8 @@ Usage:
 """
 
 import argparse
-import random
-import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict
 
 import torch
 import torch.optim as optim
@@ -26,12 +24,11 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
-from data.caption_dataset import ImageCaptionDataset
+from data.caption_dataset import ImageCaptionDataset, filter_none_collate
 from models.dist_align_model import DistributionAlignmentModel
-from losses.dist_align_losses import DistributionAlignmentLoss, CombinedDistributionLoss
+from losses.dist_align_losses import DistributionAlignmentLoss, CombinedDistributionLoss, DistributionalContrastiveLoss, UncertaintyCalibratedContrastiveLoss
 from utils.logger import get_logger, log_exception
 from utils.seed import set_seed
-from utils.io_utils import save_checkpoint
 
 
 # Setup logger
@@ -86,6 +83,34 @@ def parse_args():
     parser.add_argument("--use-variance-loss", action="store_true", default=config.DIST_ALIGN_USE_VARIANCE_LOSS,
                         help="Use variance regularization loss")
 
+    # Distributional Contrastive Learning via OT arguments
+    parser.add_argument("--use-ot-contrastive", action="store_true", default=config.DIST_ALIGN_USE_OT_CONTRASTIVE,
+                        help="Use OT-based distributional contrastive loss")
+    parser.add_argument("--no-ot-contrastive", action="store_false", dest="use_ot_contrastive",
+                        help="Disable OT-based distributional contrastive loss")
+    parser.add_argument("--ot-temperature", type=float, default=config.DIST_ALIGN_OT_TEMPERATURE,
+                        help="Temperature for W2-based distributional similarity")
+    parser.add_argument("--lambda-ot", type=float, default=config.DIST_ALIGN_LAMBDA_OT,
+                        help="Weight for distributional contrastive loss")
+    parser.add_argument("--lambda-var-ot", type=float, default=config.DIST_ALIGN_LAMBDA_VAR_OT,
+                        help="Weight for variance regularization in OT mode")
+    parser.add_argument("--min-sigma", type=float, default=config.DIST_ALIGN_MIN_SIGMA,
+                        help="Minimum sigma to prevent numerical collapse")
+
+    # Uncertainty-Calibrated Distributional Contrastive Learning arguments
+    parser.add_argument("--use-uc-cl", action="store_true", default=config.DIST_ALIGN_USE_UC_CL,
+                        help="Use Uncertainty-Calibrated Distributional Contrastive Learning")
+    parser.add_argument("--no-uc-cl", action="store_false", dest="use_uc_cl",
+                        help="Disable Uncertainty-Calibrated Distributional Contrastive Learning")
+    parser.add_argument("--uc-temperature", type=float, default=config.DIST_ALIGN_UC_TEMPERATURE,
+                        help="Temperature for uncertainty-calibrated similarity")
+    parser.add_argument("--lambda-uc-cl", type=float, default=config.DIST_ALIGN_LAMBDA_UC_CL,
+                        help="Weight for uncertainty-calibrated contrastive loss (λ_cl)")
+    parser.add_argument("--lambda-consist", type=float, default=config.DIST_ALIGN_LAMBDA_CONSIST,
+                        help="Weight for distributional consistency loss (λ_consist)")
+    parser.add_argument("--lambda-uc-var", type=float, default=config.DIST_ALIGN_LAMBDA_UC_VAR,
+                        help="Weight for variance regularization in UC-CL mode (λ_var)")
+
     # System arguments
     parser.add_argument("--seed", type=int, default=config.SEED,
                         help="Random seed")
@@ -109,28 +134,6 @@ def parse_args():
                         help="Output directory (uses config default if None)")
 
     return parser.parse_args()
-
-
-def filter_none_collate(batch):
-    """
-    Collate function that filters out None values and converts to batch format.
-    Returns a dictionary with batched tensors/data.
-    """
-    # Filter out None values
-    filtered = [item for item in batch if item is not None]
-
-    if not filtered:
-        return None
-
-    # Convert list of dicts to dict of lists
-    batched = {
-        "image": [item["image"] for item in filtered],
-        "captions": [item["captions"] for item in filtered],
-        "image_path": [item["image_path"] for item in filtered],
-        "image_name": [item["image_name"] for item in filtered],
-    }
-
-    return batched
 
 
 def create_optimizer(model, args):
@@ -168,7 +171,9 @@ def train_epoch(
     optimizer: optim.Optimizer,
     device: torch.device,
     epoch: int,
-    use_variance_loss: bool = False
+    use_variance_loss: bool = False,
+    use_ot: bool = False,
+    use_uc_cl: bool = False
 ) -> Dict[str, float]:
     """Train for one epoch."""
     model.train()
@@ -179,6 +184,9 @@ def train_epoch(
     total_contrastive_loss = 0.0
     total_kl_loss = 0.0
     total_var_loss = 0.0
+    total_consist_loss = 0.0
+    total_w2_pos = 0.0
+    total_w2_all = 0.0
 
     pbar = tqdm(dataloader, desc=f"Epoch {epoch + 1}")
 
@@ -214,14 +222,25 @@ def train_epoch(
         outputs = model(pixel_values, input_ids, attention_mask)
 
         # Compute loss
-        loss, loss_dict = criterion(
-            outputs['img_features'],
-            outputs['text_features'],
-            outputs['img_mu'],
-            outputs['img_logvar'],
-            outputs['text_mu'],
-            outputs['text_logvar']
-        )
+        if use_uc_cl:
+            loss, loss_dict = criterion(
+                outputs['img_features'],
+                outputs['text_features'],
+                outputs['img_mu'],
+                outputs['img_logvar'],
+                outputs['text_mu'],
+                outputs['text_logvar'],
+                text_mus=outputs['text_mus'],
+            )
+        else:
+            loss, loss_dict = criterion(
+                outputs['img_features'],
+                outputs['text_features'],
+                outputs['img_mu'],
+                outputs['img_logvar'],
+                outputs['text_mu'],
+                outputs['text_logvar']
+            )
 
         # Backward pass
         optimizer.zero_grad()
@@ -233,24 +252,61 @@ def train_epoch(
         total_contrastive_loss += loss_dict['contrastive']
         total_kl_loss += loss_dict['kl']
 
-        if use_variance_loss:
+        if use_variance_loss or use_ot or use_uc_cl:
             total_var_loss += loss_dict.get('variance', 0.0)
 
+        if use_uc_cl:
+            total_consist_loss += loss_dict.get('consistency', 0.0)
+
+        if use_ot:
+            total_w2_pos += loss_dict.get('avg_w2_pos', 0.0)
+            total_w2_all += loss_dict.get('avg_w2_all', 0.0)
+
         # Update progress bar
-        pbar.set_postfix({
-            'loss': f"{loss_dict['total']:.4f}",
-            'contrastive': f"{loss_dict['contrastive']:.4f}",
-            'kl': f"{loss_dict['kl']:.4f}"
-        })
+        if use_uc_cl:
+            pbar.set_postfix({
+                'loss': f"{loss_dict['total']:.4f}",
+                'CL': f"{loss_dict['contrastive']:.4f}",
+                'Con': f"{loss_dict.get('consistency', 0):.4f}"
+            })
+        elif use_ot:
+            pbar.set_postfix({
+                'loss': f"{loss_dict['total']:.4f}",
+                'OT': f"{loss_dict['contrastive']:.4f}",
+                'W2': f"{loss_dict.get('avg_w2_pos', 0):.2f}"
+            })
+        else:
+            pbar.set_postfix({
+                'loss': f"{loss_dict['total']:.4f}",
+                'contrastive': f"{loss_dict['contrastive']:.4f}",
+                'kl': f"{loss_dict['kl']:.4f}"
+            })
 
         # Log every N batches
         if (batch_idx + 1) % 10 == 0:
-            logger.debug(
-                f"Epoch {epoch + 1}, Batch {batch_idx + 1}/{len(dataloader)}, "
-                f"Loss: {loss_dict['total']:.4f}, "
-                f"Contrastive: {loss_dict['contrastive']:.4f}, "
-                f"KL: {loss_dict['kl']:.4f}"
-            )
+            if use_uc_cl:
+                logger.debug(
+                    f"Epoch {epoch + 1}, Batch {batch_idx + 1}/{len(dataloader)}, "
+                    f"Loss: {loss_dict['total']:.4f}, "
+                    f"CL: {loss_dict['contrastive']:.4f}, "
+                    f"Consist: {loss_dict.get('consistency', 0):.4f}, "
+                    f"Var: {loss_dict.get('variance', 0):.4f}"
+                )
+            elif use_ot:
+                logger.debug(
+                    f"Epoch {epoch + 1}, Batch {batch_idx + 1}/{len(dataloader)}, "
+                    f"Loss: {loss_dict['total']:.4f}, "
+                    f"OT: {loss_dict['contrastive']:.4f}, "
+                    f"Var: {loss_dict['kl']:.4f}, "
+                    f"W2_pos: {loss_dict.get('avg_w2_pos', 0):.2f}"
+                )
+            else:
+                logger.debug(
+                    f"Epoch {epoch + 1}, Batch {batch_idx + 1}/{len(dataloader)}, "
+                    f"Loss: {loss_dict['total']:.4f}, "
+                    f"Contrastive: {loss_dict['contrastive']:.4f}, "
+                    f"KL: {loss_dict['kl']:.4f}"
+                )
 
     # Compute averages
     num_batches = len(dataloader)
@@ -263,6 +319,15 @@ def train_epoch(
     if use_variance_loss:
         metrics['variance_loss'] = total_var_loss / num_batches
 
+    if use_ot:
+        metrics['variance_loss'] = total_var_loss / num_batches
+        metrics['avg_w2_pos'] = total_w2_pos / num_batches
+        metrics['avg_w2_all'] = total_w2_all / num_batches
+
+    if use_uc_cl:
+        metrics['variance_loss'] = total_var_loss / num_batches
+        metrics['consistency_loss'] = total_consist_loss / num_batches
+
     return metrics
 
 
@@ -272,7 +337,9 @@ def evaluate(
     dataloader: DataLoader,
     criterion,
     device: torch.device,
-    use_variance_loss: bool = False
+    use_variance_loss: bool = False,
+    use_ot: bool = False,
+    use_uc_cl: bool = False
 ) -> Dict[str, float]:
     """Evaluate the model."""
     model.eval()
@@ -281,6 +348,9 @@ def evaluate(
     total_contrastive_loss = 0.0
     total_kl_loss = 0.0
     total_var_loss = 0.0
+    total_consist_loss = 0.0
+    total_w2_pos = 0.0
+    total_w2_all = 0.0
 
     pbar = tqdm(dataloader, desc="Evaluating")
 
@@ -315,21 +385,39 @@ def evaluate(
         outputs = model(pixel_values, input_ids, attention_mask)
 
         # Compute loss
-        loss, loss_dict = criterion(
-            outputs['img_features'],
-            outputs['text_features'],
-            outputs['img_mu'],
-            outputs['img_logvar'],
-            outputs['text_mu'],
-            outputs['text_logvar']
-        )
+        if use_uc_cl:
+            loss, loss_dict = criterion(
+                outputs['img_features'],
+                outputs['text_features'],
+                outputs['img_mu'],
+                outputs['img_logvar'],
+                outputs['text_mu'],
+                outputs['text_logvar'],
+                text_mus=outputs['text_mus'],
+            )
+        else:
+            loss, loss_dict = criterion(
+                outputs['img_features'],
+                outputs['text_features'],
+                outputs['img_mu'],
+                outputs['img_logvar'],
+                outputs['text_mu'],
+                outputs['text_logvar']
+            )
 
         total_loss += loss_dict['total']
         total_contrastive_loss += loss_dict['contrastive']
         total_kl_loss += loss_dict['kl']
 
-        if use_variance_loss:
+        if use_variance_loss or use_ot or use_uc_cl:
             total_var_loss += loss_dict.get('variance', 0.0)
+
+        if use_uc_cl:
+            total_consist_loss += loss_dict.get('consistency', 0.0)
+
+        if use_ot:
+            total_w2_pos += loss_dict.get('avg_w2_pos', 0.0)
+            total_w2_all += loss_dict.get('avg_w2_all', 0.0)
 
         pbar.set_postfix({'loss': f"{loss_dict['total']:.4f}"})
 
@@ -344,6 +432,15 @@ def evaluate(
     if use_variance_loss:
         metrics['variance_loss'] = total_var_loss / num_batches
 
+    if use_ot:
+        metrics['variance_loss'] = total_var_loss / num_batches
+        metrics['avg_w2_pos'] = total_w2_pos / num_batches
+        metrics['avg_w2_all'] = total_w2_all / num_batches
+
+    if use_uc_cl:
+        metrics['variance_loss'] = total_var_loss / num_batches
+        metrics['consistency_loss'] = total_consist_loss / num_batches
+
     return metrics
 
 
@@ -357,7 +454,12 @@ def main():
 
     # Log configuration
     logger.info("=" * 60)
-    logger.info("Distribution Alignment Training")
+    if args.use_uc_cl:
+        logger.info("Distribution Alignment Training (Uncertainty-Calibrated CL)")
+    elif args.use_ot_contrastive:
+        logger.info("Distribution Alignment Training (OT Contrastive)")
+    else:
+        logger.info("Distribution Alignment Training")
     logger.info("=" * 60)
     logger.info(f"Epochs: {args.epochs}")
     logger.info(f"Batch size: {args.batch_size}")
@@ -365,6 +467,16 @@ def main():
     logger.info(f"MLP LR: {args.mlp_lr}")
     logger.info(f"Freeze CLIP: {args.freeze_clip}")
     logger.info(f"Device: {args.device}")
+    if args.use_uc_cl:
+        logger.info(f"UC Temperature: {args.uc_temperature}")
+        logger.info(f"Lambda UC-CL: {args.lambda_uc_cl}")
+        logger.info(f"Lambda Consist: {args.lambda_consist}")
+        logger.info(f"Lambda UC Var: {args.lambda_uc_var}")
+    elif args.use_ot_contrastive:
+        logger.info(f"OT Temperature: {args.ot_temperature}")
+        logger.info(f"Lambda OT: {args.lambda_ot}")
+        logger.info(f"Lambda Var OT: {args.lambda_var_ot}")
+        logger.info(f"Min Sigma: {args.min_sigma}")
     logger.info("=" * 60)
 
     # Create model
@@ -378,7 +490,25 @@ def main():
     logger.info(f"Model created with {model.num_trainable_parameters():,} trainable parameters")
 
     # Create loss function
-    if args.use_variance_loss:
+    if args.use_uc_cl:
+        criterion = UncertaintyCalibratedContrastiveLoss(
+            lambda_cl=args.lambda_uc_cl,
+            lambda_consist=args.lambda_consist,
+            lambda_var=args.lambda_uc_var,
+            temperature=args.uc_temperature,
+            target_variance=config.DIST_ALIGN_UC_TARGET_VARIANCE,
+        )
+        logger.info("Using Uncertainty-Calibrated Distributional Contrastive loss")
+    elif args.use_ot_contrastive:
+        criterion = DistributionalContrastiveLoss(
+            lambda_ot=args.lambda_ot,
+            temperature=args.ot_temperature,
+            min_sigma=args.min_sigma,
+            target_variance=config.DIST_ALIGN_TARGET_VARIANCE,
+            lambda_var=args.lambda_var_ot,
+        )
+        logger.info("Using distributional contrastive loss (OT-based)")
+    elif args.use_variance_loss:
         criterion = CombinedDistributionLoss(
             lambda_contrastive=args.lambda_contrastive,
             lambda_kl=args.lambda_kl,
@@ -449,24 +579,53 @@ def main():
         # Train
         train_metrics = train_epoch(
             model, train_dataloader, criterion, optimizer,
-            args.device, epoch, use_variance_loss=args.use_variance_loss
+            args.device, epoch,
+            use_variance_loss=args.use_variance_loss,
+            use_ot=args.use_ot_contrastive,
+            use_uc_cl=args.use_uc_cl
         )
 
         # Validate
         val_metrics = evaluate(
             model, val_dataloader, criterion,
-            args.device, use_variance_loss=args.use_variance_loss
+            args.device,
+            use_variance_loss=args.use_variance_loss,
+            use_ot=args.use_ot_contrastive,
+            use_uc_cl=args.use_uc_cl
         )
 
-        logger.info(
-            f"Epoch {epoch + 1}/{args.epochs} - "
-            f"Train Loss: {train_metrics['loss']:.4f}, "
-            f"Contrastive: {train_metrics['contrastive_loss']:.4f}, "
-            f"KL: {train_metrics['kl_loss']:.4f} | "
-            f"Val Loss: {val_metrics['loss']:.4f}, "
-            f"Val Contrastive: {val_metrics['contrastive_loss']:.4f}, "
-            f"Val KL: {val_metrics['kl_loss']:.4f}"
-        )
+        if args.use_uc_cl:
+            logger.info(
+                f"Epoch {epoch + 1}/{args.epochs} - "
+                f"Train Loss: {train_metrics['loss']:.4f}, "
+                f"CL: {train_metrics['contrastive_loss']:.4f}, "
+                f"Consist: {train_metrics.get('consistency_loss', 0):.4f}, "
+                f"Var: {train_metrics.get('variance_loss', 0):.4f} | "
+                f"Val Loss: {val_metrics['loss']:.4f}, "
+                f"Val CL: {val_metrics['contrastive_loss']:.4f}, "
+                f"Val Consist: {val_metrics.get('consistency_loss', 0):.4f}"
+            )
+        elif args.use_ot_contrastive:
+            logger.info(
+                f"Epoch {epoch + 1}/{args.epochs} - "
+                f"Train Loss: {train_metrics['loss']:.4f}, "
+                f"OT: {train_metrics['contrastive_loss']:.4f}, "
+                f"Var: {train_metrics['kl_loss']:.4f}, "
+                f"W2_pos: {train_metrics.get('avg_w2_pos', 0):.2f} | "
+                f"Val Loss: {val_metrics['loss']:.4f}, "
+                f"Val OT: {val_metrics['contrastive_loss']:.4f}, "
+                f"Val W2_pos: {val_metrics.get('avg_w2_pos', 0):.2f}"
+            )
+        else:
+            logger.info(
+                f"Epoch {epoch + 1}/{args.epochs} - "
+                f"Train Loss: {train_metrics['loss']:.4f}, "
+                f"Contrastive: {train_metrics['contrastive_loss']:.4f}, "
+                f"KL: {train_metrics['kl_loss']:.4f} | "
+                f"Val Loss: {val_metrics['loss']:.4f}, "
+                f"Val Contrastive: {val_metrics['contrastive_loss']:.4f}, "
+                f"Val KL: {val_metrics['kl_loss']:.4f}"
+            )
 
         # Save best checkpoint
         if val_metrics['loss'] < best_val_loss:

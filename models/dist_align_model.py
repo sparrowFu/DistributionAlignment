@@ -133,74 +133,6 @@ class DistributionAlignmentModel(nn.Module):
                     if layer.bias is not None:
                         nn.init.zeros_(layer.bias)
 
-    def encode_image_distribution(
-        self,
-        images: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Encode images to Gaussian distributions.
-
-        Args:
-            images: Image tensor of shape (B, C, H, W)
-
-        Returns:
-            Tuple of (mu, logvar), each of shape (B, hidden_dim)
-        """
-        # CLIP image encoding
-        img_features = self.clip_model.get_image_features(images)
-        img_features = img_features.pooler_output  # Extract actual tensor
-
-        # Distribution modeling
-        img_mu = self.img_mu_head(img_features)  # (B, hidden_dim)
-        img_logvar = self.img_logvar_head(img_features)  # (B, hidden_dim)
-
-        return img_mu, img_logvar
-
-    def encode_text_distribution(
-        self,
-        captions: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Encode multiple text captions to a merged Gaussian distribution.
-
-        Args:
-            captions: Captions tensor of shape (B, K, max_len)
-                      where K is the number of captions per image
-
-        Returns:
-            Tuple of (mu, logvar), each of shape (B, hidden_dim)
-        """
-        B, K, max_len = captions.shape
-
-        # Flatten batch and caption dimensions
-        captions_flat = captions.view(B * K, max_len)  # (B*K, max_len)
-
-        # CLIP text encoding
-        text_features = self.clip_model.get_text_features(captions_flat)
-        text_features = text_features.pooler_output  # Extract actual tensor
-        text_features = text_features.view(B, K, -1)  # (B, K, hidden_dim)
-
-        # Model each caption as a separate distribution
-        text_mus = []
-        text_logvars = []
-
-        for k in range(K):
-            feat_k = text_features[:, k, :]  # (B, hidden_dim)
-            mu_k = self.text_mu_head(feat_k)  # (B, hidden_dim)
-            logvar_k = self.text_logvar_head(feat_k)  # (B, hidden_dim)
-            text_mus.append(mu_k)
-            text_logvars.append(logvar_k)
-
-        text_mus = torch.stack(text_mus, dim=1)  # (B, K, hidden_dim)
-        text_logvars = torch.stack(text_logvars, dim=1)  # (B, K, hidden_dim)
-
-        # Merge K distributions into one
-        text_mu, text_logvar = self.merge_distributions(
-            text_mus, text_logvars, method=self.distribution_merging
-        )
-
-        return text_mu, text_logvar
-
     def merge_distributions(
         self,
         mus: torch.Tensor,
@@ -316,8 +248,10 @@ class DistributionAlignmentModel(nn.Module):
                 - text_features: CLIP text features (B, hidden_dim)
                 - img_mu: Image distribution mean (B, hidden_dim)
                 - img_logvar: Image distribution log variance (B, hidden_dim)
-                - text_mu: Text distribution mean (B, hidden_dim)
-                - text_logvar: Text distribution log variance (B, hidden_dim)
+                - text_mu: Merged text distribution mean (B, hidden_dim)
+                - text_logvar: Merged text distribution log variance (B, hidden_dim)
+                - text_mus: Per-caption distribution means (B, K, hidden_dim)
+                            Used by distributional consistency loss.
         """
         # CLIP encoding (keep features for contrastive loss)
         img_features = self.clip_model.get_image_features(pixel_values)
@@ -357,13 +291,20 @@ class DistributionAlignmentModel(nn.Module):
             text_mus, text_logvars, method=self.distribution_merging
         )
 
+        # Compute sigma for downstream use
+        img_sigma = torch.exp(0.5 * img_logvar)
+        text_sigma = torch.exp(0.5 * text_logvar)
+
         return {
             'img_features': img_features,
             'text_features': text_features_avg,
             'img_mu': img_mu,
             'img_logvar': img_logvar,
+            'img_sigma': img_sigma,
             'text_mu': text_mu,
             'text_logvar': text_logvar,
+            'text_sigma': text_sigma,
+            'text_mus': text_mus,  # Per-caption means for distributional consistency loss
         }
 
     def process_images(
@@ -401,6 +342,39 @@ class DistributionAlignmentModel(nn.Module):
             truncation=True,
             max_length=77  # CLIP's max sequence length
         )
+
+    def encode_image(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        """
+        Extract deterministic image features (distribution mean).
+
+        Args:
+            pixel_values: Image tensor (B, 3, 224, 224)
+
+        Returns:
+            Image mu features (B, hidden_dim)
+        """
+        clip_feat = self.clip_model.get_image_features(pixel_values)
+        clip_feat = clip_feat.pooler_output
+        return self.img_mu_head(clip_feat)
+
+    def encode_text(
+        self, input_ids: torch.Tensor, attention_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Extract deterministic text features (distribution mean).
+
+        Args:
+            input_ids: Token IDs (B, seq_len)
+            attention_mask: Attention mask (B, seq_len)
+
+        Returns:
+            Text mu features (B, hidden_dim)
+        """
+        clip_feat = self.clip_model.get_text_features(
+            input_ids=input_ids, attention_mask=attention_mask,
+        )
+        clip_feat = clip_feat.pooler_output
+        return self.text_mu_head(clip_feat)
 
     def trainable_parameters(self) -> List[nn.Parameter]:
         """
@@ -487,15 +461,16 @@ if __name__ == "__main__":
 
     # Create dummy inputs
     dummy_images = torch.randn(batch_size, 3, 224, 224)
-    dummy_captions = torch.randint(0, 49408, (batch_size, num_captions, max_seq_len))
+    dummy_input_ids = torch.randint(0, 49408, (batch_size, num_captions, max_seq_len))
+    dummy_attention_mask = torch.ones(batch_size, num_captions, max_seq_len, dtype=torch.long)
 
     print(f"\nInput shapes:")
     print(f"  Images: {dummy_images.shape}")
-    print(f"  Captions: {dummy_captions.shape}")
+    print(f"  Input IDs: {dummy_input_ids.shape}")
 
     # Forward pass
     with torch.no_grad():
-        outputs = model(dummy_images, dummy_captions)
+        outputs = model(dummy_images, dummy_input_ids, dummy_attention_mask)
 
     print(f"\nOutput shapes:")
     for key, value in outputs.items():

@@ -5,20 +5,21 @@ This module implements a VQA (Visual Question Answering) model that wraps
 an existing base model as a feature extractor and adds a trainable
 classification head on top.
 
-Supported base model types:
-    - "dist_align": DistributionAlignmentModel (frozen CLIP + MLP distribution heads)
-    - "clip_baseline": CLIPFineTuneBaseline (frozen CLIP)
-    - "freeze_align": FreezeAlignModel (frozen CLIP + trainable projectors)
-    - "fate": FATEModel (frozen CLIP + vision→text projector)
-    - "clip_ast": CLIPASTModel (selectively fine-tuned CLIP params)
-    - "clip_zero_shot": CLIPZeroShotVQA (no training, similarity-based)
+Supported base model types (from experiment plan):
+    B1 "clip_zero_shot": CLIPZeroShotVQA (no training, similarity-based)
+    B2 "clip_baseline": CLIPFineTuneBaseline (frozen CLIP)
+    B3 "prolip": ProLIPModel (probabilistic, implicit σ)
+    B4 "grove": GroVEModel (GP-based posterior variance)
+    B5 "icpe": ICPEModel (training-free, k-NN covariance)
+    B6 "d2p": D2PModel (distribution-to-point)
+    Ours "dist_align": DistributionAlignmentModel (UC-CL, σ²=caption variance)
 
-Architecture:
+Architecture (all models, unified 768-dim features):
     Input: PIL Image + Question Text
         |                    |
-    Base Model (frozen)  CLIP Text Encoder (frozen)
+    Feature Extractor    Feature Extractor
         |                    |
-    img_feat (768)       question_feat (768)
+    img_feat (768)       text_feat (768)
         |                    |
         +------ concat ------+
                  |
@@ -29,6 +30,14 @@ Architecture:
           FC (hidden_dim -> num_classes)
                  |
             CrossEntropy Loss
+
+For dist_align, the 768-dim feature is obtained by sampling from the
+learned Gaussian distribution (during training) or using the distribution
+mean (during evaluation):
+
+    Training:  z = mu + eps * sigma    (stochastic, acts as regularization)
+    Eval:      feat = mu               (deterministic)
+    Eval+MC:   average multiple z samples (uncertainty-aware prediction)
 """
 
 from typing import Dict, List, Optional
@@ -43,9 +52,12 @@ from utils.logger import get_logger
 logger = get_logger("vqa_model")
 
 # All supported model types for VQA training (excludes clip_zero_shot)
-TRAINABLE_MODEL_TYPES = ["dist_align", "clip_baseline", "freeze_align", "fate", "clip_ast"]
+TRAINABLE_MODEL_TYPES = [
+    "dist_align", "clip_baseline",
+    "prolip", "grove", "icpe", "d2p",
+]
 
-# All supported model types (includes clip_zero_shot)
+# clip_zero_shot is handled separately in train_vqa.py (no classifier head)
 ALL_MODEL_TYPES = TRAINABLE_MODEL_TYPES + ["clip_zero_shot"]
 
 
@@ -53,11 +65,14 @@ class VQAModel(nn.Module):
     """
     VQA Model with frozen backbone and trainable classification head.
 
-    Supports multiple base model types, each providing 768-dim image and
-    text features that are concatenated and fed to a classification head.
+    All model types produce 768-dim features per modality, concatenated
+    to 1536-dim for the classification head. This ensures identical model
+    architecture across all methods for fair comparison.
 
-    For "fate" model type, text features are adapted with vision perturbation
-    before concatenation.
+    For dist_align, features are sampled from learned Gaussian distributions
+    during training, providing stochastic regularization. During evaluation,
+    the deterministic distribution mean (mu) is used by default, with an
+    optional MC sampling mode for uncertainty-aware predictions.
     """
 
     def __init__(
@@ -69,25 +84,15 @@ class VQAModel(nn.Module):
         answer_vocab: Optional[Dict[str, int]] = None,
         base_ckpt_path: Optional[str] = None,
         device: str = "cpu",
+        num_mc_samples: int = 0,
     ):
-        """
-        Initialize VQA model.
-
-        Args:
-            model_type: Base model type (see ALL_MODEL_TYPES)
-            num_classes: Number of answer classes
-            hidden_dim: Hidden dimension for the classification head
-            dropout: Dropout rate for classification head
-            answer_vocab: Answer → index mapping (saved with checkpoint)
-            base_ckpt_path: Path to pre-trained base model checkpoint
-            device: Device to load base model onto
-        """
         super().__init__()
 
-        if model_type not in ALL_MODEL_TYPES:
+        if model_type not in TRAINABLE_MODEL_TYPES:
             raise ValueError(
-                f"Unknown model_type: {model_type}. "
-                f"Use one of: {ALL_MODEL_TYPES}"
+                f"VQAModel does not support model_type: {model_type}. "
+                f"Use one of: {TRAINABLE_MODEL_TYPES}. "
+                f"clip_zero_shot is handled separately."
             )
 
         self.model_type = model_type
@@ -95,14 +100,14 @@ class VQAModel(nn.Module):
         self.hidden_dim = hidden_dim
         self.dropout_rate = dropout
         self.answer_vocab = answer_vocab or {}
-        self.feature_dim = 768  # CLIP ViT-Large projection dimension
+        self.num_mc_samples = num_mc_samples
+        self.feature_dim = 768  # CLIP ViT-Large projection dimension (unified)
 
         # Load base model
         self._load_base_model(model_type, base_ckpt_path, device)
 
-        # Freeze base model (except clip_ast which is selectively unfrozen later)
-        if model_type != "clip_ast":
-            self._freeze_base()
+        # Freeze base model
+        self._freeze_base()
 
         # Classification head: concat(img_feat, text_feat) -> logits
         self.classifier = nn.Sequential(
@@ -112,20 +117,15 @@ class VQAModel(nn.Module):
             nn.Linear(hidden_dim, num_classes),
         )
 
-        # Initialize classifier weights
         self._init_classifier()
 
         logger.info(
             f"VQAModel initialized: type={model_type}, "
-            f"num_classes={num_classes}, hidden_dim={hidden_dim}"
+            f"num_classes={num_classes}, hidden_dim={hidden_dim}, "
+            f"feature_dim={self.feature_dim}"
         )
 
-    def _load_base_model(
-        self,
-        model_type: str,
-        ckpt_path: Optional[str],
-        device: str,
-    ):
+    def _load_base_model(self, model_type: str, ckpt_path: Optional[str], device: str):
         """Load the base model and optionally restore from checkpoint."""
         if model_type == "dist_align":
             from models.dist_align_model import DistributionAlignmentModel
@@ -148,33 +148,43 @@ class VQAModel(nn.Module):
                 logger.info(f"Loading clip_baseline checkpoint: {ckpt_path}")
                 self.base_model.load(ckpt_path)
 
-        elif model_type == "freeze_align":
-            from models.freeze_align_model import FreezeAlignModel
-            self.base_model = FreezeAlignModel(
-                proj_dim=config.FREEZE_ALIGN_PROJ_DIM,
-                dropout_rate=config.FREEZE_ALIGN_DROPOUT_RATE,
+        elif model_type == "prolip":
+            from models.prolip_model import ProLIPModel
+            self.base_model = ProLIPModel(
+                freeze_clip=True,
+                dropout_rate=config.DIST_ALIGN_DROPOUT_RATE,
             )
             if ckpt_path:
-                logger.info(f"Loading freeze_align checkpoint: {ckpt_path}")
+                logger.info(f"Loading prolip checkpoint: {ckpt_path}")
                 self.base_model.load(ckpt_path)
 
-        elif model_type == "fate":
-            from models.fate_model import FATEModel
-            self.base_model = FATEModel(
-                bottleneck_dim=config.FATE_BOTTLENECK_DIM,
-                alpha=config.FATE_ALPHA,
+        elif model_type == "grove":
+            from models.grove_model import GroVEModel
+            self.base_model = GroVEModel(
+                num_inducing=config.GROVE_NUM_INDUCING,
+                freeze_clip=True,
             )
             if ckpt_path:
-                logger.info(f"Loading fate checkpoint: {ckpt_path}")
+                logger.info(f"Loading grove checkpoint: {ckpt_path}")
                 self.base_model.load(ckpt_path)
 
-        elif model_type == "clip_ast":
-            from models.clip_ast_model import CLIPASTModel
-            self.base_model = CLIPASTModel(
-                select_ratio=config.CLIP_AST_SELECT_RATIO,
+        elif model_type == "icpe":
+            from models.icpe_model import ICPEModel
+            self.base_model = ICPEModel(
+                num_neighbors=config.ICPE_NUM_NEIGHBORS,
             )
             if ckpt_path:
-                logger.info(f"Loading clip_ast checkpoint: {ckpt_path}")
+                logger.info(f"Loading icpe config: {ckpt_path}")
+                self.base_model.load(ckpt_path)
+
+        elif model_type == "d2p":
+            from models.d2p_model import D2PModel
+            self.base_model = D2PModel(
+                freeze_clip=True,
+                dropout_rate=config.D2P_DROPOUT_RATE,
+            )
+            if ckpt_path:
+                logger.info(f"Loading d2p checkpoint: {ckpt_path}")
                 self.base_model.load(ckpt_path)
 
         self.base_model = self.base_model.to(device)
@@ -193,12 +203,12 @@ class VQAModel(nn.Module):
                 if layer.bias is not None:
                     nn.init.zeros_(layer.bias)
 
-    def extract_image_features(
-        self,
-        pixel_values: torch.Tensor,
-    ) -> torch.Tensor:
+    def extract_image_features(self, pixel_values: torch.Tensor) -> torch.Tensor:
         """
         Extract image features from the base model.
+
+        For dist_align, returns sampled z during training, mu during eval.
+        For all other models, delegates to base_model.encode_image().
 
         Args:
             pixel_values: Image tensor (B, 3, 224, 224)
@@ -206,83 +216,85 @@ class VQAModel(nn.Module):
         Returns:
             Image features (B, 768)
         """
-        if self.model_type in ("dist_align", "clip_baseline"):
-            # Use CLIP vision model directly
-            vision_outputs = self.base_model.clip_model.vision_model(
-                pixel_values=pixel_values
-            )
-            img_features = vision_outputs.pooler_output
-            img_features = self.base_model.clip_model.visual_projection(img_features)
+        if self.model_type == "dist_align":
+            clip_feat = self.base_model.clip_model.get_image_features(pixel_values)
+            clip_feat = clip_feat.pooler_output
+            img_mu = self.base_model.img_mu_head(clip_feat)
 
-        elif self.model_type == "freeze_align":
-            # Freeze-Align: use projected features
-            img_features = self.base_model.encode_image(pixel_values)
+            if self.training:
+                img_logvar = self.base_model.img_logvar_head(clip_feat)
+                eps = torch.randn_like(img_mu)
+                return img_mu + eps * torch.exp(0.5 * img_logvar)
+            else:
+                return img_mu
 
-        elif self.model_type == "fate":
-            # FATE: use raw CLIP image features
-            img_features = self.base_model.encode_image(pixel_values)
-
-        elif self.model_type == "clip_ast":
-            # CLIP-AST: use fine-tuned CLIP features
-            img_features = self.base_model.encode_image(pixel_values)
+        elif self.model_type == "clip_baseline":
+            return self.base_model.encode_image(pixel_values, normalize=False)
 
         else:
-            raise ValueError(f"extract_image_features not supported for {self.model_type}")
-
-        return img_features
+            # prolip, grove, icpe, d2p: all have encode_image(pixel_values)
+            return self.base_model.encode_image(pixel_values)
 
     def extract_text_features(
         self,
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
-        img_feat: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Extract text features using the base model.
 
+        For dist_align, returns sampled z during training, mu during eval.
+        For all other models, delegates to base_model.encode_text().
+
         Args:
             input_ids: Token IDs (B, seq_len)
             attention_mask: Attention mask (B, seq_len)
-            img_feat: Image features (needed for FATE model type)
 
         Returns:
             Text features (B, 768)
         """
-        if self.model_type in ("dist_align", "clip_baseline"):
-            text_outputs = self.base_model.clip_model.text_model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
+        if self.model_type == "dist_align":
+            clip_feat = self.base_model.clip_model.get_text_features(
+                input_ids=input_ids, attention_mask=attention_mask,
             )
-            text_features = text_outputs.pooler_output
-            text_features = self.base_model.clip_model.text_projection(text_features)
+            clip_feat = clip_feat.pooler_output
+            text_mu = self.base_model.text_mu_head(clip_feat)
 
-        elif self.model_type == "freeze_align":
-            # Freeze-Align: use projected features
-            text_features = self.base_model.encode_text(input_ids, attention_mask)
+            if self.training:
+                text_logvar = self.base_model.text_logvar_head(clip_feat)
+                eps = torch.randn_like(text_mu)
+                return text_mu + eps * torch.exp(0.5 * text_logvar)
+            else:
+                return text_mu
 
-        elif self.model_type == "fate":
-            # FATE: use adapted text features with vision perturbation
-            if img_feat is None:
-                raise ValueError("FATE model requires img_feat for text feature extraction")
-            text_features = self.base_model.encode_text_adapted(
-                input_ids, attention_mask, img_feat
-            )
-
-        elif self.model_type == "clip_ast":
-            # CLIP-AST: use fine-tuned CLIP features
-            text_features = self.base_model.encode_text(input_ids, attention_mask)
+        elif self.model_type == "clip_baseline":
+            return self.base_model.encode_text(input_ids, attention_mask, normalize=False)
 
         else:
-            raise ValueError(f"extract_text_features not supported for {self.model_type}")
+            # prolip, grove, icpe, d2p: all have encode_text(input_ids, attention_mask)
+            return self.base_model.encode_text(input_ids, attention_mask)
 
-        return text_features
+    def _sample_dist_image_features(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        """Sample image features from the learned distribution (dist_align only)."""
+        clip_feat = self.base_model.clip_model.get_image_features(pixel_values)
+        clip_feat = clip_feat.pooler_output
+        img_mu = self.base_model.img_mu_head(clip_feat)
+        img_logvar = self.base_model.img_logvar_head(clip_feat)
+        eps = torch.randn_like(img_mu)
+        return img_mu + eps * torch.exp(0.5 * img_logvar)
 
-    @property
-    def extra_loss(self) -> Optional[torch.Tensor]:
-        """Get extra loss from base model (e.g., STRUCTURE regularization for Freeze-Align)."""
-        if hasattr(self.base_model, "last_extra_loss"):
-            return self.base_model.last_extra_loss
-        return None
+    def _sample_dist_text_features(
+        self, input_ids: torch.Tensor, attention_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Sample text features from the learned distribution (dist_align only)."""
+        clip_feat = self.base_model.clip_model.get_text_features(
+            input_ids=input_ids, attention_mask=attention_mask,
+        )
+        clip_feat = clip_feat.pooler_output
+        text_mu = self.base_model.text_mu_head(clip_feat)
+        text_logvar = self.base_model.text_logvar_head(clip_feat)
+        eps = torch.randn_like(text_mu)
+        return text_mu + eps * torch.exp(0.5 * text_logvar)
 
     def process_images(self, images: List) -> torch.Tensor:
         """Process PIL images to tensors using CLIP processor."""
@@ -291,11 +303,8 @@ class VQAModel(nn.Module):
     def process_text(self, texts: List[str]) -> Dict[str, torch.Tensor]:
         """Process text strings to token IDs using CLIP processor."""
         return self.base_model.processor(
-            text=texts,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-            max_length=77,
+            text=texts, return_tensors="pt",
+            padding=True, truncation=True, max_length=77,
         )
 
     def forward(
@@ -315,31 +324,32 @@ class VQAModel(nn.Module):
         Returns:
             Logits tensor (B, num_classes)
         """
-        img_feat = self.extract_image_features(pixel_values)  # (B, 768)
-        text_feat = self.extract_text_features(
-            input_ids, attention_mask, img_feat=img_feat
-        )  # (B, 768)
+        # MC sampling for dist_align during evaluation
+        if (self.model_type == "dist_align"
+                and self.num_mc_samples > 0
+                and not self.training):
+            all_logits = []
+            for _ in range(self.num_mc_samples):
+                img_feat = self._sample_dist_image_features(pixel_values)
+                text_feat = self._sample_dist_text_features(input_ids, attention_mask)
+                combined = torch.cat([img_feat, text_feat], dim=1)
+                all_logits.append(self.classifier(combined))
+            return torch.stack(all_logits).mean(dim=0)
 
-        combined = torch.cat([img_feat, text_feat], dim=1)  # (B, 1536)
-        logits = self.classifier(combined)  # (B, num_classes)
-
-        return logits
+        # Standard forward
+        img_feat = self.extract_image_features(pixel_values)
+        text_feat = self.extract_text_features(input_ids, attention_mask)
+        combined = torch.cat([img_feat, text_feat], dim=1)
+        return self.classifier(combined)
 
     def trainable_parameters(self) -> List[nn.Parameter]:
-        """Get list of trainable parameters."""
         return [p for p in self.parameters() if p.requires_grad]
 
     def num_trainable_parameters(self) -> int:
-        """Count trainable parameters."""
         return sum(p.numel() for p in self.trainable_parameters())
 
     def save(self, path: str) -> None:
-        """
-        Save model state (classifier + base model adapters).
-
-        For clip_ast, also saves the fine-tuned CLIP parameters.
-        For other types, saves only the classification head and adapter weights.
-        """
+        """Save model state (classifier head only, base is frozen)."""
         state = {
             "classifier_state_dict": self.classifier.state_dict(),
             "model_type": self.model_type,
@@ -347,82 +357,26 @@ class VQAModel(nn.Module):
             "hidden_dim": self.hidden_dim,
             "dropout_rate": self.dropout_rate,
             "answer_vocab": self.answer_vocab,
+            "num_mc_samples": self.num_mc_samples,
         }
-
-        # For clip_ast, also save the fine-tuned CLIP parameters
-        if self.model_type == "clip_ast":
-            state["clip_state_dict"] = self.base_model.clip_model.state_dict()
-
-        # For freeze_align and fate, save adapter weights
-        if self.model_type in ("freeze_align", "fate"):
-            adapter_state = {
-                k: v for k, v in self.base_model.state_dict().items()
-                if not k.startswith("clip_model.")
-            }
-            state["adapter_state_dict"] = adapter_state
-
         torch.save(state, path)
         logger.info(f"VQA model saved to: {path}")
 
     def load_classifier(self, path: str) -> None:
-        """
-        Load model state (classifier + base model adapters).
-
-        Args:
-            path: Path to VQA checkpoint
-        """
+        """Load model state (classifier + base model adapters)."""
         state = torch.load(path, map_location="cpu", weights_only=False)
         self.classifier.load_state_dict(state["classifier_state_dict"])
 
-        # Restore adapter weights if present
+        # Restore adapter weights if present (backward compat)
         if "adapter_state_dict" in state:
             self.base_model.load_state_dict(state["adapter_state_dict"], strict=False)
             logger.info("Adapter weights restored")
-
-        # Restore CLIP weights for clip_ast
-        if "clip_state_dict" in state:
-            self.base_model.clip_model.load_state_dict(state["clip_state_dict"])
-            logger.info("CLIP-AST fine-tuned CLIP weights restored")
 
         if "answer_vocab" in state:
             self.answer_vocab = state["answer_vocab"]
         if "num_classes" in state:
             self.num_classes = state["num_classes"]
+        if "num_mc_samples" in state:
+            self.num_mc_samples = state["num_mc_samples"]
 
         logger.info(f"VQA model loaded from: {path}")
-
-
-if __name__ == "__main__":
-    from utils.logger import setup_logger
-    from utils.seed import set_seed
-
-    setup_logger("vqa_model", config.LOG_DIR / "vqa_model_test.log")
-    set_seed(config.SEED)
-
-    # Test with dist_align base
-    print("Testing VQAModel with dist_align backbone...")
-    model = VQAModel(
-        model_type="dist_align",
-        num_classes=430,
-        hidden_dim=config.VQA_HIDDEN_DIM,
-        dropout=config.VQA_DROPOUT,
-    )
-
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = model.num_trainable_parameters()
-    print(f"Total parameters: {total_params:,}")
-    print(f"Trainable parameters: {trainable_params:,}")
-    print(f"Frozen parameters: {total_params - trainable_params:,}")
-
-    # Test forward pass with dummy data
-    batch_size = 2
-    dummy_images = torch.randn(batch_size, 3, 224, 224)
-    dummy_input_ids = torch.randint(0, 49408, (batch_size, 77))
-    dummy_attention_mask = torch.ones(batch_size, 77, dtype=torch.long)
-
-    with torch.no_grad():
-        logits = model(dummy_images, dummy_input_ids, dummy_attention_mask)
-
-    print(f"Output logits shape: {logits.shape}")
-    assert logits.shape == (batch_size, 430), f"Expected (2, 430), got {logits.shape}"
-    print("Forward pass test passed!")

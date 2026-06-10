@@ -2,10 +2,23 @@
 
 ## 项目架构概览
 
-本项目实现两种图文表示学习方法：
+本项目实现 **UC-CL (Uncertainty-Calibrated Distributional Contrastive Learning)** 及 7 个对比基线（B1-B8），用于图像-文本表示学习。
 
-1. **CLIP Baseline**: 标准 CLIP 微调 + 双向对比损失
-2. **Distribution Alignment**: 高斯分布建模 + 对比损失 + KL 散度
+### 核心方法
+- **UC-CL**: 冻结 CLIP ViT-L/14 + 4 MLP 头 → 高斯分布 N(μ, σ²I)
+- **关键约束**: σ²_img ≈ Var(μ_captions)，使 σ 具有语义意义
+
+### 基线对比
+
+| ID | 方法 | 模型文件 | 训练脚本 | σ 来源 |
+|----|------|---------|---------|--------|
+| B1 | CLIP Zero-Shot | `clip_zero_shot.py` | 无需训练 | 无 |
+| B2 | CLIP Fine-Tune | `clip_baseline.py` | `train_clip_baseline.py` | 无 |
+| B3 | ProLIP | `prolip_model.py` | `train_prolip.py` | 隐式(inclusion loss) |
+| B4 | GroVE | `grove_model.py` | `train_grove.py` | GP 后验方差 |
+| B5 | ICPE | `icpe_model.py` | 无需训练 | k-NN 协方差 |
+| B6 | D2P | `d2p_model.py` | `train_d2p.py` | 仅文本端 |
+| Ours | UC-CL | `dist_align_model.py` | `train_dist_align.py` | 显式约束 |
 
 ---
 
@@ -13,335 +26,171 @@
 
 ### 1. 数据层 (`data/`)
 
-#### `caption_dataset.py` - ImageCaptionDataset
+#### `caption_dataset.py` — ImageCaptionDataset (MSCOCO)
+- 输入: Parquet (url, caption, image_file_name)
+- 输出: `{"image": PIL.Image, "captions": List[str] (K=5)}`
+- 关键: `_get_captions()` 自动填充/截断到 5 个; `filter_none_collate` 过滤加载失败的样本
 
-**职责**: 加载 MS-COCO 格式的图像-文本对
+#### `flickr30k_dataset.py` — Flickr30KDataset (Exp6)
+- 加载 Flickr30K 图像-文本对，按图像分组 captions
+- `get_flickr30k_test_loader()` 便捷函数
 
-**数据流**:
-```
-Parquet 文件 (url, caption, image_file_name)
-    ↓ pd.read_parquet()
-DataFrame
-    ↓ __getitem__()
-{
-    "image": PIL.Image (RGB),
-    "image_path": str,
-    "image_name": str,
-    "captions": List[str] (固定 NUM_CAPTIONS=5 个)
-}
-```
-
-**关键逻辑**:
-- `_get_captions()`: 自动填充/截断描述数量到 5 个
-- `collate_fn()`: 过滤掉加载失败的 None 样本
-- `_validate_images()`: 快速检查前 100 个样本的图片是否存在
-
-**数据对应关系验证**:
-- 每个样本的 `image` 和 `captions` 严格一一对应
-- Parquet 中的 `image_file_name` 关联到 `IMAGES_DIR` 中的实际图片
+#### `vqa_dataset.py` — VQADataset (Stage 2)
+- 加载 VQA 问题-答案对，构建 answer vocabulary
+- 返回: `{"images", "questions", "answer_indices", "question_types"}`
 
 ---
 
 ### 2. 模型层 (`models/`)
 
-#### `clip_baseline.py` - CLIPFineTuneBaseline
+#### 统一接口
 
-**架构**:
+所有模型都实现:
+- `encode_image(pixel_values) → Tensor(B, 768)`: 提取图像特征
+- `encode_text(input_ids, attention_mask) → Tensor(B, 768)`: 提取文本特征
+- `process_images(images) → pixel_values`: PIL → Tensor
+- `process_text(texts) → {input_ids, attention_mask}`: str → Token IDs
+- `save(path)` / `load(path)`: 模型序列化
+
+#### `dist_align_model.py` — DistributionAlignmentModel (Ours)
+
 ```
-CLIP ViT-Large-Patch14 (本地加载, local_files_only=True)
-├── vision_model → image features [B, projection_dim]
-├── text_model → text features [B, projection_dim]
-├── visual_projection → 投影到统一维度
-└── text_projection → 投影到统一维度
-```
-
-**关键方法**:
-- `encode_image(images, normalize=True)` → `[B, 512]`
-- `encode_text(input_ids, attention_mask, normalize=True)` → `[B, 512]`
-- `forward(images, input_ids, attention_mask)` → `(image_features, text_features)`
-- `process_images(images: List[PIL.Image])` → `pixel_values` tensor
-- `process_text(texts: List[str])` → `{input_ids, attention_mask}`
-
-**冻结机制**:
-- `freeze_image=True`: 冻结 `vision_model` + `visual_projection`
-- `freeze_text=True`: 冻结 `text_model` + `text_projection`
-
-#### `dist_align_model.py` - DistributionAlignmentModel
-
-**架构**:
-```
-CLIP ViT-Large-Patch14 (可冻结)
-├── Image Branch
-│   ├── CLIP vision_model → features [B, 768]
-│   └── MLP head → μ_img [B, 768], logvar_img [B, 768]
-└── Text Branch
-    ├── CLIP text_model → features [B, K, 768]
-    ├── MLP head → K 组 (μ, logvar) [B, K, 768]
-    └── merge_distributions() → μ_text, logvar_text [B, 768]
+CLIP ViT-L/14 (frozen)
+├── Image: clip_feat → img_mu_head → μ_img
+│                   → img_logvar_head → logvar_img
+└── Text K captions: clip_feat_k → text_mu_head → μ_k
+                                      → text_logvar_head → logvar_k
+                   → merge_distributions(moment_matching) → μ_text, logvar_text
 ```
 
-**分布合并方法**:
-1. **moment_matching** (默认): 矩匹配，最小化 KL 散度
-   - μ = Σwᵢμᵢ
-   - σ² = Σwᵢ(σᵢ² + μᵢ²) - μ²
+- `forward(pixel_values, input_ids_3d, attention_mask_3d)` → Dict(img_mu, img_logvar, text_mu, text_logvar, text_mus, ...)
+- `encode_image()` / `encode_text()`: 返回确定性 μ
 
-2. **poe** (Product of Experts): 乘积合并
-   - τ = Στᵢ
-   - μ = (Στᵢμᵢ) / τ
+#### `prolip_model.py` — ProLIPModel (B3)
+- 同架构（4 MLP 头），但 σ 无显式语义约束
+- 使用 `baseline_utils.merge_distributions_moment_matching` 合并
 
-3. **simple**: 简单平均
+#### `grove_model.py` — GroVEModel (B4)
+- GP 后验: 可学习 inducing points + attention 加权
+- `_compute_gp_posterior()`: 计算后验 μ 和距离依赖的 logvar
 
-**关键方法**:
-- `encode_image_distribution(pixel_values)` → `(img_features, img_mu, img_logvar)`
-- `encode_text_distribution(input_ids, attention_mask)` → `(text_features, text_mu, text_logvar)`
-- `merge_distributions(mus, logvars)` → `(merged_mu, merged_logvar)`
-- `forward(pixel_values, input_ids, attention_mask)` → `(img_features, text_features, img_mu, img_logvar, text_mu, text_logvar)`
-- `process_images()` / `process_text()`: 同 CLIPBaseline
+#### `icpe_model.py` — ICPEModel (B5)
+- Training-free: 冻结 CLIP + k-NN 协方差
+- `compute_icpe_covariance()`: 在完整数据集上计算每样本方差
+- `trainable_parameters()` 返回空列表
+
+#### `d2p_model.py` — D2PModel (B6)
+- 图像: 确定性点嵌入 (img_projection)
+- 文本: 分布嵌入 (text_mu_head + text_logvar_head)
+- `d2p_loss()`: MC 采样的 distribution-to-point 对比损失
+
+#### `vqa_model.py` — VQAModel (Stage 2 统一封装)
+- 冻结 backbone + 可训练分类头: `Linear(1536→512) → ReLU → Dropout → Linear(512→num_classes)`
+- 对 dist_align: 训练时采样 z=μ+εσ，评估时用 μ
+- 对其他基线: 委托 `base_model.encode_image()` / `encode_text()`
+- clip_zero_shot 由 `train_vqa.py` 独立处理，不经过 VQAModel
+
+#### `baseline_utils.py` — 共享工具
+- `merge_distributions_moment_matching(mus, logvars)`: 矩匹配合并
+- `encode_clip_features(clip_model, ...)`: 统一 CLIP 编码
+- `init_heads_xavier(heads)`: Xavier 初始化
 
 ---
 
 ### 3. 损失函数层 (`losses/`)
 
 #### `clip_losses.py`
+- `clip_contrastive_loss(img_feat, text_feat, temperature)`: 双向交叉熵
 
-**函数**:
-- `compute_similarity_matrix(image_features, text_features, temperature)` → `[B, B]` 相似度矩阵
-- `clip_contrastive_loss(image_features, text_features, temperature)` → `(loss, info_dict)`
-  - 双向交叉熵: `loss = (loss_i2t + loss_t2i) / 2`
-  - info_dict 包含: loss, loss_i2t, loss_t2i, acc, acc_i2t, acc_t2i
-- `clip_contrastive_loss_with_hard_negatives()` → 带硬负采样的对比损失
-- `CLIPLoss` (nn.Module): 封装对比损失为 PyTorch Module
-
-#### `dist_align_losses.py`
-
-**类**:
-1. **DistributionAlignmentLoss**: 对比损失 + KL 散度
-   - 支持 KL 类型: symmetric, forward, reverse, wasserstein
-   - KL 对称版本: `KL(P||Q) + KL(Q||P)`
-   - Wasserstein: `||μ₁ - μ₂||² + ||σ₁ - σ₂||²`
-
-2. **VarianceRegularizationLoss**: 方差正则化
-   - 防止分布退化（方差为 0 或过大）
-   - `L_var = ||σ² - target_variance||²`
-
-3. **CombinedDistributionLoss**: 完整损失组合
-   - `L_total = λ_contrastive × L_contrastive + λ_kl × L_kl + λ_var × L_var`
+#### `dist_align_losses.py` — UC-CL 损失
+- **UncertaintyCalibratedContrastiveLoss**: L = λ_cl·L_calibrated_CL + λ_consist·L_consistency + λ_var·L_variance
+  - L_calibrated_CL: `sim = μ_x·μ_y / (τ·√(1+var_x)·√(1+var_y))`
+  - L_consistency: `||σ²_img - Var(μ_captions)||²`
+  - L_variance: `||σ² - target||²`
+- **DistributionAlignmentLoss**: 标准 KL + 对比损失（旧版，ProLIP 使用）
 
 ---
 
 ### 4. 训练/评估脚本 (`scripts/`)
 
-#### `train_clip_baseline.py`
-
-**数据集划分**:
+#### 通用训练流程
 ```
-Full Dataset (118K samples)
-    → random_split(90% train / 10% val, seed=42)
-    → train_dataloader (shuffle=True)
-    → val_dataloader (shuffle=False)
+Dataset → DataLoader (shuffle=True, collate_fn=filter_none_collate)
+    → train/val split (90%/10%, seed=42)
+    → 每个 epoch: train → validate → save best if improved
+    → 早停 (patience=3)
 ```
 
-**训练流程** (与 train_dist_align.py 风格一致):
+#### 数据处理流 (分布模型)
 ```
-每个 epoch:
-1. train_epoch() → 在训练集上训练
-2. evaluate() → 在验证集上评估
-3. 如果 val_loss < best_val_loss → 保存 clip_baseline_best.pt, 重置 patience
-4. 否则 patience_counter += 1
-5. 如果 patience >= early_stop_patience (3) → 早停
-```
-
-**数据流**:
-```
-DataLoader(ImageCaptionDataset, collate_fn=filter_none_collate)
-    ↓ batch = {"image": List[PIL.Image], "captions": List[List[str]], ...}
-    ↓
-1. 提取 PIL 图像和描述列表
-2. 随机选择每个图像的 1 个描述: random.choice(captions)
-3. model.process_images(pil_images) → pixel_values
-4. model.process_text(selected_captions) → input_ids, attention_mask
-5. model(pixel_values, input_ids, attention_mask) → features
-6. clip_contrastive_loss(image_features, text_features) → loss
-7. backprop + optimizer.step()
+batch = {"image": List[PIL], "captions": List[List[str]]}
+→ pixel_values = model.process_images(pil_images)     # [B, 3, 224, 224]
+→ all_captions = [c for cs in caption_lists for c in cs]  # [B*K]
+→ text_inputs = model.process_text(all_captions)        # {input_ids: [B*K, 77]}
+→ input_ids.view(B, K, -1)                              # [B, K, 77]
+→ model(pixel_values, input_ids, attention_mask)        # Dict with distributions
+→ loss → backward → optimizer.step()
 ```
 
-**检查点管理**:
-- `clip_baseline_best.pt`: 验证 loss 最低时保存
-- `clip_baseline_last.pt`: 训练结束时保存
-
-**早停机制**:
-- 默认 patience=3: 连续 3 个 epoch 验证 loss 无改善则停止
-- 可通过 `--early-stop-patience` 调整，`--no-early-stop` 禁用
-- 可通过 `--val-split` 调整验证集比例（默认 0.1）
-
-#### `evaluate_clip_baseline.py`
-
-**评估流程**:
+#### 评估流程
 ```
 加载 checkpoint → 遍历 DataLoader
-    → 提取所有 image_features 和 text_features (使用第 1 个描述)
-    → 计算完整相似度矩阵
-    → compute_bidirectional_recall() → Recall@K
-```
-
-#### `train_dist_align.py`
-
-**数据集划分**:
-```
-Full Dataset (118K samples)
-    → random_split(90% train / 10% val, seed=42)
-    → train_dataloader (shuffle=True)
-    → val_dataloader (shuffle=False)
-```
-
-**训练流程**:
-```
-每个 epoch:
-1. train_epoch() → 在训练集上训练
-2. evaluate() → 在验证集上评估
-3. 如果 val_loss < best_val_loss → 保存 dist_align_best.pt, 重置 patience
-4. 否则 patience_counter += 1
-5. 如果 patience >= early_stop_patience (3) → 早停
-```
-
-**数据流**:
-```
-DataLoader(ImageCaptionDataset, collate_fn=collate_fn)
-    ↓ batch = {"image": List[PIL.Image], "captions": List[List[str]], ...}
-    ↓
-1. 提取 PIL 图像: pil_images = batch["image"]
-2. model.process_images(pil_images) → pixel_values [B, 3, 224, 224]
-3. 展平所有描述: all_captions = [c for cs in batch["captions"] for c in cs]  # [B*K]
-4. model.process_text(all_captions) → input_ids, attention_mask [B*K, 77]
-5. 重塑: input_ids.view(B, K, -1) → [B, K, 77]
-6. model(pixel_values, input_ids, attention_mask) → features + distributions
-7. DistributionAlignmentLoss → loss
-8. backprop (CLIP 和 MLP 使用不同学习率)
-```
-
-**检查点管理**:
-- `dist_align_best.pt`: 验证 loss 最低时保存（基于验证集自动选择）
-- `dist_align_last.pt`: 训练结束时保存
-
-**早停机制**:
-- 默认 patience=3: 连续 3 个 epoch 验证 loss 无改善则停止
-- 可通过 `--early-stop-patience` 调整，`--no-early-stop` 禁用
-- 可通过 `--val-split` 调整验证集比例（默认 0.1）
-
-**双学习率**:
-- CLIP 参数: `DIST_ALIGN_CLIP_LR` (1e-6)
-- MLP 参数: `DIST_ALIGN_MLP_LR` (1e-4)
-
-#### `evaluate_dist_align.py`
-
-**评估流程**:
-```
-加载 checkpoint → 遍历 DataLoader
-    → 提取 img_mu 和 text_mu (使用分布均值作为特征)
-    → 计算相似度矩阵
-    → compute_bidirectional_recall() → Recall@K
+    → 提取 img_mu, text_mu (分布模型) 或 features (点模型)
+    → compute_recall_chunked() → R@1, R@5, R@10
+    → (可选) compute_recall_uc_chunked() → UC-Recall@K
 ```
 
 ---
 
-### 5. 工具层 (`utils/`)
+### 5. 实验脚本
 
-#### `seed.py`
-- `set_seed(seed)`: 设置 Python, NumPy, PyTorch, CUDA 的随机种子
-- `get_seed()`: 获取当前种子值
+| 实验 | 脚本 | 指标 |
+|------|------|------|
+| Exp3 Calibration | `eval_calibration.py` | ECE, NLL, Brier, AUROC |
+| Exp4 OOD | `eval_ood.py` | AUROC, FPR@95TPR (sigma-based) |
+| Exp5 Ablation | `run_ablation.py` | R@K (6 配置 + λ/τ 敏感性分析) |
+| Exp6 Flickr30K | `eval_flickr30k.py` | R@K (跨数据集泛化) |
+| Exp7 σ Analysis | `eval_sigma_analysis.py` | Pearson/Spearman 相关系数 |
+| Exp8 Modality Gap | `visualize_modality_gap.py` | t-SNE, gap distance, cosine sim 分布 |
 
-#### `io_utils.py`
-- `load_json()` / `save_json()`: JSON 文件读写
-- `load_parquet()`: Parquet 文件读取
-- `save_checkpoint()` / `load_checkpoint()`: 模型检查点管理
-- `save_pickle()` / `load_pickle()`: Pickle 序列化
+---
 
-#### `image_utils.py`
-- `load_image()` / `load_images()`: 图像加载和验证
-- `resize_image()` / `center_crop()`: 图像变换
-- `image_to_numpy()` / `numpy_to_image()`: 格式转换
-- `validate_image_format()`: 格式校验
+### 6. 工具层 (`utils/`)
 
-#### `metrics.py`
-- `compute_recall_at_k()`: 计算 Recall@K 指标
-- `compute_bidirectional_recall()`: 双向（i2t + t2i）召回率
-- `format_recall_results()`: 格式化输出结果
-
-#### `logger.py`
-- `setup_logger()`: 配置日志器（文件 + 控制台）
-- `get_logger()`: 获取命名日志器
-- `log_exception()`: 异常日志记录（含堆栈跟踪）
+| 模块 | 功能 |
+|------|------|
+| `seed.py` | 设置 Python/NumPy/PyTorch/CUDA 随机种子 |
+| `io_utils.py` | JSON/Parquet/Checkpoint/Pickle 读写 |
+| `image_utils.py` | 图像加载、变换、格式转换 |
+| `metrics.py` | Recall@K 计算和格式化 |
+| `logger.py` | 文件+控制台双输出日志系统 |
+| `calibration.py` | ECE/MCE/NLL/Brier/AUROC/FPR@95TPR |
 
 ---
 
 ## 数据对应关系验证
 
-### 数据集层面 (正确)
+### 图文对应（正确）
 ```
-dataset[0] = {
-    "image": PIL.Image (000000000009.jpg),
-    "captions": ["desc1", "desc2", "desc3", "desc4", "desc5"],
-    "image_path": ".../images/000000000009.jpg",
-    "image_name": "000000000009.jpg"
-}
-→ 图像和描述严格对应
+pixel_values[i] ↔ input_ids[i, :, :]   # 第 i 张图 ↔ 第 i 组描述
 ```
 
-### CLIP Baseline 训练层面 (正确)
+### VQA 对应（正确）
 ```
-batch["image"][i] ↔ batch["captions"][i][random_idx]
-→ 通过 process_images/process_text 编码为 tensor
-→ 保持对应关系
+images[i] ↔ questions[i] ↔ answer_indices[i]   # 图-问题-答案严格对应
 ```
 
-### Distribution Alignment 训练层面 (正确)
+### 跨数据集（Exp6）
 ```
-pixel_values[i] ↔ input_ids[i, 0:K, :]
-→ 第 i 张图像 ↔ 第 i 组的 K 个描述
-→ 保持对应关系
+Flickr30K 图像与 5 个 caption 按图像名分组，保持对应关系
 ```
 
-### 评估层面 (正确)
-```
-image_features[i] ↔ text_features[i]
-→ 使用对角线作为正样本对
-```
+## 配置管理
 
----
-
-## 配置管理验证
-
-所有配置集中在 `config.py`:
-
-| 类别 | 配置项 | 验证状态 |
-|------|--------|----------|
-| 路径 | PROJECT_ROOT, CAPTIONS_PATH, IMAGES_DIR | 正确 |
-| 模型 | CLIP_VIT_L_14_PATH | 正确 |
-| 输出 | CHECKPOINT_DIR, OUTPUT_DIR, LOG_DIR | 正确 |
-| Baseline 超参 | EPOCHS, BATCH_SIZE, LR, WEIGHT_DECAY, TEMPERATURE | 正确 |
-| DistAlign 超参 | EPOCHS, BATCH_SIZE, CLIP_LR, MLP_LR, LAMBDA_* | 正确 |
-| 分布配置 | MERGING, KL_TYPE, DROPOUT, TARGET_VARIANCE | 正确 |
-
----
-
-## 总结
-
-### 整体代码状态
-
-| 模块 | 状态 | 说明 |
-|------|------|------|
-| data/caption_dataset.py | 正确 | 数据加载、图文对应正确 |
-| models/clip_baseline.py | 正确 | CLIP 微调模型，含 processor |
-| models/dist_align_model.py | 正确 | 分布对齐模型，含 processor 和分布合并 |
-| losses/clip_losses.py | 正确 | 标准对比损失 |
-| losses/dist_align_losses.py | 正确 | 分布对齐损失（KL + 对比 + 方差正则） |
-| scripts/train_clip_baseline.py | 正确 | 验证集划分 + 早停 + best checkpoint |
-| scripts/evaluate_clip_baseline.py | 正确 | 正确的评估流程 |
-| scripts/train_dist_align.py | 正确 | 验证集划分 + 早停 + best checkpoint + 双学习率 |
-| scripts/evaluate_dist_align.py | 正确 | 使用分布均值评估 |
-| utils/* | 正确 | 工具函数完善 |
-| config.py | 正确 | 集中配置管理 |
-
-### 数据处理统一性
-
-所有训练/评估脚本统一通过 `model.process_images()` 和 `model.process_text()` 处理数据，而非直接使用 `torch.stack()`。这两个方法内部使用 CLIPProcessor 完成 PIL Image → tensor 和 str → input_ids 的转换。
+所有配置集中在 `config.py`，按功能分区:
+- 路径配置 (数据集、模型、输出)
+- Ours 超参 (UC-CL 损失权重、温度、分布配置)
+- B2-B6 基线超参
+- VQA 配置
+- Exp3-8 实验配置
+- Flickr30K 路径

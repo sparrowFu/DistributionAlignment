@@ -187,6 +187,21 @@ DIST_ALIGN_KL_TYPE = "symmetric"      # KL divergence type: "symmetric", "forwar
 DIST_ALIGN_TARGET_VARIANCE = 0.5      # Target variance for regularization
 DIST_ALIGN_USE_VARIANCE_LOSS = False # Whether to use variance regularization loss
 
+# Distributional Contrastive Learning via OT configuration
+DIST_ALIGN_USE_OT_CONTRASTIVE = False  # Use OT-based distributional contrastive loss
+DIST_ALIGN_OT_TEMPERATURE = 10.0      # Temperature for W2-based similarity (τ), larger for high-dim W2
+DIST_ALIGN_LAMBDA_OT = 1.0            # Weight for distributional contrastive loss
+DIST_ALIGN_LAMBDA_VAR_OT = 0.1        # Weight for variance regularization in OT mode
+DIST_ALIGN_MIN_SIGMA = 1e-3           # Minimum sigma to prevent numerical collapse
+
+# Uncertainty-Calibrated Distributional Contrastive Learning configuration
+DIST_ALIGN_USE_UC_CL = True           # Use Uncertainty-Calibrated Distributional Contrastive Learning
+DIST_ALIGN_UC_TEMPERATURE = 0.07      # Temperature for uncertainty-calibrated similarity
+DIST_ALIGN_LAMBDA_UC_CL = 1.0         # Weight for uncertainty-calibrated contrastive loss (λ_cl)
+DIST_ALIGN_LAMBDA_CONSIST = 1.0       # Weight for distributional consistency loss (λ_consist)
+DIST_ALIGN_LAMBDA_UC_VAR = 0.1        # Weight for variance regularization in UC-CL mode (λ_var)
+DIST_ALIGN_UC_TARGET_VARIANCE = 0.5   # Target variance for regularization
+
 
 # =============================================================================
 # VQA Dataset Paths
@@ -217,94 +232,18 @@ VQA_NUM_WORKERS = 0
 VQA_VAL_SPLIT = 0.1
 VQA_EARLY_STOP_PATIENCE = 3
 
+# Distribution-Aware VQA settings (dist_align only)
+# Number of Monte Carlo samples during evaluation (0 = disabled, use deterministic mu)
+# When enabled, samples z = mu + eps*sigma multiple times and averages predictions
+VQA_DIST_NUM_MC_SAMPLES = 0
+
 # =============================================================================
 # VQA Checkpoint Paths
 # =============================================================================
 VQA_DIST_ALIGN_CKPT = CHECKPOINT_DIR / "vqa_dist_align_best.pt"
 VQA_CLIP_BASELINE_CKPT = CHECKPOINT_DIR / "vqa_clip_baseline_best.pt"
-VQA_FREEZE_ALIGN_CKPT = CHECKPOINT_DIR / "vqa_freeze_align_best.pt"
-VQA_FATE_CKPT = CHECKPOINT_DIR / "vqa_fate_best.pt"
-VQA_CLIP_AST_CKPT = CHECKPOINT_DIR / "vqa_clip_ast_best.pt"
 VQA_LOG_PATH = LOG_DIR / "train_vqa.log"
 
-
-# =============================================================================
-# Freeze-Align Model Configuration
-# =============================================================================
-# Checkpoint paths
-FREEZE_ALIGN_BEST_CKPT = CHECKPOINT_DIR / "freeze_align_best.pt"
-FREEZE_ALIGN_LAST_CKPT = CHECKPOINT_DIR / "freeze_align_last.pt"
-
-# Log paths
-TRAIN_FREEZE_ALIGN_LOG_PATH = LOG_DIR / "train_freeze_align.log"
-EVAL_FREEZE_ALIGN_LOG_PATH = LOG_DIR / "evaluate_freeze_align.log"
-
-# Evaluation results path
-FREEZE_ALIGN_EVAL_RESULTS_PATH = OUTPUT_DIR / "freeze_align_eval_results.json"
-
-# Model hyperparameters
-FREEZE_ALIGN_PROJ_DIM = 256        # Bottleneck dimension for projectors
-FREEZE_ALIGN_DROPOUT_RATE = 0.1    # Dropout rate for projectors
-FREEZE_ALIGN_STRUCTURE_WEIGHT = 0.1  # Weight for STRUCTURE regularization loss
-
-# Stage 1 training hyperparameters (image-caption alignment)
-FREEZE_ALIGN_EPOCHS = 10
-FREEZE_ALIGN_BATCH_SIZE = 32
-FREEZE_ALIGN_LR = 1e-3             # Learning rate for projectors
-FREEZE_ALIGN_WEIGHT_DECAY = 1e-4
-FREEZE_ALIGN_TEMPERATURE = 0.07
-
-
-# =============================================================================
-# FATE Model Configuration
-# =============================================================================
-# Checkpoint paths
-FATE_BEST_CKPT = CHECKPOINT_DIR / "fate_best.pt"
-FATE_LAST_CKPT = CHECKPOINT_DIR / "fate_last.pt"
-
-# Log paths
-TRAIN_FATE_LOG_PATH = LOG_DIR / "train_fate.log"
-EVAL_FATE_LOG_PATH = LOG_DIR / "evaluate_fate.log"
-
-# Evaluation results path
-FATE_EVAL_RESULTS_PATH = OUTPUT_DIR / "fate_eval_results.json"
-
-# Model hyperparameters
-FATE_BOTTLENECK_DIM = 64   # Bottleneck dimension for projector
-FATE_ALPHA = 0.001          # Scaling factor for vision perturbation
-
-# Stage 1 training hyperparameters (image-caption alignment)
-FATE_EPOCHS = 10
-FATE_BATCH_SIZE = 32
-FATE_LR = 2e-3              # Learning rate for projector (paper: SGD lr=0.002)
-FATE_WEIGHT_DECAY = 1e-4
-FATE_TEMPERATURE = 0.07
-
-
-# =============================================================================
-# CLIP-AST Model Configuration
-# =============================================================================
-# Checkpoint paths
-CLIP_AST_BEST_CKPT = CHECKPOINT_DIR / "clip_ast_best.pt"
-CLIP_AST_LAST_CKPT = CHECKPOINT_DIR / "clip_ast_last.pt"
-
-# Log paths
-TRAIN_CLIP_AST_LOG_PATH = LOG_DIR / "train_clip_ast.log"
-EVAL_CLIP_AST_LOG_PATH = LOG_DIR / "evaluate_clip_ast.log"
-
-# Evaluation results path
-CLIP_AST_EVAL_RESULTS_PATH = OUTPUT_DIR / "clip_ast_eval_results.json"
-
-# Model hyperparameters
-CLIP_AST_SELECT_RATIO = 0.05  # Fraction of CLIP params to select for fine-tuning
-CLIP_AST_CLIP_LR = 1e-6       # Learning rate for selected CLIP params
-CLIP_AST_WARMUP_EPOCHS = 1    # Warmup epochs before parameter selection
-
-# Stage 1 training hyperparameters (image-caption alignment)
-CLIP_AST_EPOCHS = 10
-CLIP_AST_BATCH_SIZE = 32
-CLIP_AST_WEIGHT_DECAY = 1e-4
-CLIP_AST_TEMPERATURE = 0.07
 
 # =============================================================================
 # LLM VQA Evaluation Configuration
@@ -333,6 +272,174 @@ LLM_API_DELAY = 0.5          # Delay between API calls (seconds)
 LLM_API_MAX_RETRIES = 3      # Maximum retries for failed API calls
 LLM_API_RETRY_WAIT = 5       # Base wait time for retries (seconds)
 LLM_API_TIMEOUT = 60         # Request timeout (seconds)
+
+
+# =============================================================================
+# Baseline B3: ProLIP Configuration
+# =============================================================================
+# HuggingFace model identifier for ProLIP pretrained weights
+PROLIP_MODEL_NAME = "thanossk/prolip-vit-b16-laion400m"
+# If using local cache, specify the path; None means download from HF
+PROLIP_LOCAL_PATH = None
+
+# ProLIP checkpoint and output paths
+PROLIP_BEST_CKPT = CHECKPOINT_DIR / "prolip_best.pt"
+PROLIP_EVAL_RESULTS_PATH = OUTPUT_DIR / "prolip_eval_results.json"
+TRAIN_PROLIP_LOG_PATH = LOG_DIR / "train_prolip.log"
+EVAL_PROLIP_LOG_PATH = LOG_DIR / "evaluate_prolip.log"
+
+# ProLIP uses its own ViT-B/16, embedding dimension is 512
+PROLIP_EMBED_DIM = 512
+
+
+# =============================================================================
+# Baseline B4: GroVE Configuration
+# =============================================================================
+# GroVE adds GP posterior on top of frozen CLIP features
+# Reference: kaaikai/grove
+
+GROVE_BEST_CKPT = CHECKPOINT_DIR / "grove_best.pt"
+GROVE_EVAL_RESULTS_PATH = OUTPUT_DIR / "grove_eval_results.json"
+TRAIN_GROVE_LOG_PATH = LOG_DIR / "train_grove.log"
+EVAL_GROVE_LOG_PATH = LOG_DIR / "evaluate_grove.log"
+
+# GroVE hyperparameters
+GROVE_NUM_INDUCING = 128          # Number of inducing points for GP
+GROVE_LR = 1e-3
+GROVE_EPOCHS = 10
+GROVE_BATCH_SIZE = 32
+GROVE_WEIGHT_DECAY = 1e-4
+GROVE_TEMPERATURE = 0.07
+
+
+# =============================================================================
+# Baseline B5: ICPE Configuration
+# =============================================================================
+# ICPE is training-free: computes intra-class covariance on CLIP features
+
+ICPE_EVAL_RESULTS_PATH = OUTPUT_DIR / "icpe_eval_results.json"
+EVAL_ICPE_LOG_PATH = LOG_DIR / "evaluate_icpe.log"
+
+# ICPE hyperparameters (no training needed)
+ICPE_NUM_NEIGHBORS = 10           # k for k-NN based covariance estimation
+ICPE_REGULARIZATION = 1e-6        # Regularization for covariance
+
+
+# =============================================================================
+# Baseline B6: D2P Configuration
+# =============================================================================
+# D2P: Distribution to Point matching
+
+D2P_BEST_CKPT = CHECKPOINT_DIR / "d2p_best.pt"
+D2P_EVAL_RESULTS_PATH = OUTPUT_DIR / "d2p_eval_results.json"
+TRAIN_D2P_LOG_PATH = LOG_DIR / "train_d2p.log"
+EVAL_D2P_LOG_PATH = LOG_DIR / "evaluate_d2p.log"
+
+# D2P hyperparameters
+D2P_EPOCHS = 10
+D2P_BATCH_SIZE = 32
+D2P_LR = 1e-4
+D2P_WEIGHT_DECAY = 1e-4
+D2P_TEMPERATURE = 0.07
+D2P_NUM_SAMPLES = 10              # Number of distribution samples for matching
+D2P_DROPOUT_RATE = 0.1
+
+
+# =============================================================================
+# Flickr30K Dataset Configuration
+# =============================================================================
+FLICKR30K_ROOT = PROJECT_ROOT / "TrainDatasets" / "flickr30k"
+FLICKR30K_IMAGES_DIR = FLICKR30K_ROOT / "images"
+FLICKR30K_CAPTIONS_PATH = FLICKR30K_ROOT / "captions.txt"
+FLICKR30K_NUM_CAPTIONS = 5
+
+
+# =============================================================================
+# Experiment 3: Uncertainty Calibration Configuration
+# =============================================================================
+CALIBRATION_RESULTS_DIR = OUTPUT_DIR / "calibration"
+CALIBRATION_NUM_BINS = 15         # Number of bins for ECE computation
+CALIBRATION_LOG_PATH = LOG_DIR / "calibration.log"
+
+# Experiment 3 output paths
+CALIBRATION_DIST_ALIGN_PATH = CALIBRATION_RESULTS_DIR / "dist_align_calibration.json"
+CALIBRATION_PROLIP_PATH = CALIBRATION_RESULTS_DIR / "prolip_calibration.json"
+CALIBRATION_GROVE_PATH = CALIBRATION_RESULTS_DIR / "grove_calibration.json"
+
+
+# =============================================================================
+# Experiment 4: OOD Detection Configuration
+# =============================================================================
+OOD_RESULTS_DIR = OUTPUT_DIR / "ood_detection"
+OOD_LOG_PATH = LOG_DIR / "ood_detection.log"
+
+# OOD datasets: will be downloaded via torchvision if not present
+OOD_DATASETS = ["svhn", "cifar10", "tiny_imagenet"]
+OOD_DATA_DIR = PROJECT_ROOT / "TrainDatasets" / "ood"
+
+
+# =============================================================================
+# Experiment 5: Ablation Study Configuration
+# =============================================================================
+ABLATION_RESULTS_DIR = OUTPUT_DIR / "ablation"
+ABLATION_LOG_PATH = LOG_DIR / "ablation.log"
+
+# Ablation configurations (each is a dict of overrides)
+ABLATION_CONFIGS = {
+    "full_model": {
+        "lambda_cl": 1.0, "lambda_consist": 1.0, "lambda_var": 0.1,
+        "description": "Full model (UC-CL + Consist + Var)"
+    },
+    "no_consistency": {
+        "lambda_cl": 1.0, "lambda_consist": 0.0, "lambda_var": 0.1,
+        "description": "w/o Distributional Consistency (λ_c=0)"
+    },
+    "no_uc": {
+        "lambda_cl": 1.0, "lambda_consist": 1.0, "lambda_var": 0.1,
+        "use_uc_cl": False,
+        "description": "w/o Uncertainty Calibration (standard cosine)"
+    },
+    "no_var_reg": {
+        "lambda_cl": 1.0, "lambda_consist": 1.0, "lambda_var": 0.0,
+        "description": "w/o Variance Regularization (λ_v=0)"
+    },
+    "no_distribution_merging": {
+        "lambda_cl": 1.0, "lambda_consist": 1.0, "lambda_var": 0.1,
+        "num_captions": 1,
+        "description": "w/o Distribution Merging (use single caption)"
+    },
+    "only_consistency": {
+        "lambda_cl": 0.0, "lambda_consist": 1.0, "lambda_var": 0.1,
+        "description": "Only Consistency Loss (λ_cl=0)"
+    },
+}
+
+# Sensitivity analysis parameter grids
+ABLATION_LAMBDA_CONSIST_VALUES = [0.1, 0.5, 1.0, 2.0, 5.0]
+ABLATION_TAU_VALUES = [0.05, 0.07, 0.1, 0.2]
+
+
+# =============================================================================
+# Experiment 7: σ Semantic Analysis Configuration
+# =============================================================================
+SIGMA_ANALYSIS_RESULTS_DIR = OUTPUT_DIR / "sigma_analysis"
+SIGMA_ANALYSIS_LOG_PATH = LOG_DIR / "sigma_analysis.log"
+
+
+# =============================================================================
+# Experiment 8: Modality Gap Visualization Configuration
+# =============================================================================
+VIS_GAP_RESULTS_DIR = OUTPUT_DIR / "modality_gap"
+VIS_GAP_LOG_PATH = LOG_DIR / "visualize_gap.log"
+
+
+# =============================================================================
+# VQA Checkpoint Paths for Baselines
+# =============================================================================
+VQA_PROLIP_CKPT = CHECKPOINT_DIR / "vqa_prolip_best.pt"
+VQA_GROVE_CKPT = CHECKPOINT_DIR / "vqa_grove_best.pt"
+VQA_ICPE_CKPT = CHECKPOINT_DIR / "vqa_icpe_best.pt"
+VQA_D2P_CKPT = CHECKPOINT_DIR / "vqa_d2p_best.pt"
 
 
 # =============================================================================
