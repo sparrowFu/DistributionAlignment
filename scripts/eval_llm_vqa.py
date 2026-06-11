@@ -10,7 +10,7 @@ free generation + mapping to 430 answer classes).
 
 Usage:
     python scripts/eval_llm_vqa.py
-    python scripts/eval_llm_vqa.py --models qwen3.5-4b kimi-k2.5
+    python scripts/eval_llm_vqa.py --models qwen3.5-4b
     python scripts/eval_llm_vqa.py --start-idx 0 --end-idx 100
     python main.py --task eval_llm_vqa
 """
@@ -178,6 +178,7 @@ def query_llm(
                         ],
                     },
                 ],
+                max_tokens=30,
                 timeout=config.LLM_API_TIMEOUT,
             )
             return response.choices[0].message.content.strip()

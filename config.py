@@ -258,13 +258,11 @@ EVALUATE_LLM_VQA_LOG_PATH = LOG_DIR / "evaluate_llm_vqa.log"
 # LLM VQA results output (per model)
 LLM_VQA_RESULT_PATHS = {
     "qwen3.5-4b": OUTPUT_DIR / "llm_vqa_qwen3.5-4b_results.json",
-    "kimi-k2.5": OUTPUT_DIR / "llm_vqa_kimi-k2.5_results.json",
 }
 
 # Models to evaluate
 LLM_MODELS = {
     "Qwen/Qwen3.5-4B": "qwen3.5-4b",
-    "Pro/moonshotai/Kimi-K2.5": "kimi-k2.5",
 }
 
 # API call settings
