@@ -1,15 +1,19 @@
 """
 GaussianImageDistribution - Modality Gap Visualization
 
-Generates three publication-quality figures comparing modality gap reduction
+Generates publication-quality figures comparing modality gap reduction
 across all methods:
-  Figure A: t-SNE 2D scatter plots (2x3 grid)
+  Figure A: t-SNE 2D scatter plots
   Figure B: Modality gap distance bar chart
-  Figure C: Cosine similarity distribution histograms (2x3 grid)
+  Figure C: Cosine similarity distribution histograms
+  Figure D: Variance magnitude distribution histograms (distribution models only)
+  Figure E: Per-sample variance vs cosine similarity scatter (distribution models only)
+  Figure F: Per-dimension variance profile bar chart (distribution models only)
 
 Usage:
     python scripts/visualize_modality_gap.py
     python scripts/visualize_modality_gap.py --num-samples 2000 --device cuda
+    python scripts/visualize_modality_gap.py --model-type dist_align
 """
 
 import argparse
@@ -114,7 +118,8 @@ def extract_clip_zero_shot(model, dataloader, device, num_samples):
         img_feat, text_feat = model(images=pv, input_ids=ids, attention_mask=mask, normalize=True)
         all_img.append(img_feat.cpu())
         all_text.append(text_feat.cpu())
-    return _finalize(all_img, all_text, num_samples)
+    img_np, text_np = _finalize(all_img, all_text, num_samples)
+    return {"img": img_np, "text": text_np, "img_logvar": None, "text_logvar": None}
 
 
 @torch.no_grad()
@@ -126,14 +131,15 @@ def extract_clip_finetune(model, dataloader, device, num_samples):
         img_feat, text_feat = model(images=pv, input_ids=ids, attention_mask=mask, normalize=True)
         all_img.append(img_feat.cpu())
         all_text.append(text_feat.cpu())
-    return _finalize(all_img, all_text, num_samples)
+    img_np, text_np = _finalize(all_img, all_text, num_samples)
+    return {"img": img_np, "text": text_np, "img_logvar": None, "text_logvar": None}
 
 
 @torch.no_grad()
 def extract_prolip(model, dataloader, device, num_samples):
     """ProLIP: CLIP + MLP mu heads."""
     model.eval()
-    all_img, all_text = [], []
+    all_img, all_text, all_img_lv, all_text_lv = [], [], [], []
     for pv, ids, mask in _iterate_batches(dataloader, model, device, num_samples):
         ids_3d = ids.unsqueeze(1)
         mask_3d = mask.unsqueeze(1)
@@ -142,14 +148,19 @@ def extract_prolip(model, dataloader, device, num_samples):
         text_mu = F.normalize(outputs["text_mu"], dim=-1)
         all_img.append(img_mu.cpu())
         all_text.append(text_mu.cpu())
-    return _finalize(all_img, all_text, num_samples)
+        all_img_lv.append(outputs["img_logvar"].cpu())
+        all_text_lv.append(outputs["text_logvar"].cpu())
+    img_np, text_np = _finalize(all_img, all_text, num_samples)
+    img_lv = torch.cat(all_img_lv, dim=0)[:num_samples].numpy()
+    text_lv = torch.cat(all_text_lv, dim=0)[:num_samples].numpy()
+    return {"img": img_np, "text": text_np, "img_logvar": img_lv, "text_logvar": text_lv}
 
 
 @torch.no_grad()
 def extract_grove(model, dataloader, device, num_samples):
     """GroVE: GP posterior mu."""
     model.eval()
-    all_img, all_text = [], []
+    all_img, all_text, all_img_lv, all_text_lv = [], [], [], []
     for pv, ids, mask in _iterate_batches(dataloader, model, device, num_samples):
         ids_3d = ids.unsqueeze(1)
         mask_3d = mask.unsqueeze(1)
@@ -158,14 +169,19 @@ def extract_grove(model, dataloader, device, num_samples):
         text_mu = F.normalize(outputs["text_mu"], dim=-1)
         all_img.append(img_mu.cpu())
         all_text.append(text_mu.cpu())
-    return _finalize(all_img, all_text, num_samples)
+        all_img_lv.append(outputs["img_logvar"].cpu())
+        all_text_lv.append(outputs["text_logvar"].cpu())
+    img_np, text_np = _finalize(all_img, all_text, num_samples)
+    img_lv = torch.cat(all_img_lv, dim=0)[:num_samples].numpy()
+    text_lv = torch.cat(all_text_lv, dim=0)[:num_samples].numpy()
+    return {"img": img_np, "text": text_np, "img_logvar": img_lv, "text_logvar": text_lv}
 
 
 @torch.no_grad()
 def extract_d2p(model, dataloader, device, num_samples):
     """D2P: image point + text distribution mu."""
     model.eval()
-    all_img, all_text = [], []
+    all_img, all_text, all_img_lv, all_text_lv = [], [], [], []
     for pv, ids, mask in _iterate_batches(dataloader, model, device, num_samples):
         ids_3d = ids.unsqueeze(1)
         mask_3d = mask.unsqueeze(1)
@@ -174,14 +190,19 @@ def extract_d2p(model, dataloader, device, num_samples):
         text_mu = F.normalize(outputs["text_mu"], dim=-1)
         all_img.append(img_mu.cpu())
         all_text.append(text_mu.cpu())
-    return _finalize(all_img, all_text, num_samples)
+        all_img_lv.append(outputs["img_logvar"].cpu())
+        all_text_lv.append(outputs["text_logvar"].cpu())
+    img_np, text_np = _finalize(all_img, all_text, num_samples)
+    img_lv = torch.cat(all_img_lv, dim=0)[:num_samples].numpy()
+    text_lv = torch.cat(all_text_lv, dim=0)[:num_samples].numpy()
+    return {"img": img_np, "text": text_np, "img_logvar": img_lv, "text_logvar": text_lv}
 
 
 @torch.no_grad()
 def extract_dist_align(model, dataloader, device, num_samples):
     """Distribution Alignment: img_mu and text_mu, then normalize."""
     model.eval()
-    all_img, all_text = [], []
+    all_img, all_text, all_img_lv, all_text_lv = [], [], [], []
     for pv, ids, mask in _iterate_batches(dataloader, model, device, num_samples):
         # Dist-Align expects (B, K, max_len), reshape to K=1
         ids_3d = ids.unsqueeze(1)
@@ -191,7 +212,12 @@ def extract_dist_align(model, dataloader, device, num_samples):
         text_mu = F.normalize(outputs["text_mu"], dim=-1)
         all_img.append(img_mu.cpu())
         all_text.append(text_mu.cpu())
-    return _finalize(all_img, all_text, num_samples)
+        all_img_lv.append(outputs["img_logvar"].cpu())
+        all_text_lv.append(outputs["text_logvar"].cpu())
+    img_np, text_np = _finalize(all_img, all_text, num_samples)
+    img_lv = torch.cat(all_img_lv, dim=0)[:num_samples].numpy()
+    text_lv = torch.cat(all_text_lv, dim=0)[:num_samples].numpy()
+    return {"img": img_np, "text": text_np, "img_logvar": img_lv, "text_logvar": text_lv}
 
 
 # =============================================================================
@@ -259,13 +285,23 @@ def compute_metrics(img: np.ndarray, text: np.ndarray) -> Dict[str, float]:
     }
 
 
-def plot_tsne_grid(features: Dict, output_dir: Path, perplexity: int = 30):
-    """Figure A: 2x3 grid of t-SNE scatter plots."""
-    logger.info("Generating Figure A: t-SNE grid...")
-    method_order = list(METHOD_CONFIGS.keys())
-    n_methods = len(method_order)
+def _compute_grid(n_methods):
+    """Compute (n_rows, n_cols) for a grid with at most 3 columns."""
+    n_cols = min(3, n_methods)
+    n_rows = (n_methods + n_cols - 1) // n_cols
+    return n_rows, n_cols
 
-    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+
+def plot_tsne_grid(features: Dict, output_dir: Path, perplexity: int = 30):
+    """Figure A: grid of t-SNE scatter plots."""
+    logger.info("Generating Figure A: t-SNE grid...")
+    method_order = list(features.keys())
+    n_methods = len(method_order)
+    n_rows, n_cols = _compute_grid(n_methods)
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 6 * n_rows))
+    if n_methods == 1:
+        axes = np.array([axes])
     axes = axes.flatten()
 
     for idx, method_name in enumerate(method_order):
@@ -318,7 +354,7 @@ def plot_gap_bar_chart(features: Dict, output_dir: Path):
     """Figure B: Horizontal bar chart of average cosine distance."""
     logger.info("Generating Figure B: Gap bar chart...")
 
-    method_order = list(METHOD_CONFIGS.keys())
+    method_order = list(features.keys())
     names, means, stds = [], [], []
     for name in method_order:
         m = compute_metrics(features[name]["img"], features[name]["text"])
@@ -356,11 +392,12 @@ def plot_gap_bar_chart(features: Dict, output_dir: Path):
 
 
 def plot_similarity_histograms(features: Dict, output_dir: Path):
-    """Figure C: 2x3 grid of cosine similarity distribution histograms."""
+    """Figure C: grid of cosine similarity distribution histograms."""
     logger.info("Generating Figure C: Similarity histograms...")
 
-    method_order = list(METHOD_CONFIGS.keys())
+    method_order = list(features.keys())
     n_methods = len(method_order)
+    n_rows, n_cols = _compute_grid(n_methods)
 
     # Compute all similarities and global range
     all_sims = {}
@@ -372,7 +409,9 @@ def plot_similarity_histograms(features: Dict, output_dir: Path):
     global_min = min(s.min() for s in all_sims.values())
     global_max = max(s.max() for s in all_sims.values())
 
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 5 * n_rows))
+    if n_methods == 1:
+        axes = np.array([axes])
     axes = axes.flatten()
 
     for idx, method_name in enumerate(method_order):
@@ -402,9 +441,209 @@ def plot_similarity_histograms(features: Dict, output_dir: Path):
     logger.info("  Figure C saved.")
 
 
+def _get_dist_methods(features):
+    """Return list of method names that have logvar (distribution models)."""
+    return [
+        name for name, feat in features.items()
+        if feat.get("img_logvar") is not None or feat.get("text_logvar") is not None
+    ]
+
+
+def plot_variance_histograms(features: Dict, output_dir: Path):
+    """Figure D: Variance magnitude distribution histograms.
+
+    For each distribution model, plot histograms of per-sample average variance
+    (exp(logvar)) for both image and text modalities.
+    """
+    logger.info("Generating Figure D: Variance histograms...")
+    dist_methods = _get_dist_methods(features)
+
+    if not dist_methods:
+        logger.info("  No distribution models found. Skipping Figure D.")
+        return
+
+    n_methods = len(dist_methods)
+    n_rows, n_cols = _compute_grid(n_methods)
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 5 * n_rows))
+    if n_methods == 1:
+        axes = np.array([axes])
+    axes = axes.flatten()
+
+    for idx, method_name in enumerate(dist_methods):
+        ax = axes[idx]
+        feat = features[method_name]
+
+        if feat["img_logvar"] is not None:
+            img_var = np.exp(feat["img_logvar"])
+            img_mean_var = img_var.mean(axis=1)  # per-sample average
+            ax.hist(img_mean_var, bins=50, alpha=0.6, color="#4A90D9",
+                    edgecolor="white", density=True, label="Image")
+
+        if feat["text_logvar"] is not None:
+            text_var = np.exp(feat["text_logvar"])
+            text_mean_var = text_var.mean(axis=1)  # per-sample average
+            ax.hist(text_mean_var, bins=50, alpha=0.6, color="#E74C3C",
+                    edgecolor="white", density=True, label="Text")
+
+        ax.set_xlabel("Mean Variance (exp(logvar))", fontsize=10)
+        ax.set_ylabel("Density", fontsize=10)
+        ax.set_title(method_name, fontsize=12, fontweight="bold")
+        ax.legend(fontsize=9)
+
+    for idx in range(n_methods, len(axes)):
+        axes[idx].set_visible(False)
+
+    fig.suptitle("Variance Magnitude Distribution (Distribution Models)",
+                 fontsize=16, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+
+    fig.savefig(output_dir / "fig_d_variance_histograms.pdf", dpi=300, bbox_inches="tight")
+    fig.savefig(output_dir / "fig_d_variance_histograms.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    logger.info("  Figure D saved.")
+
+
+def plot_variance_vs_similarity(features: Dict, output_dir: Path):
+    """Figure E: Per-sample variance vs cosine similarity scatter plot.
+
+    x-axis: per-sample average variance, y-axis: cosine similarity.
+    Annotate with Pearson correlation coefficient r.
+    """
+    logger.info("Generating Figure E: Variance vs similarity scatter...")
+    dist_methods = _get_dist_methods(features)
+
+    if not dist_methods:
+        logger.info("  No distribution models found. Skipping Figure E.")
+        return
+
+    n_methods = len(dist_methods)
+    n_rows, n_cols = _compute_grid(n_methods)
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 5 * n_rows))
+    if n_methods == 1:
+        axes = np.array([axes])
+    axes = axes.flatten()
+
+    for idx, method_name in enumerate(dist_methods):
+        ax = axes[idx]
+        feat = features[method_name]
+        img = feat["img"]
+        text = feat["text"]
+
+        # Cosine similarity per sample
+        cos_sims = np.sum(img * text, axis=1)
+
+        # Average variance per sample across both modalities
+        vars_list = []
+        if feat["img_logvar"] is not None:
+            vars_list.append(np.exp(feat["img_logvar"]).mean(axis=1))
+        if feat["text_logvar"] is not None:
+            vars_list.append(np.exp(feat["text_logvar"]).mean(axis=1))
+
+        avg_var = np.mean(np.stack(vars_list, axis=0), axis=0)
+
+        ax.scatter(avg_var, cos_sims, alpha=0.3, s=6, c="#4A90D9")
+
+        # Pearson correlation
+        r = np.corrcoef(avg_var, cos_sims)[0, 1]
+        ax.set_xlabel("Per-sample Mean Variance", fontsize=10)
+        ax.set_ylabel("Cosine Similarity", fontsize=10)
+        ax.set_title(f"{method_name}\nr = {r:.4f}", fontsize=12, fontweight="bold")
+
+    for idx in range(n_methods, len(axes)):
+        axes[idx].set_visible(False)
+
+    fig.suptitle("Variance vs Cosine Similarity (Distribution Models)",
+                 fontsize=16, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+
+    fig.savefig(output_dir / "fig_e_variance_vs_similarity.pdf", dpi=300, bbox_inches="tight")
+    fig.savefig(output_dir / "fig_e_variance_vs_similarity.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    logger.info("  Figure E saved.")
+
+
+def plot_variance_profile(features: Dict, output_dir: Path):
+    """Figure F: Per-dimension variance profile bar chart.
+
+    Show top-50 dimensions with highest variance, comparing image vs text.
+    """
+    logger.info("Generating Figure F: Variance profile...")
+    dist_methods = _get_dist_methods(features)
+
+    if not dist_methods:
+        logger.info("  No distribution models found. Skipping Figure F.")
+        return
+
+    n_methods = len(dist_methods)
+    n_rows, n_cols = _compute_grid(n_methods)
+    top_k = 50
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 5 * n_rows))
+    if n_methods == 1:
+        axes = np.array([axes])
+    axes = axes.flatten()
+
+    for idx, method_name in enumerate(dist_methods):
+        ax = axes[idx]
+        feat = features[method_name]
+
+        # Compute per-dimension average variance
+        dims_list = []
+        if feat["img_logvar"] is not None:
+            dims_list.append(np.exp(feat["img_logvar"]).mean(axis=0))
+        if feat["text_logvar"] is not None:
+            dims_list.append(np.exp(feat["text_logvar"]).mean(axis=0))
+
+        # Use the maximum across modalities to pick top dimensions
+        combined = np.max(np.stack(dims_list), axis=0)
+        top_dims = np.argsort(combined)[-top_k:][::-1]
+
+        dim_indices = np.arange(top_k)
+        width = 0.35
+
+        if feat["img_logvar"] is not None:
+            img_dim_var = np.exp(feat["img_logvar"]).mean(axis=0)[top_dims]
+            ax.bar(dim_indices - width / 2, img_dim_var, width,
+                   color="#4A90D9", alpha=0.7, label="Image")
+
+        if feat["text_logvar"] is not None:
+            text_dim_var = np.exp(feat["text_logvar"]).mean(axis=0)[top_dims]
+            ax.bar(dim_indices + width / 2, text_dim_var, width,
+                   color="#E74C3C", alpha=0.7, label="Text")
+
+        ax.set_xlabel(f"Top-{top_k} Dimensions", fontsize=10)
+        ax.set_ylabel("Mean Variance", fontsize=10)
+        ax.set_title(method_name, fontsize=12, fontweight="bold")
+        ax.legend(fontsize=9)
+
+    for idx in range(n_methods, len(axes)):
+        axes[idx].set_visible(False)
+
+    fig.suptitle(f"Per-Dimension Variance Profile (Top {top_k})",
+                 fontsize=16, fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+
+    fig.savefig(output_dir / "fig_f_variance_profile.pdf", dpi=300, bbox_inches="tight")
+    fig.savefig(output_dir / "fig_f_variance_profile.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    logger.info("  Figure F saved.")
+
+
 # =============================================================================
 # Main
 # =============================================================================
+
+MODEL_TYPE_ALIASES = {
+    "dist_align": "Ours",
+    "clip_zero": "CLIP Zero-Shot",
+    "clip_baseline": "CLIP Fine-tune",
+    "prolip": "ProLIP",
+    "grove": "GroVE",
+    "d2p": "D2P",
+}
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Visualize Modality Gap Across Methods")
@@ -420,6 +659,10 @@ def parse_args():
     parser.add_argument("--methods", type=str, nargs="+", default=None,
                         choices=list(METHOD_CONFIGS.keys()),
                         help="Subset of methods to visualize (default: all)")
+    parser.add_argument("--model-type", type=str, default=None,
+                        choices=list(MODEL_TYPE_ALIASES.keys()),
+                        help="Shortcut to select a single model by alias "
+                             "(e.g. dist_align, clip_zero). Overrides --methods.")
     return parser.parse_args()
 
 
@@ -430,12 +673,19 @@ def main():
     output_dir = Path(args.output_dir) if args.output_dir else config.OUTPUT_DIR / "modality_gap_viz"
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # --model-type takes priority over --methods
+    if args.model_type is not None:
+        methods = [MODEL_TYPE_ALIASES[args.model_type]]
+    else:
+        methods = args.methods or list(METHOD_CONFIGS.keys())
+
     logger.info("=" * 60)
     logger.info("Modality Gap Visualization")
     logger.info("=" * 60)
     logger.info(f"Num samples: {args.num_samples}")
     logger.info(f"Device: {args.device}")
     logger.info(f"Output dir: {output_dir}")
+    logger.info(f"Methods: {methods}")
     logger.info("=" * 60)
 
     # Prepare shared dataset
@@ -447,24 +697,33 @@ def main():
     # Extract features for all methods
     features = {}
     metrics = {}
-    methods = args.methods or list(METHOD_CONFIGS.keys())
 
     for method_name in methods:
         cfg = METHOD_CONFIGS[method_name]
         logger.info(f"Extracting features for: {method_name}")
+
+        # Check if checkpoint exists before loading
+        checkpoint_path = cfg.get("checkpoint")
+        if checkpoint_path is not None and not Path(checkpoint_path).exists():
+            logger.warning(f"Skipping '{method_name}': checkpoint not found at {checkpoint_path}")
+            continue
 
         model = cfg["model_fn"]()
         if cfg["checkpoint"] is not None:
             model.load(cfg["checkpoint"])
         model = model.to(args.device)
 
-        img_feat, text_feat = cfg["extract_fn"](model, dataloader, args.device, args.num_samples)
-        features[method_name] = {"img": img_feat, "text": text_feat}
-        metrics[method_name] = compute_metrics(img_feat, text_feat)
+        result = cfg["extract_fn"](model, dataloader, args.device, args.num_samples)
+        features[method_name] = result
+        metrics[method_name] = compute_metrics(result["img"], result["text"])
         logger.info(f"  Cosine distance: {metrics[method_name]['mean_cosine_distance']:.6f}")
 
         del model
         torch.cuda.empty_cache()
+
+    if not features:
+        logger.warning("No features extracted. Exiting.")
+        return
 
     # Save metrics JSON
     metrics_path = output_dir / "modality_gap_metrics.json"
@@ -476,6 +735,11 @@ def main():
     plot_tsne_grid(features, output_dir, perplexity=args.tsne_perplexity)
     plot_gap_bar_chart(features, output_dir)
     plot_similarity_histograms(features, output_dir)
+
+    # Distribution-specific figures (D/E/F)
+    plot_variance_histograms(features, output_dir)
+    plot_variance_vs_similarity(features, output_dir)
+    plot_variance_profile(features, output_dir)
 
     logger.info(f"All figures saved to: {output_dir}")
     logger.info("Visualization complete!")

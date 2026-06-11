@@ -1,8 +1,5 @@
 # gitignore for GaussianImageDistribution project
 
-# attributes
-.gitattributes
-
 # Dataset
 TrainDatasets/
 

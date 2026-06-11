@@ -224,7 +224,7 @@ VQA_IMAGES_DIR = IMAGES_DIR
 # =============================================================================
 VQA_EPOCHS = 10
 VQA_BATCH_SIZE = 32
-VQA_LR = 1e-3
+VQA_LR = 1e-4
 VQA_WEIGHT_DECAY = 1e-4
 VQA_HIDDEN_DIM = 512
 VQA_DROPOUT = 0.1
