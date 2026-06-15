@@ -89,6 +89,10 @@ def parse_args():
     # Output
     parser.add_argument("--checkpoint-dir", type=str, default=None,
                         help="Checkpoint save directory")
+    parser.add_argument("--resume", type=str, default=None,
+                        help="Path to VQA checkpoint to resume training from "
+                             "(e.g. checkpoints/vqa_dist_align_last.pt). "
+                             "Restores classifier weights, optimizer state, epoch, and best_val_loss.")
 
     # Distribution-Aware specific (dist_align only)
     parser.add_argument("--num-mc-samples", type=int, default=config.VQA_DIST_NUM_MC_SAMPLES,
@@ -446,14 +450,35 @@ def main():
     criterion = nn.CrossEntropyLoss()
     optimizer = get_optimizer_for_model(model, args.lr, args.weight_decay)
 
-    # Training loop
+    # Resume from checkpoint if specified
+    start_epoch = 0
     best_val_loss = float("inf")
     best_val_acc = 0.0
     patience_counter = 0
     vqa_ckpt_path = checkpoint_dir / get_vqa_ckpt_name(args.model_type)
 
-    logger.info("Starting training...")
-    for epoch in range(args.epochs):
+    if args.resume:
+        resume_path = Path(args.resume)
+        if not resume_path.exists():
+            raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
+        logger.info(f"Resuming from checkpoint: {resume_path}")
+        ckpt = torch.load(str(resume_path), map_location=args.device, weights_only=False)
+        model.load_classifier_from_state(ckpt)
+        if "optimizer_state_dict" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+            for state in optimizer.state.values():
+                for k, v in state.items():
+                    if isinstance(v, torch.Tensor):
+                        state[k] = v.to(args.device)
+        start_epoch = ckpt.get("epoch", 0)
+        best_val_loss = ckpt.get("best_val_loss", float("inf"))
+        best_val_acc = ckpt.get("best_val_acc", 0.0)
+        patience_counter = ckpt.get("patience_counter", 0)
+        logger.info(f"Resumed from epoch {start_epoch}, best_val_loss: {best_val_loss:.4f}, "
+                     f"best_val_acc: {best_val_acc:.4f}")
+
+    logger.info(f"Starting training from epoch {start_epoch + 1}...")
+    for epoch in range(start_epoch, args.epochs):
         # Train
         train_metrics = train_epoch(
             model, train_dataloader, criterion, optimizer,
@@ -500,11 +525,26 @@ def main():
             logger.info(f"Early stopping triggered at epoch {epoch + 1}")
             break
 
-    # Save last checkpoint
+    # Save last checkpoint with full training state for resumption
     last_ckpt_path = checkpoint_dir / get_vqa_ckpt_name(args.model_type).replace(
         "_best.pt", "_last.pt"
     )
-    model.save(str(last_ckpt_path))
+    last_state = {
+        "classifier_state_dict": model.classifier.state_dict(),
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "epoch": epoch + 1,
+        "best_val_loss": best_val_loss,
+        "best_val_acc": best_val_acc,
+        "patience_counter": patience_counter,
+        "model_type": args.model_type,
+        "num_classes": model.num_classes,
+        "hidden_dim": args.hidden_dim,
+        "dropout_rate": args.dropout,
+        "answer_vocab": model.answer_vocab,
+        "num_mc_samples": args.num_mc_samples,
+    }
+    torch.save(last_state, str(last_ckpt_path))
     logger.info(f"Last model saved to {last_ckpt_path}")
     logger.info(f"Best validation loss: {best_val_loss:.4f}, accuracy: {best_val_acc:.4f}")
 

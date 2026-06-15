@@ -145,6 +145,10 @@ Examples:
     parser.add_argument("--config", type=str, default=None,
                         help="Configuration name for ablation study")
 
+    # Resume training
+    parser.add_argument("--resume", type=str, default=None,
+                        help="Path to checkpoint to resume training from")
+
     return parser.parse_args()
 
 
@@ -200,6 +204,8 @@ def run_python_script(script_path: Path, args: argparse.Namespace) -> int:
         cmd.extend(["--max-retries", str(args.max_retries)])
     if hasattr(args, 'config') and args.config:
         cmd.extend(["--config", args.config])
+    if hasattr(args, 'resume') and args.resume:
+        cmd.extend(["--resume", args.resume])
 
     logger.info(f"Running: {' '.join(cmd)}")
 

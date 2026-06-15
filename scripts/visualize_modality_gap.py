@@ -313,7 +313,7 @@ def plot_tsne_grid(features: Dict, output_dir: Path, perplexity: int = 30):
         # Run t-SNE on concatenated features
         all_feats = np.vstack([img, text])  # (2N, 768)
         tsne = TSNE(n_components=2, perplexity=min(perplexity, n - 1),
-                    random_state=42, n_iter=1000)
+                    random_state=42, max_iter=1000)
         embedded = tsne.fit_transform(all_feats)
 
         img_2d = embedded[:n]

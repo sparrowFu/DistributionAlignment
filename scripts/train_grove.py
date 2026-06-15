@@ -43,6 +43,8 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=config.SEED)
     parser.add_argument("--device", type=str,
                         default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--resume", type=str, default=None,
+                        help="Path to checkpoint to resume training from")
     return parser.parse_args()
 
 
@@ -82,9 +84,27 @@ def main():
 
     optimizer = torch.optim.Adam(trainable, lr=args.lr, weight_decay=args.weight_decay)
 
+    start_epoch = 0
     best_val_loss = float("inf")
 
-    for epoch in range(args.epochs):
+    if args.resume:
+        resume_path = Path(args.resume)
+        if not resume_path.exists():
+            raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
+        logger.info(f"Resuming from checkpoint: {resume_path}")
+        ckpt = torch.load(str(resume_path), map_location=args.device, weights_only=False)
+        model.load_state_dict(ckpt["model_state_dict"])
+        if "optimizer_state_dict" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+            for state in optimizer.state.values():
+                for k, v in state.items():
+                    if isinstance(v, torch.Tensor):
+                        state[k] = v.to(args.device)
+        start_epoch = ckpt.get("epoch", 0)
+        best_val_loss = ckpt.get("best_val_loss", float("inf"))
+        logger.info(f"Resumed from epoch {start_epoch}, best_val_loss: {best_val_loss:.4f}")
+
+    for epoch in range(start_epoch, args.epochs):
         model.train()
         model.clip_model.eval()
 
@@ -158,7 +178,13 @@ def main():
             model.save(str(config.GROVE_BEST_CKPT))
             logger.info(f"Best model saved (val_loss: {best_val_loss:.4f})")
 
-    model.save(str(config.GROVE_BEST_CKPT).replace("_best.pt", "_last.pt"))
+    last_ckpt_path = str(config.GROVE_BEST_CKPT).replace("_best.pt", "_last.pt")
+    torch.save({
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "epoch": epoch + 1,
+        "best_val_loss": best_val_loss,
+    }, last_ckpt_path)
     logger.info(f"Training completed. Best val loss: {best_val_loss:.4f}")
 
 

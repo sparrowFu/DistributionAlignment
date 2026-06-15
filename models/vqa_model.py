@@ -380,3 +380,20 @@ class VQAModel(nn.Module):
             self.num_mc_samples = state["num_mc_samples"]
 
         logger.info(f"VQA model loaded from: {path}")
+
+    def load_classifier_from_state(self, state: dict) -> None:
+        """Load classifier state from a resume checkpoint dict."""
+        if "classifier_state_dict" in state:
+            self.classifier.load_state_dict(state["classifier_state_dict"])
+        elif "model_state_dict" in state:
+            # Resume from a full-model checkpoint (model.state_dict())
+            full_state = state["model_state_dict"]
+            classifier_state = {
+                k.replace("classifier.", ""): v
+                for k, v in full_state.items()
+                if k.startswith("classifier.")
+            }
+            self.classifier.load_state_dict(classifier_state)
+        if "answer_vocab" in state:
+            self.answer_vocab = state["answer_vocab"]
+        logger.info("VQA classifier restored from resume checkpoint")
