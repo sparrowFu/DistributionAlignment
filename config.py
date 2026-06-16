@@ -33,7 +33,7 @@ if IS_WINDOWS:
     PROJECT_ROOT = Path("D:/code/causality/GaussianImageDistribution")
 else:
     # Ubuntu/Linux default - modify "your_name" to your actual username
-    PROJECT_ROOT = Path("/home/your_name/code/causality/GaussianImageDistribution")
+    PROJECT_ROOT = Path("/home/cognition/WorkSpace/xpfu/DistributionAlignment")
 
 
 # =============================================================================
@@ -112,17 +112,18 @@ NUM_CAPTIONS = 5
 # Number of worker processes for data loading
 # Set to 0 for single-process data loading (no multiprocessing/threads)
 # This ensures maximum compatibility across all platforms
-NUM_WORKERS = 0
+# Linux: 8 workers for parallel data loading; Windows: 0 to avoid fork issues
+NUM_WORKERS = 0 if IS_WINDOWS else 8
 
 
 # =============================================================================
 # CLIP Baseline Training Hyperparameters
 # =============================================================================
 # Number of training epochs
-CLIP_BASELINE_EPOCHS = 1
+CLIP_BASELINE_EPOCHS = 5
 
 # Training batch size
-CLIP_BASELINE_BATCH_SIZE = 16
+CLIP_BASELINE_BATCH_SIZE = 32
 
 # Learning rate
 CLIP_BASELINE_LR = 1e-6
@@ -147,7 +148,7 @@ CLIP_BASELINE_FREEZE_TEXT = False
 RECALL_AT_K = [1, 5, 10]
 
 # Batch size for evaluation (can be larger than training)
-EVAL_BATCH_SIZE = 32
+EVAL_BATCH_SIZE = 64
 
 
 # =============================================================================
@@ -170,7 +171,7 @@ DIST_ALIGN_EVAL_RESULTS_PATH = OUTPUT_DIR / "dist_align_eval_results.json"
 DIST_ALIGN_EPOCHS = 10
 DIST_ALIGN_BATCH_SIZE = 32
 DIST_ALIGN_CLIP_LR = 1e-6  # Learning rate for CLIP (if fine-tuning)
-DIST_ALIGN_MLP_LR = 1e-6   # Learning rate for MLP distribution heads
+DIST_ALIGN_MLP_LR = 5e-5   # Learning rate for MLP distribution heads (trained from scratch; balanced for convergence vs overfitting)
 DIST_ALIGN_WEIGHT_DECAY = 1e-4
 DIST_ALIGN_TEMPERATURE = 0.07
 DIST_ALIGN_FREEZE_CLIP = True  # Whether to freeze CLIP parameters
@@ -223,12 +224,12 @@ VQA_IMAGES_DIR = IMAGES_DIR
 # VQA Training Hyperparameters
 # =============================================================================
 VQA_EPOCHS = 10
-VQA_BATCH_SIZE = 32
-VQA_LR = 1e-4
+VQA_BATCH_SIZE = 64
+VQA_LR = 5e-5
 VQA_WEIGHT_DECAY = 1e-4
 VQA_HIDDEN_DIM = 512
 VQA_DROPOUT = 0.1
-VQA_NUM_WORKERS = 0
+VQA_NUM_WORKERS = 0 if IS_WINDOWS else 8
 VQA_VAL_SPLIT = 0.1
 VQA_EARLY_STOP_PATIENCE = 3
 
