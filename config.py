@@ -33,7 +33,7 @@ if IS_WINDOWS:
     PROJECT_ROOT = Path("D:/code/causality/GaussianImageDistribution")
 else:
     # Ubuntu/Linux default - modify "your_name" to your actual username
-    PROJECT_ROOT = Path("/home/your_name/code/causality/GaussianImageDistribution")
+    PROJECT_ROOT = Path("/home/cognition/WorkSpace/xpfu/DistributionAlignment")
 
 
 # =============================================================================
@@ -168,7 +168,7 @@ DIST_ALIGN_EVAL_RESULTS_PATH = OUTPUT_DIR / "dist_align_eval_results.json"
 
 # Training hyperparameters
 DIST_ALIGN_EPOCHS = 10
-DIST_ALIGN_BATCH_SIZE = 32
+DIST_ALIGN_BATCH_SIZE = 16
 DIST_ALIGN_CLIP_LR = 1e-6  # Learning rate for CLIP (if fine-tuning)
 DIST_ALIGN_MLP_LR = 1e-6   # Learning rate for MLP distribution heads
 DIST_ALIGN_WEIGHT_DECAY = 1e-4
