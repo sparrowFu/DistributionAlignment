@@ -33,7 +33,7 @@ if IS_WINDOWS:
     PROJECT_ROOT = Path("D:/code/causality/GaussianImageDistribution")
 else:
     # Ubuntu/Linux default - modify "your_name" to your actual username
-    PROJECT_ROOT = Path("/home/cognition/WorkSpace/xpfu/DistributionAlignment")
+    PROJECT_ROOT = Path("/home/xpfu/WorkSpace/DistributionAlignment")
 
 
 # =============================================================================
