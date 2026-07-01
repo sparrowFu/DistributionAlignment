@@ -1,5 +1,10 @@
 # gitignore for GaussianImageDistribution project
 
+# Documentation
+docs/
+*.pdf
+*.html
+
 # Claude Code
 .claude/
 
