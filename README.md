@@ -1,19 +1,22 @@
 # GaussianImageDistribution
 
-Uncertainty-Calibrated Distributional Contrastive Learning (UC-CL) for image-text representation learning.
+**MSDA (Multi-caption Semantic Distribution Alignment)** for image-text representation learning — model each image and text as a Gaussian distribution on a frozen CLIP backbone, and ground the learned variance in real caption diversity.
 
 ## Overview
 
-This project implements **UC-CL**, a method that models image and text embeddings as Gaussian distributions on top of a frozen CLIP ViT-L/14 backbone. The core innovation is the **uncertainty-calibrated similarity** that uses learned variance (σ²) to modulate retrieval sharpness, and a **distributional consistency constraint** that forces σ²_img to approximate the variance across multiple captions.
+This project implements **MSDA**, which represents each sample as a **general Gaussian** `N(μ, Σ)` on top of a frozen CLIP ViT-L/14 backbone, where `Σ = diag(σ²) + UUᵀ` (low-rank, rank `r`). The core idea is to **ground uncertainty in semantics**: the image variance is constrained to approximate the spread across multiple captions (`σ²_img ≈ Var(μ_captions)`), and a covariance direction-alignment loss aligns the image covariance subspace with the caption-deviation subspace.
+
+MSDA evolves the earlier diagonal variant **UC-CL** (`r=0`, `Σ = diag(σ²)`) into a full-covariance formulation with a 3-stage training schedule. Full method details, including the `L_cov` training-stability analysis and fix, are in [methods.md](methods.md).
 
 ### Key Features
 
-- **Distributional Embeddings**: Each sample is represented as N(μ, σ²I) in 768-dim space
-- **Uncertainty-Calibrated Similarity**: `sim(x,y) = μ_x·μ_y / (τ·√(1+var_x)·√(1+var_y))`
-- **Distributional Consistency**: σ²_img ≈ Var(μ_captions), grounding σ in semantic diversity
-- **Distribution Merging**: Moment matching to merge K caption distributions into one
-- **5 Baselines**: B1-B4 + LLM VQA (B7/B8) for comprehensive comparison
-- **8 Experiments**: Training, evaluation, calibration, OOD, ablation, generalization, analysis, visualization
+- **General Gaussian embeddings**: `N(μ, Σ)` with `Σ = diag(σ²) + UUᵀ`; `r=0` recovers the diagonal UC-CL variant
+- **Semantic variance**: `σ²_img ≈ Var(μ_captions)` — uncertainty reflects real caption diversity instead of a hand-set floor
+- **Covariance direction alignment** (`L_cov`): aligns the image covariance subspace with the caption-deviation subspace
+- **Uncertainty-calibrated similarity**: `sim(x,y) = μ_x·μ_y / (τ·√(1+var_x)·√(1+var_y))`
+- **Moment-matching merge**: fuses K per-caption distributions into one set distribution
+- **3-stage training**: Warmup → Main → Full, gradually activating loss terms
+- **5 comparison baselines** (B1–B4 + Ours) plus LLM VQA (B7/B8)
 
 ## Documentation
 
@@ -23,33 +26,35 @@ This project implements **UC-CL**, a method that models image and text embedding
 | [experiments.md](experiments.md) | Experiment log — UC-CL vs MSDA results, `L_cov` crash analysis, P0 fix |
 | [examples/README.md](examples/README.md) | Example scripts (quick sanity check, full pipeline test) |
 
-> MSDA (Multi-caption Semantic Distribution Alignment) is the current method, an evolution of the early UC-CL diagonal variant (`r=0`); see `methods.md` for details.
+> MSDA is the current method, an evolution of the early UC-CL diagonal variant (`r=0`); see `methods.md`.
 
 ## Project Structure
 
 ```
 GaussianImageDistribution/
-├── config.py                        # Centralized configuration (paths, hyperparameters)
-├── main.py                          # Unified entry point (21 tasks)
+├── main.py                          # Unified task entry point
+├── config.py                        # All hyperparameters & paths
 ├── data/
 │   ├── caption_dataset.py           # MSCOCO image-caption dataset
 │   ├── flickr30k_dataset.py         # Flickr30K cross-dataset evaluation
 │   └── vqa_dataset.py               # VQA question-answer dataset
 ├── models/
-│   ├── dist_align_model.py          # Ours: UC-CL distribution alignment model
+│   ├── dist_align_model.py          # Ours: MSDA distribution alignment model
 │   ├── clip_baseline.py             # B2: CLIP fine-tuning baseline
 │   ├── clip_zero_shot.py            # B1: CLIP zero-shot VQA
 │   ├── prolip_model.py              # B3: ProLIP probabilistic embeddings
 │   ├── grove_model.py               # B4: GroVE GP-based posterior
 │   ├── vqa_model.py                 # Unified VQA classification head
-│   └── baseline_utils.py           # Shared utilities (merging, encoding)
+│   └── baseline_utils.py            # Shared utilities (merging, encoding)
 ├── losses/
 │   ├── clip_losses.py               # CLIP contrastive loss
-│   └── dist_align_losses.py         # UC-CL losses (calibrated CL + consistency + var reg)
+│   └── dist_align_losses.py         # MSDA losses (set-NCE + mu + var + cover + cov + reg)
 ├── utils/
 │   ├── seed.py, io_utils.py, logger.py, metrics.py
-│   ├── image_utils.py               # Image processing
-│   └── calibration.py               # ECE/NLL/Brier/AUROC metrics
+│   ├── image_preprocess.py, image_utils.py
+│   ├── calibration.py               # ECE/NLL/Brier/AUROC metrics
+│   ├── retrieval.py                 # Recall@K / distribution feature extraction
+│   └── cpu_affinity.py              # Exclude faulty CPU cores before subprocess
 ├── scripts/
 │   ├── train_dist_align.py          # Ours training
 │   ├── evaluate_dist_align.py       # Ours evaluation
@@ -72,6 +77,8 @@ GaussianImageDistribution/
 ├── examples/
 │   ├── quick_test.py                # Quick sanity check
 │   └── test_dist_align.py           # Full pipeline test
+├── PreTrainedModels/                # CLIP ViT-L/14 weights (local)
+├── TrainDatasets/                   # MSCOCO + Flickr30K data
 ├── checkpoints/                     # Model checkpoints (auto-created)
 ├── outputs/                         # Evaluation results (auto-created)
 └── logs/                            # Log files (auto-created)
@@ -80,10 +87,15 @@ GaussianImageDistribution/
 ## Installation
 
 ```bash
+# Option A: pip
 pip install -r requirements.txt
+
+# Option B: conda
+conda env create -f environments_Linux.yml        # Linux
+conda env create -f environments_windows.yml      # Windows
 ```
 
-Required: `torch>=2.0.0`, `transformers>=4.30.0`, `scikit-learn`, `matplotlib`, `tqdm`, `Pillow`
+Required: `torch>=2.0.0`, `transformers>=4.30.0`, `scikit-learn`, `matplotlib`, `tqdm`, `Pillow`.
 
 ## Data Setup
 
@@ -92,7 +104,7 @@ Required: `torch>=2.0.0`, `transformers>=4.30.0`, `scikit-learn`, `matplotlib`, 
 ```
 TrainDatasets/mscoco_captions/
 ├── captions/train-00000-of-00001.parquet   # url, caption, image_file_name
-├── images/                                  # Image files
+├── images/                                  # image files
 ├── train/                                   # VQA train split
 │   ├── questions.txt, img_filenames.txt, types.txt, answers.txt
 └── test/                                    # VQA test split
@@ -109,45 +121,30 @@ TrainDatasets/flickr30k/
 
 ### Pre-trained Model
 
-Download CLIP ViT-Large-Patch14 to `PreTrainedModels/clip-vit-large-patch14/`. All models load locally (`local_files_only=True`).
+Download CLIP ViT-Large-Patch14 into `PreTrainedModels/clip-vit-large-patch14/`. All models load locally (`local_files_only=True`).
 
-## Methods
+## Comparison Methods
 
-### Ours: UC-CL (Uncertainty-Calibrated Distributional Contrastive Learning)
-
-**Architecture**: Frozen CLIP ViT-L/14 + 4 MLP heads → (μ_img, logvar_img, μ_text, logvar_text)
-
-**Loss**:
-```
-L = λ_cl × L_calibrated_CL + λ_consist × L_consistency + λ_var × L_variance
-```
-
-- **L_calibrated_CL**: σ modulates similarity sharpness via uncertainty-calibrated similarity
-- **L_consistency**: Forces σ²_img = Var(μ_captions) (distributional consistency)
-- **L_variance**: Prevents σ collapse (||σ² - target||²)
-
-**Distribution Merging** (K=5 captions → 1 distribution):
-```
-μ_c = (1/K)Σμ_k,   σ²_c = (1/K)Σ(σ²_k + μ²_k) - μ²_c
-```
-
-### Baselines
-
-| ID | Method | σ Source | Trainable? |
+| ID | Method | σ source | Trainable? |
 |----|--------|----------|------------|
-| B1 | CLIP Zero-Shot | None | No |
-| B2 | CLIP Fine-Tune | None | Yes (CLIP) |
-| B3 | ProLIP | Implicit (inclusion loss) | Yes (MLP) |
+| B1 | CLIP Zero-Shot | — | No |
+| B2 | CLIP Fine-Tune | — | Yes (CLIP) |
+| B3 | ProLIP | learned log-variance head | Yes (MLP) |
 | B4 | GroVE | GP posterior variance | Yes (inducing pts) |
-| B7 | Qwen-VL | N/A (LLM) | No (API) |
-| B8 | Kimi-K2.5 | N/A (LLM) | No (API) |
+| **Ours** | **MSDA** | **explicit `σ²≈Var(captions)` + covariance** | **Yes (MLP heads)** |
+| B7 | Qwen-VL | — (LLM) | No (API) |
+| B8 | Kimi-K2.5 | — (LLM) | No (API) |
+
+All five comparison models (B1–B4 + Ours) share a unified 768-dim feature interface and the same VQA downstream head, for fair comparison.
 
 ## Usage
+
+All tasks run through `main.py`.
 
 ### Stage 1: Image-Text Alignment Training & Evaluation
 
 ```bash
-# Ours (UC-CL)
+# Ours (MSDA)
 python main.py --task train_dist_align
 python main.py --task eval_dist_align
 
@@ -170,7 +167,7 @@ python main.py --task eval_clip_zero_shot
 ### Stage 2: VQA Downstream
 
 ```bash
-# Train VQA classification head (supports all B1-B4 + Ours)
+# Train VQA classification head (supports B1-B4 + Ours)
 python main.py --task train_vqa --model-type dist_align
 
 # B7/B8: LLM VQA evaluation
@@ -181,49 +178,43 @@ python main.py --task evaluate_llm_vqa
 ### Experiments
 
 ```bash
-# Exp3: Uncertainty calibration (ECE/NLL/Brier/AUROC)
-python main.py --task eval_calibration
-
-# Exp4: OOD detection (sigma-based anomaly scoring)
-python main.py --task eval_ood
-
-# Exp5: Ablation study (6 configs + sensitivity analysis)
-python main.py --task run_ablation --config all
-
-# Exp6: Flickr30K cross-dataset generalization
-python main.py --task eval_flickr30k --model-type dist_align
-
-# Exp7: σ semantic analysis (Pearson/Spearman correlation)
-python main.py --task eval_sigma_analysis
-
-# Exp8: Modality gap visualization (t-SNE + bar chart + histograms)
-python main.py --task visualize_gap
+python main.py --task eval_calibration                 # Exp3: uncertainty calibration (ECE/NLL/Brier/AUROC)
+python main.py --task eval_ood                         # Exp4: OOD detection (sigma-based)
+python main.py --task run_ablation --config all        # Exp5: ablation study
+python main.py --task eval_flickr30k --model-type dist_align   # Exp6: cross-dataset generalization
+python main.py --task eval_sigma_analysis              # Exp7: σ semantic analysis
+python main.py --task visualize_gap                    # Exp8: modality gap visualization
 ```
 
 ## Configuration
 
-All hyperparameters are in `config.py`. Key settings:
+All hyperparameters live in `config.py`.
 
-### UC-CL Parameters
+### MSDA loss weights & schedule
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `DIST_ALIGN_EPOCHS` | 10 | Training epochs |
-| `DIST_ALIGN_BATCH_SIZE` | 32 | Batch size |
-| `DIST_ALIGN_FREEZE_CLIP` | True | Freeze CLIP backbone |
-| `DIST_ALIGN_USE_UC_CL` | True | Enable UC-CL loss |
-| `DIST_ALIGN_LAMBDA_UC_CL` | 1.0 | Calibrated CL weight (λ_cl) |
-| `DIST_ALIGN_LAMBDA_CONSIST` | 1.0 | Consistency loss weight (λ_consist) |
-| `DIST_ALIGN_LAMBDA_UC_VAR` | 0.1 | Variance reg weight (λ_var) |
-| `DIST_ALIGN_UC_TEMPERATURE` | 0.07 | Similarity temperature (τ) |
+| `MSDA_COV_RANK` | 4 | low-rank covariance rank `r` (0 = diagonal / UC-CL) |
+| `MSDA_TAU` | 0.07 | temperature for set-NCE similarity |
+| `MSDA_LAMBDA_CTR` | 1.0 | set-level contrastive loss (main driver) |
+| `MSDA_LAMBDA_MU` | 0.5 | mean-center alignment |
+| `MSDA_LAMBDA_VAR` | 1.0 | variance semantic consistency (core: `σ²≈Var(captions)`) |
+| `MSDA_LAMBDA_COVER` | 0.5 | multi-caption coverage |
+| `MSDA_LAMBDA_COV` | 0.01 | covariance direction alignment (down-tuned from 0.1; see methods.md §6) |
+| `MSDA_LAMBDA_REG` | 0.01 | variance regularization |
+| `MSDA_GRAD_CLIP_NORM` | 1.0 | global grad-norm clip (stability guard) |
+| `MSDA_STAGE_WARMUP/MAIN/FULL_FRAC` | 0.2 / 0.6 / 0.2 | 3-stage schedule fractions |
 
-### Baseline Parameters
+The 6-term loss is `L = λ_ctr·L_set-NCE + λ_mu·L_mu + λ_var·L_var + λ_cover·L_cover + λ_cov·L_cov + λ_reg·L_reg`. See [methods.md](methods.md) for the full formulation and the staged activation schedule.
 
-| Baseline | Epochs | LR | Key Params |
-|----------|--------|----|-----------|
-| B2 CLIP | 1 | 1e-6 | freeze_image/text=False |
-| B3 ProLIP | 10 | 1e-6 | Same arch, no consistency |
-| B4 GroVE | 10 | 1e-3 | num_inducing=128 |
+### Training defaults
+
+| Model | Epochs | LR | Notes |
+|-------|--------|----|-------|
+| Ours (MSDA) | 10 | MLP 5e-5 / CLIP 1e-6 | frozen CLIP, staged schedule |
+| B2 CLIP Fine-Tune | 5 | 1e-6 | CLIP unfrozen |
+| B3 ProLIP | 10 | 5e-5 | frozen CLIP, shares dist_align heads |
+| B4 GroVE | 10 | 1e-3 | frozen CLIP, `num_inducing=128` |
 
 ## Output Files
 
@@ -234,18 +225,5 @@ All hyperparameters are in `config.py`. Key settings:
 - `checkpoints/vqa_{model_type}_best.pt`
 
 ### Evaluation Results
-- `outputs/{model}_eval_results.json` — R@K metrics
-- `outputs/calibration/` — ECE/NLL/Brier/AUROC
-- `outputs/ood_detection/` — AUROC/FPR@95TPR
-- `outputs/ablation/` — Ablation results
-- `outputs/sigma_analysis/` — Correlation results
-- `outputs/modality_gap/` — Visualization figures
-- `outputs/flickr30k/` — Cross-dataset results
-
-## Cross-Platform
-
-Edit `config.py` → `PROJECT_ROOT` to match your system path. All other paths adjust automatically.
-
-## License
-
-Research and educational purposes.
+- `outputs/{model}_eval_results.json` — R@K retrieval metrics
+- `outputs/{experiment}_results.json` — experiment-specific metrics
