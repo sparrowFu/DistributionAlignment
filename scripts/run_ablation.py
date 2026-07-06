@@ -1,22 +1,25 @@
 """
 GaussianImageDistribution - Exp5: Ablation Study Script
 
-Quantifies the contribution of each component in UC-CL by training
-with different configurations and evaluating on retrieval + VQA.
+Quantifies the contribution of each MSDA loss component by training with
+different configurations and evaluating on retrieval.
 
-Ablation configurations:
-    - Full model (UC-CL + Consist + Var)
-    - w/o Distributional Consistency (λ_c=0)
-    - w/o Uncertainty Calibration (standard cosine)
-    - w/o Variance Regularization (λ_v=0)
-    - w/o Distribution Merging (single caption)
-    - Only Consistency Loss (λ_cl=0)
-    - λ_consist sensitivity: 0.1 / 0.5 / 1.0 / 2.0 / 5.0
-    - τ sensitivity: 0.05 / 0.07 / 0.1 / 0.2
+Ablation configurations (see config.ABLATION_CONFIGS):
+    - Full MSDA (set-NCE + mu + var + cover + cov + reg)
+    - w/o L_var (variance semantic consistency)
+    - w/o L_cover (multi-caption coverage)
+    - w/o L_cov (covariance direction)
+    - w/o L_mu (mean-center alignment)
+    - diagonal only (cov_rank=0)
+    - w/o uncertainty-discounted similarity (standard cosine)
+    - K = 1 / 3 / 5 captions
+    - lambda_var sensitivity: 0.1 / 0.5 / 1.0 / 2.0 / 5.0
+    - lambda_cover sensitivity: 0.1 / 0.5 / 1.0 / 2.0
+    - tau sensitivity: 0.05 / 0.07 / 0.1 / 0.2
 
 Usage:
     python scripts/run_ablation.py --config all
-    python scripts/run_ablation.py --config no_consistency
+    python scripts/run_ablation.py --config no_var
     python main.py --task run_ablation --config all
 """
 
@@ -35,10 +38,7 @@ from data.caption_dataset import ImageCaptionDataset, filter_none_collate
 from data.vqa_dataset import VQADataset, vqa_collate_fn
 from models.dist_align_model import DistributionAlignmentModel
 from models.vqa_model import VQAModel
-from losses.dist_align_losses import (
-    UncertaintyCalibratedContrastiveLoss,
-    DistributionAlignmentLoss,
-)
+from losses.dist_align_losses import MSDALoss
 from utils.logger import get_logger, log_exception
 from utils.seed import set_seed
 from utils.metrics import compute_recall_at_k
@@ -85,35 +85,35 @@ def train_ablation(
 
     # Skip training if requested
     if not args.skip_training:
+        # Determine MSDA configuration from the ablation overrides
+        cov_rank = ablation_config.get("cov_rank", config.MSDA_COV_RANK)
+        num_captions = ablation_config.get("num_captions", 5)
+        use_uncertainty_sim = ablation_config.get("use_uncertainty_sim", True)
+
         # Create model
         model = DistributionAlignmentModel(
             freeze_clip=True,
             distribution_merging=config.DIST_ALIGN_DISTRIBUTION_MERGING,
             dropout_rate=config.DIST_ALIGN_DROPOUT_RATE,
+            cov_rank=cov_rank,
         )
         model = model.to(args.device)
         logger.info(f"Trainable params: {model.num_trainable_parameters():,}")
 
-        # Determine loss function
-        use_uc_cl = ablation_config.get("use_uc_cl", True)
-        num_captions = ablation_config.get("num_captions", 5)
-
-        if use_uc_cl:
-            criterion = UncertaintyCalibratedContrastiveLoss(
-                lambda_cl=ablation_config.get("lambda_cl", 1.0),
-                lambda_consist=ablation_config.get("lambda_consist", 1.0),
-                lambda_var=ablation_config.get("lambda_var", 0.1),
-                temperature=config.DIST_ALIGN_UC_TEMPERATURE,
-                target_variance=config.DIST_ALIGN_UC_TARGET_VARIANCE,
-            )
-        else:
-            # Standard CL (no uncertainty calibration)
-            criterion = UncertaintyCalibratedContrastiveLoss(
-                lambda_cl=ablation_config.get("lambda_cl", 1.0),
-                lambda_consist=0.0,  # No consistency
-                lambda_var=0.0,      # No var reg
-                temperature=config.DIST_ALIGN_TEMPERATURE,
-            )
+        # MSDA loss
+        criterion = MSDALoss(
+            lambda_ctr=ablation_config.get("lambda_ctr", config.MSDA_LAMBDA_CTR),
+            lambda_mu=ablation_config.get("lambda_mu", config.MSDA_LAMBDA_MU),
+            lambda_var=ablation_config.get("lambda_var", config.MSDA_LAMBDA_VAR),
+            lambda_cover=ablation_config.get("lambda_cover", config.MSDA_LAMBDA_COVER),
+            lambda_cov=ablation_config.get("lambda_cov", config.MSDA_LAMBDA_COV),
+            lambda_reg=ablation_config.get("lambda_reg", config.MSDA_LAMBDA_REG),
+            tau=ablation_config.get("temperature", config.MSDA_TAU),
+            m_pos=config.MSDA_M_POS,
+            target_var=config.MSDA_TARGET_VAR,
+            m_neg=config.MSDA_M_NEG,
+            use_uncertainty_sim=use_uncertainty_sim,
+        )
 
         optimizer = optim.Adam(
             model.trainable_parameters(),
@@ -170,10 +170,9 @@ def train_ablation(
                 outputs = model(pixel_values, input_ids, attn_mask)
 
                 loss, loss_dict = criterion(
-                    outputs["img_features"], outputs["text_features"],
-                    outputs["img_mu"], outputs["img_logvar"],
+                    outputs["img_mu"], outputs["img_logvar"], outputs["img_U"],
                     outputs["text_mu"], outputs["text_logvar"],
-                    text_mus=outputs.get("text_mus"),
+                    outputs["text_mus"], outputs["text_logvars"], outputs["text_Us"],
                 )
 
                 optimizer.zero_grad()
@@ -204,10 +203,9 @@ def train_ablation(
 
                     outputs = model(pixel_values, input_ids, attn_mask)
                     loss, loss_dict = criterion(
-                        outputs["img_features"], outputs["text_features"],
-                        outputs["img_mu"], outputs["img_logvar"],
+                        outputs["img_mu"], outputs["img_logvar"], outputs["img_U"],
                         outputs["text_mu"], outputs["text_logvar"],
-                        text_mus=outputs.get("text_mus"),
+                        outputs["text_mus"], outputs["text_logvars"], outputs["text_Us"],
                     )
                     val_loss += loss_dict["total"]
 
@@ -231,6 +229,7 @@ def train_ablation(
         model = DistributionAlignmentModel(
             freeze_clip=True,
             distribution_merging=config.DIST_ALIGN_DISTRIBUTION_MERGING,
+            cov_rank=ablation_config.get("cov_rank", config.MSDA_COV_RANK),
         )
         model.load(str(best_ckpt_path))
         model = model.to(args.device)
@@ -280,33 +279,29 @@ def train_ablation(
 
 
 def run_sensitivity_analysis(args, output_dir):
-    """Run λ_consist and τ sensitivity analysis."""
+    """Run lambda_var, lambda_cover, and tau sensitivity analysis."""
     sensitivity_results = {}
 
-    # λ_consist sensitivity
-    for lam in config.ABLATION_LAMBDA_CONSIST_VALUES:
-        name = f"lambda_consist_{lam}"
-        cfg = {
-            "lambda_cl": 1.0,
-            "lambda_consist": lam,
-            "lambda_var": 0.1,
-            "description": f"λ_consist={lam}",
-        }
-        r = train_ablation(name, cfg, args, output_dir)
-        sensitivity_results[name] = r
+    # lambda_var sensitivity
+    for lam in config.ABLATION_LAMBDA_VAR_VALUES:
+        name = f"lambda_var_{lam}"
+        cfg = {**config.ABLATION_CONFIGS["full_model"],
+               "lambda_var": lam, "description": f"lambda_var={lam}"}
+        sensitivity_results[name] = train_ablation(name, cfg, args, output_dir)
 
-    # τ sensitivity
+    # lambda_cover sensitivity
+    for lam in config.ABLATION_LAMBDA_COVER_VALUES:
+        name = f"lambda_cover_{lam}"
+        cfg = {**config.ABLATION_CONFIGS["full_model"],
+               "lambda_cover": lam, "description": f"lambda_cover={lam}"}
+        sensitivity_results[name] = train_ablation(name, cfg, args, output_dir)
+
+    # tau sensitivity
     for tau in config.ABLATION_TAU_VALUES:
         name = f"tau_{tau}"
-        cfg = {
-            "lambda_cl": 1.0,
-            "lambda_consist": 1.0,
-            "lambda_var": 0.1,
-            "description": f"τ={tau}",
-            "temperature": tau,
-        }
-        r = train_ablation(name, cfg, args, output_dir)
-        sensitivity_results[name] = r
+        cfg = {**config.ABLATION_CONFIGS["full_model"],
+               "temperature": tau, "description": f"tau={tau}"}
+        sensitivity_results[name] = train_ablation(name, cfg, args, output_dir)
 
     return sensitivity_results
 

@@ -1,7 +1,7 @@
 """
 GaussianImageDistribution - Common utilities for baseline models.
 
-Shared functions used by ProLIP, GroVE, ICPE, D2P baseline models.
+Shared functions used by ProLIP, GroVE baseline models.
 """
 
 from typing import Dict, Tuple

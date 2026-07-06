@@ -155,8 +155,10 @@ def extract_sigma_from_tensors(
         img_features = model.clip_model.get_image_features(images)
         img_features = img_features.pooler_output
 
-        # Get σ from logvar head
-        img_logvar = model.img_logvar_head(img_features)
+        # Get σ² from the logvar head. Apply the same _floor_logvar mapping the
+        # forward pass uses (softplus + VAR_FLOOR) so OOD σ² is scale-consistent
+        # with the trained variance — exp() of the raw head output would be wrong.
+        img_logvar = model._floor_logvar(model.img_logvar_head(img_features))
         sigma_norm = torch.exp(img_logvar).mean(dim=-1)  # (B,)
         scores.append(sigma_norm.cpu())
 
@@ -242,19 +244,17 @@ def main():
         logger.info(f"OOD scores ({ood_name}): mean={ood_scores.mean():.4f}, "
                     f"std={ood_scores.std():.4f}")
 
-        # Compute AUROC and FPR@95TPR
-        # Use σ_norm as anomaly score (higher = more likely OOD)
+        # Compute AUROC and FPR@95TPR.
+        # σ_norm is an OOD score (higher = more likely OOD), but
+        # compute_auroc / compute_fpr_at_tpr expect a confidence score
+        # (higher = more likely in-distribution; anomaly = 1 - score
+        # internally). Negate σ to make it confidence-like.
         min_len = min(len(in_scores), len(ood_scores))
         in_s = in_scores[:min_len]
         out_s = ood_scores[:min_len]
 
-        # For σ_norm: higher score = more uncertain = more likely OOD
-        # So we use scores directly as anomaly scores
-        labels = np.concatenate([np.zeros(min_len), np.ones(min_len)])
-        scores = np.concatenate([in_s, out_s])
-
-        auroc = compute_auroc(in_s, out_s)
-        fpr95 = compute_fpr_at_tpr(in_s, out_s, target_tpr=0.95)
+        auroc = compute_auroc(-in_s, -out_s)
+        fpr95 = compute_fpr_at_tpr(-in_s, -out_s, target_tpr=0.95)
 
         # Also compute with 1-confidence interpretation
         # Higher σ → lower confidence → more likely OOD

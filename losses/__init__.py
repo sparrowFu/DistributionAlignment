@@ -9,14 +9,12 @@ from .clip_losses import clip_contrastive_loss
 from .dist_align_losses import (
     DistributionAlignmentLoss,
     CombinedDistributionLoss,
-    DistributionalContrastiveLoss,
-    UncertaintyCalibratedContrastiveLoss
+    MSDALoss,
 )
 
 __all__ = [
     "clip_contrastive_loss",
     "DistributionAlignmentLoss",
     "CombinedDistributionLoss",
-    "DistributionalContrastiveLoss",
-    "UncertaintyCalibratedContrastiveLoss"
+    "MSDALoss",
 ]

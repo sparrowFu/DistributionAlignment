@@ -34,6 +34,11 @@ from utils.seed import set_seed
 # Setup logger
 logger = get_logger("train_clip_baseline", config.TRAIN_CLIP_BASELINE_LOG_PATH)
 
+# Exclude faulty CPU cores (e.g. unstable CPU 2) before DataLoader workers and
+# torch threads are created. Inherited by forked worker processes.
+from utils.cpu_affinity import apply_cpu_affinity
+apply_cpu_affinity()
+
 
 def parse_args():
     """Parse command line arguments."""
@@ -107,12 +112,14 @@ def train_epoch(
 
     total_loss = 0.0
     total_acc = 0.0
+    processed_batches = 0
 
     pbar = tqdm(dataloader, desc=f"Epoch {epoch + 1}")
 
     for batch_idx, batch in enumerate(pbar):
         if batch is None:
             continue
+        processed_batches += 1
 
         # Get data - PIL images and text lists
         pil_images = batch["image"]
@@ -163,7 +170,7 @@ def train_epoch(
             )
 
     # Compute averages
-    num_batches = len(dataloader)
+    num_batches = max(processed_batches, 1)
     metrics = {
         'loss': total_loss / num_batches,
         'acc': total_acc / num_batches,
@@ -184,12 +191,14 @@ def evaluate(
 
     total_loss = 0.0
     total_acc = 0.0
+    processed_batches = 0
 
     pbar = tqdm(dataloader, desc="Evaluating")
 
     for batch in pbar:
         if batch is None:
             continue
+        processed_batches += 1
 
         # Get data - PIL images and text lists
         pil_images = batch["image"]
@@ -223,7 +232,7 @@ def evaluate(
         pbar.set_postfix({'loss': f"{loss_info['loss']:.4f}"})
 
     # Compute averages
-    num_batches = len(dataloader)
+    num_batches = max(processed_batches, 1)
     metrics = {
         'loss': total_loss / num_batches,
         'acc': total_acc / num_batches,
@@ -334,7 +343,9 @@ def main():
         logger.info(f"Resumed from epoch {start_epoch}, best_val_loss: {best_val_loss:.4f}")
 
     logger.info(f"Starting training from epoch {start_epoch + 1}...")
+    last_epoch = start_epoch
     for epoch in range(start_epoch, args.epochs):
+        last_epoch = epoch
         # Train
         train_metrics = train_epoch(
             model, train_dataloader, optimizer,
@@ -374,7 +385,7 @@ def main():
     final_state = {
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
-        "epoch": epoch + 1,
+        "epoch": last_epoch + 1,
         "best_val_loss": best_val_loss,
         "patience_counter": patience_counter,
     }

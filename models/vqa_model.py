@@ -10,9 +10,7 @@ Supported base model types (from experiment plan):
     B2 "clip_baseline": CLIPFineTuneBaseline (frozen CLIP)
     B3 "prolip": ProLIPModel (probabilistic, implicit σ)
     B4 "grove": GroVEModel (GP-based posterior variance)
-    B5 "icpe": ICPEModel (training-free, k-NN covariance)
-    B6 "d2p": D2PModel (distribution-to-point)
-    Ours "dist_align": DistributionAlignmentModel (UC-CL, σ²=caption variance)
+    Ours "dist_align": DistributionAlignmentModel (MSDA, σ²=caption spread)
 
 Architecture (all models, unified 768-dim features):
     Input: PIL Image + Question Text
@@ -47,6 +45,7 @@ import torch.nn as nn
 
 import config
 from utils.logger import get_logger
+from utils.image_preprocess import preprocess_images_on_gpu
 
 
 logger = get_logger("vqa_model")
@@ -54,7 +53,7 @@ logger = get_logger("vqa_model")
 # All supported model types for VQA training (excludes clip_zero_shot)
 TRAINABLE_MODEL_TYPES = [
     "dist_align", "clip_baseline",
-    "prolip", "grove", "icpe", "d2p",
+    "prolip", "grove",
 ]
 
 # clip_zero_shot is handled separately in train_vqa.py (no classifier head)
@@ -168,25 +167,6 @@ class VQAModel(nn.Module):
                 logger.info(f"Loading grove checkpoint: {ckpt_path}")
                 self.base_model.load(ckpt_path)
 
-        elif model_type == "icpe":
-            from models.icpe_model import ICPEModel
-            self.base_model = ICPEModel(
-                num_neighbors=config.ICPE_NUM_NEIGHBORS,
-            )
-            if ckpt_path:
-                logger.info(f"Loading icpe config: {ckpt_path}")
-                self.base_model.load(ckpt_path)
-
-        elif model_type == "d2p":
-            from models.d2p_model import D2PModel
-            self.base_model = D2PModel(
-                freeze_clip=True,
-                dropout_rate=config.D2P_DROPOUT_RATE,
-            )
-            if ckpt_path:
-                logger.info(f"Loading d2p checkpoint: {ckpt_path}")
-                self.base_model.load(ckpt_path)
-
         self.base_model = self.base_model.to(device)
 
     def _freeze_base(self):
@@ -232,7 +212,7 @@ class VQAModel(nn.Module):
             return self.base_model.encode_image(pixel_values, normalize=False)
 
         else:
-            # prolip, grove, icpe, d2p: all have encode_image(pixel_values)
+            # prolip, grove: all have encode_image(pixel_values)
             return self.base_model.encode_image(pixel_values)
 
     def extract_text_features(
@@ -271,7 +251,7 @@ class VQAModel(nn.Module):
             return self.base_model.encode_text(input_ids, attention_mask, normalize=False)
 
         else:
-            # prolip, grove, icpe, d2p: all have encode_text(input_ids, attention_mask)
+            # prolip, grove: all have encode_text(input_ids, attention_mask)
             return self.base_model.encode_text(input_ids, attention_mask)
 
     def _sample_dist_image_features(self, pixel_values: torch.Tensor) -> torch.Tensor:
@@ -298,7 +278,8 @@ class VQAModel(nn.Module):
 
     def process_images(self, images: List) -> torch.Tensor:
         """Process PIL images to tensors using CLIP processor."""
-        return self.base_model.processor(images=images, return_tensors="pt")["pixel_values"]
+        device = next(self.parameters()).device
+        return preprocess_images_on_gpu(images, device)
 
     def process_text(self, texts: List[str]) -> Dict[str, torch.Tensor]:
         """Process text strings to token IDs using CLIP processor."""

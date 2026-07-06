@@ -25,7 +25,7 @@ from datetime import datetime
 import config
 from data.caption_dataset import ImageCaptionDataset
 from models.dist_align_model import DistributionAlignmentModel
-from losses.dist_align_losses import DistributionAlignmentLoss, CombinedDistributionLoss
+from losses.dist_align_losses import DistributionAlignmentLoss, CombinedDistributionLoss, MSDALoss
 from utils.logger import setup_logger, get_logger
 from utils.seed import set_seed
 from utils.metrics import compute_recall_at_k
@@ -108,13 +108,14 @@ def test_model_creation(logger):
 
         dummy_images = torch.randn(batch_size, 3, 224, 224)
         dummy_captions = torch.randint(0, 49408, (batch_size, num_captions, max_seq_len))
+        dummy_attention_mask = torch.ones(batch_size, num_captions, max_seq_len, dtype=torch.long)
 
         logger.info(f"\nTesting forward pass...")
         logger.info(f"  Input images shape: {dummy_images.shape}")
         logger.info(f"  Input captions shape: {dummy_captions.shape}")
 
         with torch.no_grad():
-            outputs = model(dummy_images, dummy_captions)
+            outputs = model(dummy_images, dummy_captions, dummy_attention_mask)
 
         logger.info(f"✓ Forward pass successful")
         logger.info(f"  Output shapes:")
@@ -172,6 +173,47 @@ def test_loss_function(logger):
 
     except Exception as e:
         logger.error(f"✗ Loss function test failed: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return False
+
+
+def test_msda_loss_function(logger):
+    """Test 2b: MSDA loss computation."""
+    logger.info("\n" + "=" * 60)
+    logger.info("TEST 2b: MSDA Loss Function")
+    logger.info("=" * 60)
+
+    try:
+        criterion = MSDALoss()
+
+        B, D, K, r = 4, 768, 5, config.MSDA_COV_RANK
+        img_mu = torch.randn(B, D)
+        img_logvar = torch.randn(B, D)
+        img_U = torch.randn(B, D, r)
+        text_mu = torch.randn(B, D)
+        text_logvar = torch.randn(B, D)
+        text_mus = torch.randn(B, K, D)
+        text_logvars = torch.randn(B, K, D)
+        text_Us = torch.randn(B, K, D, r)
+
+        loss, loss_dict = criterion(
+            img_mu, img_logvar, img_U,
+            text_mu, text_logvar,
+            text_mus, text_logvars, text_Us,
+        )
+
+        logger.info("✓ MSDA loss computation successful")
+        logger.info(f"  Total loss: {loss_dict['total']:.4f}")
+        logger.info(f"  set-NCE: {loss_dict['set_nce']:.4f}")
+        logger.info(f"  var: {loss_dict['var']:.4f}")
+        logger.info(f"  cover: {loss_dict['cover']:.4f}")
+        logger.info(f"  cov: {loss_dict['cov']:.4f}")
+
+        return True
+
+    except Exception as e:
+        logger.error(f"✗ MSDA loss function test failed: {str(e)}")
         import traceback
         logger.error(traceback.format_exc())
         return False
@@ -381,13 +423,12 @@ def test_evaluation(logger, model, dataloader, device):
         similarity = torch.matmul(img_features, text_features.T)
         logger.info(f"  Similarity matrix shape: {similarity.shape}")
 
-        # Compute Recall@K
-        recall_1 = compute_recall_at_k(similarity, 1)
-        recall_5 = compute_recall_at_k(similarity, 5)
+        # Compute Recall@K (returns a dict keyed by K)
+        recalls = compute_recall_at_k(similarity, [1, 5])
 
         logger.info(f"✓ Evaluation completed")
-        logger.info(f"  Recall@1: {recall_1:.4f}")
-        logger.info(f"  Recall@5: {recall_5:.4f}")
+        logger.info(f"  Recall@1: {recalls[1]:.4f}")
+        logger.info(f"  Recall@5: {recalls[5]:.4f}")
 
         return True
 
@@ -493,6 +534,10 @@ def main():
     # Test 2: Loss function
     success = test_loss_function(logger)
     test_results['loss_function'] = success
+
+    # Test 2b: MSDA loss function
+    success = test_msda_loss_function(logger)
+    test_results['msda_loss_function'] = success
 
     # Create loss function
     criterion = DistributionAlignmentLoss(

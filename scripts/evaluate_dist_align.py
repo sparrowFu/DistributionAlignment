@@ -1,7 +1,11 @@
 """
-GaussianImageDistribution - Distribution Alignment Evaluation Script
+GaussianImageDistribution - MSDA Distribution Alignment Evaluation Script
 
-This script evaluates the distribution alignment model using image-text retrieval.
+Evaluates the MSDA (Multi-caption Semantic Distribution Alignment) model using
+image-text retrieval. The forward output keys (img_mu / text_mu / img_logvar /
+text_logvar) are unchanged, so retrieval logic is identical to before; the
+optional uncertainty-calibrated similarity corresponds to MSDA's
+uncertainty-discounted similarity.
 
 Usage:
     python scripts/evaluate_dist_align.py
@@ -49,11 +53,11 @@ def parse_args():
                         help="Output JSON path (uses config default if None)")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
                         help="Device to use")
-    parser.add_argument("--use-uc-similarity", action="store_true",
-                        default=config.DIST_ALIGN_USE_UC_CL,
-                        help="Use uncertainty-calibrated similarity for retrieval")
-    parser.add_argument("--uc-temperature", type=float, default=config.DIST_ALIGN_UC_TEMPERATURE,
-                        help="Temperature for uncertainty-calibrated similarity")
+    parser.add_argument("--use-uncertainty-sim", action="store_true",
+                        default=True,
+                        help="Also compute Recall@K with MSDA uncertainty-discounted similarity")
+    parser.add_argument("--tau", type=float, default=config.MSDA_TAU,
+                        help="Temperature for uncertainty-discounted similarity")
 
     return parser.parse_args()
 
@@ -249,7 +253,8 @@ def main():
 
     model = DistributionAlignmentModel(
         freeze_clip=config.DIST_ALIGN_FREEZE_CLIP,
-        distribution_merging=config.DIST_ALIGN_DISTRIBUTION_MERGING
+        distribution_merging=config.DIST_ALIGN_DISTRIBUTION_MERGING,
+        cov_rank=config.MSDA_COV_RANK,
     )
 
     model.load(checkpoint_path)
@@ -294,11 +299,11 @@ def main():
         img_mu, text_mu, args.recall_at_k, chunk_size=1000
     )
 
-    # Optionally also compute Recall@K using uncertainty-calibrated similarity
-    if args.use_uc_similarity:
+    # Optionally also compute Recall@K using uncertainty-discounted similarity
+    if args.use_uncertainty_sim:
         uc_recall_metrics = compute_recall_uc_chunked(
             img_mu, img_logvar, text_mu, text_logvar,
-            args.recall_at_k, temperature=args.uc_temperature, chunk_size=1000
+            args.recall_at_k, temperature=args.tau, chunk_size=1000
         )
         recall_metrics.update(uc_recall_metrics)
 

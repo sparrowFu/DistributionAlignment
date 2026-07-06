@@ -33,7 +33,7 @@ import config
 from utils.logger import get_logger, log_exception
 
 
-logger = get_logger("evaluate_llm_vqa", config.EVAL_LLM_VQA_LOG_PATH)
+logger = get_logger("evaluate_llm_vqa", config.EVALUATE_LLM_VQA_LOG_PATH)
 
 
 def parse_args():

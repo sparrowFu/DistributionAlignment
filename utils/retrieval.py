@@ -143,8 +143,7 @@ def extract_distribution_features(
     """
     Extract distribution parameters (mu, logvar) from any model whose
     ``forward(pixel_values, input_ids, attention_mask)`` returns a dict with
-    ``img_mu / text_mu / img_logvar / text_logvar`` (dist_align, ProLIP, GroVE,
-    D2P, ICPE).
+    ``img_mu / text_mu / img_logvar / text_logvar`` (dist_align, ProLIP, GroVE).
 
     Returns:
         (img_mu, text_mu, img_logvar, text_logvar), each (N, D)

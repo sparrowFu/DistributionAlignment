@@ -13,7 +13,7 @@ import argparse
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 
 import sys
@@ -28,6 +28,11 @@ from utils.seed import set_seed
 
 
 logger = get_logger("train_grove", config.TRAIN_GROVE_LOG_PATH)
+
+# Exclude faulty CPU cores (e.g. unstable CPU 2) before DataLoader workers and
+# torch threads are created. Inherited by forked worker processes.
+from utils.cpu_affinity import apply_cpu_affinity
+apply_cpu_affinity()
 
 
 def parse_args():
@@ -66,7 +71,10 @@ def main():
 
     val_size = int(len(dataset) * args.val_split)
     train_size = len(dataset) - val_size
-    train_ds, val_ds = Subset(dataset, range(train_size)), Subset(dataset, range(train_size, len(dataset)))
+    train_ds, val_ds = random_split(
+        dataset, [train_size, val_size],
+        generator=torch.Generator().manual_seed(args.seed),
+    )
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                               num_workers=config.NUM_WORKERS, collate_fn=filter_none_collate)
@@ -104,7 +112,9 @@ def main():
         best_val_loss = ckpt.get("best_val_loss", float("inf"))
         logger.info(f"Resumed from epoch {start_epoch}, best_val_loss: {best_val_loss:.4f}")
 
+    last_epoch = start_epoch
     for epoch in range(start_epoch, args.epochs):
+        last_epoch = epoch
         model.train()
         model.clip_model.eval()
 
@@ -182,7 +192,7 @@ def main():
     torch.save({
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
-        "epoch": epoch + 1,
+        "epoch": last_epoch + 1,
         "best_val_loss": best_val_loss,
     }, last_ckpt_path)
     logger.info(f"Training completed. Best val loss: {best_val_loss:.4f}")

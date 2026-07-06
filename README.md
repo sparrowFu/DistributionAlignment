@@ -12,8 +12,18 @@ This project implements **UC-CL**, a method that models image and text embedding
 - **Uncertainty-Calibrated Similarity**: `sim(x,y) = μ_x·μ_y / (τ·√(1+var_x)·√(1+var_y))`
 - **Distributional Consistency**: σ²_img ≈ Var(μ_captions), grounding σ in semantic diversity
 - **Distribution Merging**: Moment matching to merge K caption distributions into one
-- **7 Baselines**: B1-B6 + LLM VQA (B7/B8) for comprehensive comparison
+- **5 Baselines**: B1-B4 + LLM VQA (B7/B8) for comprehensive comparison
 - **8 Experiments**: Training, evaluation, calibration, OOD, ablation, generalization, analysis, visualization
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [methods.md](methods.md) | Current method (MSDA) — model structure, losses, staged training, stability fix |
+| [experiments.md](experiments.md) | Experiment log — UC-CL vs MSDA results, `L_cov` crash analysis, P0 fix |
+| [examples/README.md](examples/README.md) | Example scripts (quick sanity check, full pipeline test) |
+
+> MSDA (Multi-caption Semantic Distribution Alignment) is the current method, an evolution of the early UC-CL diagonal variant (`r=0`); see `methods.md` for details.
 
 ## Project Structure
 
@@ -31,8 +41,6 @@ GaussianImageDistribution/
 │   ├── clip_zero_shot.py            # B1: CLIP zero-shot VQA
 │   ├── prolip_model.py              # B3: ProLIP probabilistic embeddings
 │   ├── grove_model.py               # B4: GroVE GP-based posterior
-│   ├── icpe_model.py                # B5: ICPE training-free k-NN covariance
-│   ├── d2p_model.py                 # B6: D2P distribution-to-point
 │   ├── vqa_model.py                 # Unified VQA classification head
 │   └── baseline_utils.py           # Shared utilities (merging, encoding)
 ├── losses/
@@ -52,9 +60,6 @@ GaussianImageDistribution/
 │   ├── evaluate_prolip.py           # B3 evaluation
 │   ├── train_grove.py               # B4 training
 │   ├── evaluate_grove.py            # B4 evaluation
-│   ├── evaluate_icpe.py             # B5 evaluation (training-free)
-│   ├── train_d2p.py                 # B6 training
-│   ├── evaluate_d2p.py              # B6 evaluation
 │   ├── train_vqa.py                 # VQA classification head training
 │   ├── eval_llm_vqa.py              # B7/B8 LLM VQA querying
 │   ├── evaluate_llm_vqa.py          # B7/B8 LLM VQA metrics
@@ -134,8 +139,6 @@ L = λ_cl × L_calibrated_CL + λ_consist × L_consistency + λ_var × L_varianc
 | B2 | CLIP Fine-Tune | None | Yes (CLIP) |
 | B3 | ProLIP | Implicit (inclusion loss) | Yes (MLP) |
 | B4 | GroVE | GP posterior variance | Yes (inducing pts) |
-| B5 | ICPE | k-NN covariance | No (training-free) |
-| B6 | D2P | Text-side only | Yes (MLP) |
 | B7 | Qwen-VL | N/A (LLM) | No (API) |
 | B8 | Kimi-K2.5 | N/A (LLM) | No (API) |
 
@@ -160,13 +163,6 @@ python main.py --task eval_prolip
 python main.py --task train_grove
 python main.py --task eval_grove
 
-# B5: ICPE (training-free)
-python main.py --task eval_icpe
-
-# B6: D2P
-python main.py --task train_d2p
-python main.py --task eval_d2p
-
 # B1: CLIP Zero-Shot
 python main.py --task eval_clip_zero_shot
 ```
@@ -174,7 +170,7 @@ python main.py --task eval_clip_zero_shot
 ### Stage 2: VQA Downstream
 
 ```bash
-# Train VQA classification head (supports all B1-B6 + Ours)
+# Train VQA classification head (supports all B1-B4 + Ours)
 python main.py --task train_vqa --model-type dist_align
 
 # B7/B8: LLM VQA evaluation
@@ -228,14 +224,13 @@ All hyperparameters are in `config.py`. Key settings:
 | B2 CLIP | 1 | 1e-6 | freeze_image/text=False |
 | B3 ProLIP | 10 | 1e-6 | Same arch, no consistency |
 | B4 GroVE | 10 | 1e-3 | num_inducing=128 |
-| B6 D2P | 10 | 1e-4 | num_samples=10 |
 
 ## Output Files
 
 ### Checkpoints
 - `checkpoints/dist_align_best.pt`, `dist_align_last.pt`
 - `checkpoints/clip_baseline_best.pt`
-- `checkpoints/prolip_best.pt`, `grove_best.pt`, `d2p_best.pt`
+- `checkpoints/prolip_best.pt`, `grove_best.pt`
 - `checkpoints/vqa_{model_type}_best.pt`
 
 ### Evaluation Results

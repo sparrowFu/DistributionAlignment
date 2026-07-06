@@ -1,9 +1,15 @@
 """
-GaussianImageDistribution - Distribution Alignment Training Script
+GaussianImageDistribution - MSDA Distribution Alignment Training Script
 
-This script trains the distribution alignment model on image-caption pairs.
-It models image and text embeddings as Gaussian distributions to address
-modality gap and one-to-many relationships.
+Trains the MSDA (Multi-caption Semantic Distribution Alignment) model, which
+models image and text embeddings as general Gaussians N(mu, Sigma) with a
+learned (non-diagonal) covariance, supervised so that the image variance
+matches the multi-caption semantic spread.
+
+A 3-stage schedule activates loss components progressively:
+    Warm-up: L_set-NCE + L_mu
+    Main:    + L_var + L_cover
+    Full:    + L_cov
 
 Usage:
     python scripts/train_dist_align.py
@@ -26,18 +32,24 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from data.caption_dataset import ImageCaptionDataset, filter_none_collate
 from models.dist_align_model import DistributionAlignmentModel
-from losses.dist_align_losses import DistributionAlignmentLoss, CombinedDistributionLoss, DistributionalContrastiveLoss, UncertaintyCalibratedContrastiveLoss
+from losses.dist_align_losses import MSDALoss
 from utils.logger import get_logger, log_exception
 from utils.seed import set_seed
+from utils.retrieval import compute_recall_bidirectional
 
 
 # Setup logger
 logger = get_logger("train_dist_align", config.TRAIN_DIST_ALIGN_LOG_PATH)
 
+# Exclude faulty CPU cores (e.g. unstable CPU 2) before DataLoader workers and
+# torch threads are created. Inherited by forked worker processes.
+from utils.cpu_affinity import apply_cpu_affinity
+apply_cpu_affinity()
+
 
 def parse_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Train Distribution Alignment Model")
+    parser = argparse.ArgumentParser(description="Train MSDA Distribution Alignment Model")
 
     # Data arguments
     parser.add_argument("--captions-path", type=str, default=None,
@@ -53,24 +65,37 @@ def parse_args():
     parser.add_argument("--clip-lr", type=float, default=config.DIST_ALIGN_CLIP_LR,
                         help="Learning rate for CLIP (if fine-tuning)")
     parser.add_argument("--mlp-lr", type=float, default=config.DIST_ALIGN_MLP_LR,
-                        help="Learning rate for MLP distribution heads")
+                        help="Learning rate for MLP / covariance heads")
     parser.add_argument("--weight-decay", type=float, default=config.DIST_ALIGN_WEIGHT_DECAY,
                         help="Weight decay")
-    parser.add_argument("--temperature", type=float, default=config.DIST_ALIGN_TEMPERATURE,
-                        help="Temperature for contrastive loss")
+    parser.add_argument("--temperature", type=float, default=config.MSDA_TAU,
+                        help="Temperature tau for L_set-NCE similarity")
 
-    # Loss arguments
-    parser.add_argument("--lambda-contrastive", type=float, default=config.DIST_ALIGN_LAMBDA_CONTRASTIVE,
-                        help="Weight for contrastive loss")
-    parser.add_argument("--lambda-kl", type=float, default=config.DIST_ALIGN_LAMBDA_KL,
-                        help="Weight for KL divergence loss")
-    parser.add_argument("--lambda-var", type=float, default=config.DIST_ALIGN_LAMBDA_VAR,
-                        help="Weight for variance regularization loss")
-    parser.add_argument("--kl-type", type=str, default=config.DIST_ALIGN_KL_TYPE,
-                        choices=["symmetric", "forward", "reverse", "wasserstein"],
-                        help="Type of KL divergence")
+    # MSDA loss arguments
+    parser.add_argument("--lambda-ctr", type=float, default=config.MSDA_LAMBDA_CTR,
+                        help="Weight for set-level contrastive loss")
+    parser.add_argument("--lambda-mu", type=float, default=config.MSDA_LAMBDA_MU,
+                        help="Weight for mean-center alignment loss")
+    parser.add_argument("--lambda-var", type=float, default=config.MSDA_LAMBDA_VAR,
+                        help="Weight for variance semantic consistency (core)")
+    parser.add_argument("--lambda-cover", type=float, default=config.MSDA_LAMBDA_COVER,
+                        help="Weight for multi-caption coverage loss")
+    parser.add_argument("--lambda-cov", type=float, default=config.MSDA_LAMBDA_COV,
+                        help="Weight for covariance direction alignment")
+    parser.add_argument("--lambda-reg", type=float, default=config.MSDA_LAMBDA_REG,
+                        help="Weight for variance regularization")
+    parser.add_argument("--m-pos", type=float, default=config.MSDA_M_POS,
+                        help="Per-dim-normalized positive coverage radius")
+    parser.add_argument("--target-var", type=float, default=config.MSDA_TARGET_VAR,
+                        help="Target variance sigma_0^2 for L_reg")
+    parser.add_argument("--use-neg-cover", action="store_true", default=config.MSDA_USE_NEG_COVER,
+                        help="Add negative coverage repulsion term")
+    parser.add_argument("--no-uncertainty-sim", action="store_true", default=False,
+                        help="Use standard cosine instead of uncertainty-discounted similarity")
 
-    # Model arguments
+    # MSDA model arguments
+    parser.add_argument("--cov-rank", type=int, default=config.MSDA_COV_RANK,
+                        help="Low-rank covariance rank r (0 = diagonal only)")
     parser.add_argument("--freeze-clip", action="store_true", default=config.DIST_ALIGN_FREEZE_CLIP,
                         help="Freeze CLIP parameters")
     parser.add_argument("--no-freeze-clip", action="store_false", dest="freeze_clip",
@@ -80,36 +105,8 @@ def parse_args():
                         help="Method for merging multiple text distributions")
     parser.add_argument("--dropout-rate", type=float, default=config.DIST_ALIGN_DROPOUT_RATE,
                         help="Dropout rate for MLP heads")
-    parser.add_argument("--use-variance-loss", action="store_true", default=config.DIST_ALIGN_USE_VARIANCE_LOSS,
-                        help="Use variance regularization loss")
-
-    # Distributional Contrastive Learning via OT arguments
-    parser.add_argument("--use-ot-contrastive", action="store_true", default=config.DIST_ALIGN_USE_OT_CONTRASTIVE,
-                        help="Use OT-based distributional contrastive loss")
-    parser.add_argument("--no-ot-contrastive", action="store_false", dest="use_ot_contrastive",
-                        help="Disable OT-based distributional contrastive loss")
-    parser.add_argument("--ot-temperature", type=float, default=config.DIST_ALIGN_OT_TEMPERATURE,
-                        help="Temperature for W2-based distributional similarity")
-    parser.add_argument("--lambda-ot", type=float, default=config.DIST_ALIGN_LAMBDA_OT,
-                        help="Weight for distributional contrastive loss")
-    parser.add_argument("--lambda-var-ot", type=float, default=config.DIST_ALIGN_LAMBDA_VAR_OT,
-                        help="Weight for variance regularization in OT mode")
-    parser.add_argument("--min-sigma", type=float, default=config.DIST_ALIGN_MIN_SIGMA,
-                        help="Minimum sigma to prevent numerical collapse")
-
-    # Uncertainty-Calibrated Distributional Contrastive Learning arguments
-    parser.add_argument("--use-uc-cl", action="store_true", default=config.DIST_ALIGN_USE_UC_CL,
-                        help="Use Uncertainty-Calibrated Distributional Contrastive Learning")
-    parser.add_argument("--no-uc-cl", action="store_false", dest="use_uc_cl",
-                        help="Disable Uncertainty-Calibrated Distributional Contrastive Learning")
-    parser.add_argument("--uc-temperature", type=float, default=config.DIST_ALIGN_UC_TEMPERATURE,
-                        help="Temperature for uncertainty-calibrated similarity")
-    parser.add_argument("--lambda-uc-cl", type=float, default=config.DIST_ALIGN_LAMBDA_UC_CL,
-                        help="Weight for uncertainty-calibrated contrastive loss (λ_cl)")
-    parser.add_argument("--lambda-consist", type=float, default=config.DIST_ALIGN_LAMBDA_CONSIST,
-                        help="Weight for distributional consistency loss (λ_consist)")
-    parser.add_argument("--lambda-uc-var", type=float, default=config.DIST_ALIGN_LAMBDA_UC_VAR,
-                        help="Weight for variance regularization in UC-CL mode (λ_var)")
+    parser.add_argument("--no-staged", action="store_true",
+                        help="Disable 3-stage schedule; use all losses from epoch 1")
 
     # System arguments
     parser.add_argument("--seed", type=int, default=config.SEED,
@@ -126,6 +123,11 @@ def parse_args():
                         help="Early stopping patience in epochs (default: 3)")
     parser.add_argument("--no-early-stop", action="store_true",
                         help="Disable early stopping")
+    parser.add_argument("--select-by", type=str, default="recall",
+                        choices=["recall", "loss"],
+                        help="Best-checkpoint selection metric: 'recall' "
+                             "(bidirectional R@1, higher better) or 'loss' "
+                             "(val loss, lower better). Default: recall")
 
     # Output arguments
     parser.add_argument("--checkpoint-dir", type=str, default=None,
@@ -140,29 +142,56 @@ def parse_args():
     return parser.parse_args()
 
 
-def create_optimizer(model, args):
-    """Create optimizer with different learning rates for CLIP and MLP."""
-    if args.freeze_clip:
-        # Only train MLP heads
-        optimizer = optim.Adam(
-            model.trainable_parameters(),
-            lr=args.mlp_lr,
-            weight_decay=args.weight_decay
-        )
+def stage_multipliers(epoch: int, total: int, no_staged: bool) -> Dict[str, float]:
+    """Return per-loss multipliers for the 3-stage MSDA schedule.
+
+    Warm-up: L_set-NCE + L_mu.  Main: + L_var + L_cover.  Full: + L_cov.
+
+    In the full stage, L_cov is *linearly ramped* from 0 to 1 across the
+    stage's epochs instead of a hard 0->1 step. The cov head (img_U) is
+    essentially untrained before this stage, so L_cov starts near its maximum
+    2*r; a hard step injects a gradient that dominates every other term and
+    crashes Recall@1 the moment L_cov activates. The ramp lets the head warm
+    up gently (together with the reduced MSDA_LAMBDA_COV and grad clipping).
+    """
+    base = {"ctr": 1.0, "mu": 1.0, "var": 1.0, "cover": 1.0, "cov": 1.0}
+    if no_staged or total <= 0:
+        return base
+    warmup_end = max(1, int(round(total * config.MSDA_STAGE_WARMUP_FRAC)))
+    main_end = max(warmup_end + 1,
+                   int(round(total * (config.MSDA_STAGE_WARMUP_FRAC + config.MSDA_STAGE_MAIN_FRAC))))
+    if epoch < warmup_end:
+        base.update(var=0.0, cover=0.0, cov=0.0)
+    elif epoch < main_end:
+        base.update(cov=0.0)
     else:
-        # CLIP and MLP with different learning rates
+        # Full stage: linearly ramp L_cov 0 -> 1 across the remaining epochs.
+        full_len = max(1, total - main_end)
+        j = epoch - main_end  # 0-based index within the full stage
+        base["cov"] = min(1.0, (j + 1) / full_len)
+    return base
+
+
+def create_optimizer(model, args):
+    """Create optimizer with different learning rates for CLIP and MLP/cov heads."""
+    head_params = (
+        list(model.img_mu_head.parameters())
+        + list(model.img_logvar_head.parameters())
+        + list(model.text_mu_head.parameters())
+        + list(model.text_logvar_head.parameters())
+    )
+    if getattr(model, "cov_rank", 0) > 0:
+        head_params += list(model.img_cov_head.parameters())
+        head_params += list(model.text_cov_head.parameters())
+
+    if args.freeze_clip:
+        # Only train distribution + covariance heads
+        optimizer = optim.Adam(head_params, lr=args.mlp_lr, weight_decay=args.weight_decay)
+    else:
+        # CLIP and heads with different learning rates
         optimizer = optim.Adam([
-            {
-                'params': model.clip_model.parameters(),
-                'lr': args.clip_lr,
-            },
-            {
-                'params': list(model.img_mu_head.parameters()) +
-                          list(model.img_logvar_head.parameters()) +
-                          list(model.text_mu_head.parameters()) +
-                          list(model.text_logvar_head.parameters()),
-                'lr': args.mlp_lr,
-            }
+            {"params": model.clip_model.parameters(), "lr": args.clip_lr},
+            {"params": head_params, "lr": args.mlp_lr},
         ], weight_decay=args.weight_decay)
 
     return optimizer
@@ -171,13 +200,10 @@ def create_optimizer(model, args):
 def train_epoch(
     model: DistributionAlignmentModel,
     dataloader: DataLoader,
-    criterion,
+    criterion: MSDALoss,
     optimizer: optim.Optimizer,
     device: torch.device,
     epoch: int,
-    use_variance_loss: bool = False,
-    use_ot: bool = False,
-    use_uc_cl: bool = False
 ) -> Dict[str, float]:
     """Train for one epoch."""
     model.train()
@@ -185,152 +211,93 @@ def train_epoch(
         model.clip_model.train()
 
     total_loss = 0.0
-    total_contrastive_loss = 0.0
-    total_kl_loss = 0.0
-    total_var_loss = 0.0
-    total_consist_loss = 0.0
-    total_w2_pos = 0.0
-    total_w2_all = 0.0
+    total_nce = 0.0
+    total_var = 0.0
+    total_cover = 0.0
+    total_cov = 0.0
+    total_img_var = 0.0
+    processed_batches = 0
 
     pbar = tqdm(dataloader, desc=f"Epoch {epoch + 1}")
 
     for batch_idx, batch in enumerate(pbar):
         if batch is None:
             continue
+        processed_batches += 1
 
         # Get data - PIL images and text lists
-        pil_images = batch["image"]  # List[PIL.Image]
-        caption_lists = batch["captions"]  # List[List[str]]
+        pil_images = batch["image"]            # List[PIL.Image]
+        caption_lists = batch["captions"]      # List[List[str]]
 
         # Process images with CLIP processor
         pixel_values = model.process_images(pil_images).to(device)  # [B, 3, 224, 224]
 
-        # Process text captions
-        # Each image has K captions, need to flatten and process
+        # Process text captions: flatten B*K captions, then reshape to [B, K, max_len]
         batch_size = len(pil_images)
         num_captions = len(caption_lists[0])
-
-        # Flatten all captions: [B*K, max_len]
         all_captions = []
         for caption_list in caption_lists:
-            all_captions.extend(caption_list)  # Flatten the list
-
-        # Process with CLIP processor
-        text_inputs = model.process_text(all_captions)  # Returns dict with input_ids and attention_mask
-
-        # Reshape to [B, K, max_len]
+            all_captions.extend(caption_list)
+        text_inputs = model.process_text(all_captions)
         input_ids = text_inputs["input_ids"].view(batch_size, num_captions, -1).to(device)
         attention_mask = text_inputs["attention_mask"].view(batch_size, num_captions, -1).to(device)
 
         # Forward pass
         outputs = model(pixel_values, input_ids, attention_mask)
 
-        # Compute loss
-        if use_uc_cl:
-            loss, loss_dict = criterion(
-                outputs['img_features'],
-                outputs['text_features'],
-                outputs['img_mu'],
-                outputs['img_logvar'],
-                outputs['text_mu'],
-                outputs['text_logvar'],
-                text_mus=outputs['text_mus'],
-            )
-        else:
-            loss, loss_dict = criterion(
-                outputs['img_features'],
-                outputs['text_features'],
-                outputs['img_mu'],
-                outputs['img_logvar'],
-                outputs['text_mu'],
-                outputs['text_logvar']
-            )
+        # Compute MSDA loss
+        loss, loss_dict = criterion(
+            outputs['img_mu'], outputs['img_logvar'], outputs['img_U'],
+            outputs['text_mu'], outputs['text_logvar'],
+            outputs['text_mus'], outputs['text_logvars'], outputs['text_Us'],
+        )
 
         # Backward pass
         optimizer.zero_grad()
         loss.backward()
+        # Clip global grad norm to protect against L_cov / cover spikes that can
+        # destabilize the retrieval means (P0 stability fix).
+        torch.nn.utils.clip_grad_norm_(model.parameters(), config.MSDA_GRAD_CLIP_NORM)
         optimizer.step()
 
         # Accumulate losses
         total_loss += loss_dict['total']
-        total_contrastive_loss += loss_dict['contrastive']
-        total_kl_loss += loss_dict['kl']
-
-        if use_variance_loss or use_ot or use_uc_cl:
-            total_var_loss += loss_dict.get('variance', 0.0)
-
-        if use_uc_cl:
-            total_consist_loss += loss_dict.get('consistency', 0.0)
-
-        if use_ot:
-            total_w2_pos += loss_dict.get('avg_w2_pos', 0.0)
-            total_w2_all += loss_dict.get('avg_w2_all', 0.0)
+        total_nce += loss_dict['set_nce']
+        total_var += loss_dict['var']
+        total_cover += loss_dict['cover']
+        total_cov += loss_dict['cov']
+        total_img_var += loss_dict['img_var_avg']
 
         # Update progress bar
-        if use_uc_cl:
-            pbar.set_postfix({
-                'loss': f"{loss_dict['total']:.4f}",
-                'CL': f"{loss_dict['contrastive']:.4f}",
-                'Con': f"{loss_dict.get('consistency', 0):.4f}"
-            })
-        elif use_ot:
-            pbar.set_postfix({
-                'loss': f"{loss_dict['total']:.4f}",
-                'OT': f"{loss_dict['contrastive']:.4f}",
-                'W2': f"{loss_dict.get('avg_w2_pos', 0):.2f}"
-            })
-        else:
-            pbar.set_postfix({
-                'loss': f"{loss_dict['total']:.4f}",
-                'contrastive': f"{loss_dict['contrastive']:.4f}",
-                'kl': f"{loss_dict['kl']:.4f}"
-            })
+        pbar.set_postfix({
+            'loss': f"{loss_dict['total']:.4f}",
+            'NCE': f"{loss_dict['set_nce']:.4f}",
+            'var': f"{loss_dict['var']:.4f}",
+            'cov': f"{loss_dict['cov']:.4f}",
+            'σ²i': f"{loss_dict['img_var_avg']:.3f}",
+        })
 
         # Log every N batches
         if (batch_idx + 1) % 10 == 0:
-            if use_uc_cl:
-                logger.debug(
-                    f"Epoch {epoch + 1}, Batch {batch_idx + 1}/{len(dataloader)}, "
-                    f"Loss: {loss_dict['total']:.4f}, "
-                    f"CL: {loss_dict['contrastive']:.4f}, "
-                    f"Consist: {loss_dict.get('consistency', 0):.4f}, "
-                    f"Var: {loss_dict.get('variance', 0):.4f}"
-                )
-            elif use_ot:
-                logger.debug(
-                    f"Epoch {epoch + 1}, Batch {batch_idx + 1}/{len(dataloader)}, "
-                    f"Loss: {loss_dict['total']:.4f}, "
-                    f"OT: {loss_dict['contrastive']:.4f}, "
-                    f"Var: {loss_dict['kl']:.4f}, "
-                    f"W2_pos: {loss_dict.get('avg_w2_pos', 0):.2f}"
-                )
-            else:
-                logger.debug(
-                    f"Epoch {epoch + 1}, Batch {batch_idx + 1}/{len(dataloader)}, "
-                    f"Loss: {loss_dict['total']:.4f}, "
-                    f"Contrastive: {loss_dict['contrastive']:.4f}, "
-                    f"KL: {loss_dict['kl']:.4f}"
-                )
+            logger.debug(
+                f"Epoch {epoch + 1}, Batch {batch_idx + 1}/{len(dataloader)}, "
+                f"Loss: {loss_dict['total']:.4f}, "
+                f"NCE: {loss_dict['set_nce']:.4f}, "
+                f"Var: {loss_dict['var']:.4f}, "
+                f"Cover: {loss_dict['cover']:.4f}, "
+                f"Cov: {loss_dict['cov']:.4f}"
+            )
 
     # Compute averages
-    num_batches = len(dataloader)
+    num_batches = max(processed_batches, 1)
     metrics = {
         'loss': total_loss / num_batches,
-        'contrastive_loss': total_contrastive_loss / num_batches,
-        'kl_loss': total_kl_loss / num_batches,
+        'set_nce': total_nce / num_batches,
+        'var': total_var / num_batches,
+        'cover': total_cover / num_batches,
+        'cov': total_cov / num_batches,
+        'img_var_avg': total_img_var / num_batches,
     }
-
-    if use_variance_loss:
-        metrics['variance_loss'] = total_var_loss / num_batches
-
-    if use_ot:
-        metrics['variance_loss'] = total_var_loss / num_batches
-        metrics['avg_w2_pos'] = total_w2_pos / num_batches
-        metrics['avg_w2_all'] = total_w2_all / num_batches
-
-    if use_uc_cl:
-        metrics['variance_loss'] = total_var_loss / num_batches
-        metrics['consistency_loss'] = total_consist_loss / num_batches
 
     return metrics
 
@@ -339,111 +306,92 @@ def train_epoch(
 def evaluate(
     model: DistributionAlignmentModel,
     dataloader: DataLoader,
-    criterion,
+    criterion: MSDALoss,
     device: torch.device,
-    use_variance_loss: bool = False,
-    use_ot: bool = False,
-    use_uc_cl: bool = False
+    compute_recall: bool = False,
+    recall_k_values=None,
 ) -> Dict[str, float]:
     """Evaluate the model."""
     model.eval()
 
     total_loss = 0.0
-    total_contrastive_loss = 0.0
-    total_kl_loss = 0.0
-    total_var_loss = 0.0
-    total_consist_loss = 0.0
-    total_w2_pos = 0.0
-    total_w2_all = 0.0
+    total_nce = 0.0
+    total_var = 0.0
+    total_cover = 0.0
+    total_cov = 0.0
+    total_img_var = 0.0
+    processed_batches = 0
+    all_img_mu = [] if compute_recall else None
+    all_text_mu = [] if compute_recall else None
 
     pbar = tqdm(dataloader, desc="Evaluating")
 
     for batch in pbar:
         if batch is None:
             continue
+        processed_batches += 1
 
         # Get data - PIL images and text lists
-        pil_images = batch["image"]  # List[PIL.Image]
-        caption_lists = batch["captions"]  # List[List[str]]
+        pil_images = batch["image"]
+        caption_lists = batch["captions"]
 
         # Process images with CLIP processor
-        pixel_values = model.process_images(pil_images).to(device)  # [B, 3, 224, 224]
+        pixel_values = model.process_images(pil_images).to(device)
 
         # Process text captions
         batch_size = len(pil_images)
         num_captions = len(caption_lists[0])
-
-        # Flatten all captions: [B*K]
         all_captions = []
         for caption_list in caption_lists:
             all_captions.extend(caption_list)
-
-        # Process with CLIP processor
         text_inputs = model.process_text(all_captions)
-
-        # Reshape to [B, K, max_len]
         input_ids = text_inputs["input_ids"].view(batch_size, num_captions, -1).to(device)
         attention_mask = text_inputs["attention_mask"].view(batch_size, num_captions, -1).to(device)
 
         # Forward pass
         outputs = model(pixel_values, input_ids, attention_mask)
 
-        # Compute loss
-        if use_uc_cl:
-            loss, loss_dict = criterion(
-                outputs['img_features'],
-                outputs['text_features'],
-                outputs['img_mu'],
-                outputs['img_logvar'],
-                outputs['text_mu'],
-                outputs['text_logvar'],
-                text_mus=outputs['text_mus'],
-            )
-        else:
-            loss, loss_dict = criterion(
-                outputs['img_features'],
-                outputs['text_features'],
-                outputs['img_mu'],
-                outputs['img_logvar'],
-                outputs['text_mu'],
-                outputs['text_logvar']
-            )
+        # Compute MSDA loss
+        loss, loss_dict = criterion(
+            outputs['img_mu'], outputs['img_logvar'], outputs['img_U'],
+            outputs['text_mu'], outputs['text_logvar'],
+            outputs['text_mus'], outputs['text_logvars'], outputs['text_Us'],
+        )
 
         total_loss += loss_dict['total']
-        total_contrastive_loss += loss_dict['contrastive']
-        total_kl_loss += loss_dict['kl']
+        total_nce += loss_dict['set_nce']
+        total_var += loss_dict['var']
+        total_cover += loss_dict['cover']
+        total_cov += loss_dict['cov']
+        total_img_var += loss_dict['img_var_avg']
 
-        if use_variance_loss or use_ot or use_uc_cl:
-            total_var_loss += loss_dict.get('variance', 0.0)
-
-        if use_uc_cl:
-            total_consist_loss += loss_dict.get('consistency', 0.0)
-
-        if use_ot:
-            total_w2_pos += loss_dict.get('avg_w2_pos', 0.0)
-            total_w2_all += loss_dict.get('avg_w2_all', 0.0)
+        if all_img_mu is not None:
+            all_img_mu.append(outputs['img_mu'].cpu())
+            all_text_mu.append(outputs['text_mu'].cpu())
 
         pbar.set_postfix({'loss': f"{loss_dict['total']:.4f}"})
 
     # Compute averages
-    num_batches = len(dataloader)
+    num_batches = max(processed_batches, 1)
     metrics = {
         'loss': total_loss / num_batches,
-        'contrastive_loss': total_contrastive_loss / num_batches,
-        'kl_loss': total_kl_loss / num_batches,
+        'set_nce': total_nce / num_batches,
+        'var': total_var / num_batches,
+        'cover': total_cover / num_batches,
+        'cov': total_cov / num_batches,
+        'img_var_avg': total_img_var / num_batches,
     }
 
-    if use_variance_loss:
-        metrics['variance_loss'] = total_var_loss / num_batches
-
-    if use_ot:
-        metrics['variance_loss'] = total_var_loss / num_batches
-        metrics['avg_w2_pos'] = total_w2_pos / num_batches
-        metrics['avg_w2_all'] = total_w2_all / num_batches
-
-    if use_uc_cl:
-        metrics['variance_loss'] = total_var_loss / num_batches
-        metrics['consistency_loss'] = total_consist_loss / num_batches
+    # Retrieval Recall@K (image<->text, diagonal pairing). The val loader uses
+    # shuffle=False, so concatenated img_mu[i] stays aligned with its own caption-set
+    # text_mu[i] -> the diagonal is the positive pair. Used for best selection.
+    if compute_recall and recall_k_values and all_img_mu:
+        img_mu_all = torch.cat(all_img_mu, dim=0).to(device)
+        text_mu_all = torch.cat(all_text_mu, dim=0).to(device)
+        recall = compute_recall_bidirectional(
+            img_mu_all, text_mu_all, recall_k_values, chunk_size=1000, normalize=True
+        )
+        metrics.update(recall)
 
     return metrics
 
@@ -458,12 +406,7 @@ def main():
 
     # Log configuration
     logger.info("=" * 60)
-    if args.use_uc_cl:
-        logger.info("Distribution Alignment Training (Uncertainty-Calibrated CL)")
-    elif args.use_ot_contrastive:
-        logger.info("Distribution Alignment Training (OT Contrastive)")
-    else:
-        logger.info("Distribution Alignment Training")
+    logger.info("MSDA Distribution Alignment Training")
     logger.info("=" * 60)
     logger.info(f"Epochs: {args.epochs}")
     logger.info(f"Batch size: {args.batch_size}")
@@ -471,16 +414,12 @@ def main():
     logger.info(f"MLP LR: {args.mlp_lr}")
     logger.info(f"Freeze CLIP: {args.freeze_clip}")
     logger.info(f"Device: {args.device}")
-    if args.use_uc_cl:
-        logger.info(f"UC Temperature: {args.uc_temperature}")
-        logger.info(f"Lambda UC-CL: {args.lambda_uc_cl}")
-        logger.info(f"Lambda Consist: {args.lambda_consist}")
-        logger.info(f"Lambda UC Var: {args.lambda_uc_var}")
-    elif args.use_ot_contrastive:
-        logger.info(f"OT Temperature: {args.ot_temperature}")
-        logger.info(f"Lambda OT: {args.lambda_ot}")
-        logger.info(f"Lambda Var OT: {args.lambda_var_ot}")
-        logger.info(f"Min Sigma: {args.min_sigma}")
+    logger.info(f"Cov rank r: {args.cov_rank}")
+    logger.info(f"Tau: {args.temperature}")
+    logger.info(f"Lambda (ctr/mu/var/cover/cov/reg): "
+                f"{args.lambda_ctr}/{args.lambda_mu}/{args.lambda_var}/"
+                f"{args.lambda_cover}/{args.lambda_cov}/{args.lambda_reg}")
+    logger.info(f"Staged schedule: {not args.no_staged}")
     logger.info("=" * 60)
 
     # Create model
@@ -488,47 +427,28 @@ def main():
     model = DistributionAlignmentModel(
         freeze_clip=args.freeze_clip,
         distribution_merging=args.distribution_merging,
-        dropout_rate=args.dropout_rate
+        dropout_rate=args.dropout_rate,
+        cov_rank=args.cov_rank,
     )
     model = model.to(args.device)
     logger.info(f"Model created with {model.num_trainable_parameters():,} trainable parameters")
 
-    # Create loss function
-    if args.use_uc_cl:
-        criterion = UncertaintyCalibratedContrastiveLoss(
-            lambda_cl=args.lambda_uc_cl,
-            lambda_consist=args.lambda_consist,
-            lambda_var=args.lambda_uc_var,
-            temperature=args.uc_temperature,
-            target_variance=config.DIST_ALIGN_UC_TARGET_VARIANCE,
-        )
-        logger.info("Using Uncertainty-Calibrated Distributional Contrastive loss")
-    elif args.use_ot_contrastive:
-        criterion = DistributionalContrastiveLoss(
-            lambda_ot=args.lambda_ot,
-            temperature=args.ot_temperature,
-            min_sigma=args.min_sigma,
-            target_variance=config.DIST_ALIGN_TARGET_VARIANCE,
-            lambda_var=args.lambda_var_ot,
-        )
-        logger.info("Using distributional contrastive loss (OT-based)")
-    elif args.use_variance_loss:
-        criterion = CombinedDistributionLoss(
-            lambda_contrastive=args.lambda_contrastive,
-            lambda_kl=args.lambda_kl,
-            lambda_var=args.lambda_var,
-            temperature=args.temperature,
-            kl_type=args.kl_type
-        )
-        logger.info("Using combined loss with variance regularization")
-    else:
-        criterion = DistributionAlignmentLoss(
-            lambda_contrastive=args.lambda_contrastive,
-            lambda_kl=args.lambda_kl,
-            temperature=args.temperature,
-            kl_type=args.kl_type
-        )
-        logger.info("Using distribution alignment loss")
+    # Create MSDA loss
+    criterion = MSDALoss(
+        lambda_ctr=args.lambda_ctr,
+        lambda_mu=args.lambda_mu,
+        lambda_var=args.lambda_var,
+        lambda_cover=args.lambda_cover,
+        lambda_cov=args.lambda_cov,
+        lambda_reg=args.lambda_reg,
+        tau=args.temperature,
+        m_pos=args.m_pos,
+        target_var=args.target_var,
+        use_neg_cover=args.use_neg_cover,
+        m_neg=config.MSDA_M_NEG,
+        use_uncertainty_sim=not args.no_uncertainty_sim,
+    )
+    logger.info("Using MSDA loss")
 
     # Create optimizer
     optimizer = create_optimizer(model, args)
@@ -536,6 +456,7 @@ def main():
     # Resume from checkpoint if specified
     start_epoch = 0
     best_val_loss = float('inf')
+    best_recall = -float('inf')  # for --select-by recall
     patience_counter = 0
 
     if args.resume:
@@ -555,9 +476,10 @@ def main():
                         state[k] = v.to(args.device)
         start_epoch = checkpoint.get("epoch", 0)
         best_val_loss = checkpoint.get("best_val_loss", float('inf'))
+        best_recall = checkpoint.get("best_recall", -float('inf'))
         patience_counter = checkpoint.get("patience_counter", 0)
         logger.info(f"Resumed from epoch {start_epoch}, best_val_loss: {best_val_loss:.4f}, "
-                     f"patience_counter: {patience_counter}")
+                     f"best_recall: {best_recall:.4f}, patience_counter: {patience_counter}")
 
     # Load dataset
     captions_path = args.captions_path or config.CAPTIONS_PATH
@@ -603,64 +525,65 @@ def main():
     checkpoint_dir = Path(args.checkpoint_dir) if args.checkpoint_dir else config.CHECKPOINT_DIR
 
     logger.info(f"Starting training from epoch {start_epoch + 1}...")
+    last_epoch = start_epoch
     for epoch in range(start_epoch, args.epochs):
+        last_epoch = epoch
+
+        # Apply 3-stage schedule: scale per-loss weights by stage multipliers
+        mult = stage_multipliers(epoch, args.epochs, args.no_staged)
+        criterion.lambda_ctr = args.lambda_ctr * mult["ctr"]
+        criterion.lambda_mu = args.lambda_mu * mult["mu"]
+        criterion.lambda_var = args.lambda_var * mult["var"]
+        criterion.lambda_cover = args.lambda_cover * mult["cover"]
+        criterion.lambda_cov = args.lambda_cov * mult["cov"]
+        logger.info(f"Epoch {epoch + 1} stage multipliers: {mult}")
+
         # Train
         train_metrics = train_epoch(
-            model, train_dataloader, criterion, optimizer,
-            args.device, epoch,
-            use_variance_loss=args.use_variance_loss,
-            use_ot=args.use_ot_contrastive,
-            use_uc_cl=args.use_uc_cl
+            model, train_dataloader, criterion, optimizer, args.device, epoch
         )
 
         # Validate
         val_metrics = evaluate(
-            model, val_dataloader, criterion,
-            args.device,
-            use_variance_loss=args.use_variance_loss,
-            use_ot=args.use_ot_contrastive,
-            use_uc_cl=args.use_uc_cl
+            model, val_dataloader, criterion, args.device,
+            compute_recall=(args.select_by == "recall"),
+            recall_k_values=config.RECALL_AT_K,
         )
 
-        if args.use_uc_cl:
-            logger.info(
-                f"Epoch {epoch + 1}/{args.epochs} - "
-                f"Train Loss: {train_metrics['loss']:.4f}, "
-                f"CL: {train_metrics['contrastive_loss']:.4f}, "
-                f"Consist: {train_metrics.get('consistency_loss', 0):.4f}, "
-                f"Var: {train_metrics.get('variance_loss', 0):.4f} | "
-                f"Val Loss: {val_metrics['loss']:.4f}, "
-                f"Val CL: {val_metrics['contrastive_loss']:.4f}, "
-                f"Val Consist: {val_metrics.get('consistency_loss', 0):.4f}"
-            )
-        elif args.use_ot_contrastive:
-            logger.info(
-                f"Epoch {epoch + 1}/{args.epochs} - "
-                f"Train Loss: {train_metrics['loss']:.4f}, "
-                f"OT: {train_metrics['contrastive_loss']:.4f}, "
-                f"Var: {train_metrics['kl_loss']:.4f}, "
-                f"W2_pos: {train_metrics.get('avg_w2_pos', 0):.2f} | "
-                f"Val Loss: {val_metrics['loss']:.4f}, "
-                f"Val OT: {val_metrics['contrastive_loss']:.4f}, "
-                f"Val W2_pos: {val_metrics.get('avg_w2_pos', 0):.2f}"
-            )
-        else:
-            logger.info(
-                f"Epoch {epoch + 1}/{args.epochs} - "
-                f"Train Loss: {train_metrics['loss']:.4f}, "
-                f"Contrastive: {train_metrics['contrastive_loss']:.4f}, "
-                f"KL: {train_metrics['kl_loss']:.4f} | "
-                f"Val Loss: {val_metrics['loss']:.4f}, "
-                f"Val Contrastive: {val_metrics['contrastive_loss']:.4f}, "
-                f"Val KL: {val_metrics['kl_loss']:.4f}"
-            )
+        logger.info(
+            f"Epoch {epoch + 1}/{args.epochs} - "
+            f"Train Loss: {train_metrics['loss']:.4f}, "
+            f"NCE: {train_metrics['set_nce']:.4f}, "
+            f"Var: {train_metrics['var']:.4f}, "
+            f"Cover: {train_metrics['cover']:.4f}, "
+            f"Cov: {train_metrics['cov']:.4f}, "
+            f"σ²img: {train_metrics['img_var_avg']:.4f} | "
+            f"Val Loss: {val_metrics['loss']:.4f}, "
+            f"Val NCE: {val_metrics['set_nce']:.4f}, "
+            f"σ²img: {val_metrics['img_var_avg']:.4f}, "
+            f"R@1/5/10: {val_metrics.get('recall@1', 0):.3f}/"
+            f"{val_metrics.get('recall@5', 0):.3f}/{val_metrics.get('recall@10', 0):.3f}"
+        )
 
-        # Save best checkpoint
-        if val_metrics['loss'] < best_val_loss:
-            best_val_loss = val_metrics['loss']
+        # Save best checkpoint by the selected metric (recall@1 higher-better,
+        # or val loss lower-better).
+        if args.select_by == "recall" and "recall@1" in val_metrics:
+            current_score = val_metrics["recall@1"]
+            improved = current_score > best_recall
+            if improved:
+                best_recall = current_score
+        else:
+            current_score = val_metrics["loss"]
+            improved = current_score < best_val_loss
+            if improved:
+                best_val_loss = current_score
+
+        if improved:
             best_checkpoint_path = checkpoint_dir / "dist_align_best.pt"
             model.save(str(best_checkpoint_path))
-            logger.info(f"Best model saved (val_loss: {best_val_loss:.4f}) -> {best_checkpoint_path}")
+            score_str = (f"recall@1: {best_recall:.4f}" if args.select_by == "recall"
+                         else f"val_loss: {best_val_loss:.4f}")
+            logger.info(f"Best model saved ({score_str}) -> {best_checkpoint_path}")
             patience_counter = 0
         else:
             patience_counter += 1
@@ -676,13 +599,16 @@ def main():
     final_state = {
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
-        "epoch": epoch + 1,
+        "epoch": last_epoch + 1,
         "best_val_loss": best_val_loss,
+        "best_recall": best_recall,
         "patience_counter": patience_counter,
+        "select_by": args.select_by,
     }
     torch.save(final_state, str(final_checkpoint_path))
     logger.info(f"Final model saved to {final_checkpoint_path}")
-    logger.info(f"Best validation loss: {best_val_loss:.4f}")
+    logger.info(f"Best val loss: {best_val_loss:.4f} | Best recall@1: {best_recall:.4f} "
+                f"(selected by: {args.select_by})")
     logger.info("Training completed!")
 
 

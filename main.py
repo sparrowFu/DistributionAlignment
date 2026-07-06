@@ -18,6 +18,7 @@ from pathlib import Path
 import config
 from utils.logger import get_logger, log_exception
 from utils.seed import set_seed
+from utils.cpu_affinity import apply_cpu_affinity
 
 
 # Setup logger
@@ -40,9 +41,6 @@ Available tasks:
     eval_prolip            Evaluate ProLIP baseline model (B3)
     train_grove            Train GroVE baseline model (B4)
     eval_grove             Evaluate GroVE baseline model (B4)
-    eval_icpe              Evaluate ICPE baseline model (B5, training-free)
-    train_d2p              Train D2P baseline model (B6)
-    eval_d2p               Evaluate D2P baseline model (B6)
     eval_clip_zero_shot    Evaluate CLIP Zero-Shot baseline (B1)
 
   Stage 2 (VQA Downstream):
@@ -59,7 +57,7 @@ Available tasks:
     eval_flickr30k         Exp6: Flickr30K cross-dataset generalization
 
 Supported model types: dist_align, clip_baseline, clip_zero_shot,
-                       prolip, grove, icpe, d2p
+                       prolip, grove
 
 Examples:
   python main.py --task train_dist_align
@@ -81,8 +79,6 @@ Examples:
             "train_dist_align", "eval_dist_align",
             "train_prolip", "eval_prolip",
             "train_grove", "eval_grove",
-            "eval_icpe",
-            "train_d2p", "eval_d2p",
             "eval_clip_zero_shot",
             # Stage 2: VQA downstream
             "train_vqa",
@@ -104,7 +100,7 @@ Examples:
         type=str,
         default=None,
         choices=["dist_align", "clip_baseline", "clip_zero_shot",
-                 "prolip", "grove", "icpe", "d2p"],
+                 "prolip", "grove"],
         help="Base model type for VQA training"
     )
 
@@ -222,7 +218,7 @@ def run_python_script(script_path: Path, args: argparse.Namespace) -> int:
 
 # Task to script mapping
 TASK_SCRIPTS = {
-    # Stage 1: Alignment training (Ours + B2-B6)
+    # Stage 1: Alignment training (Ours + B2-B4)
     "train_clip_baseline": "train_clip_baseline.py",
     "eval_clip_baseline": "evaluate_clip_baseline.py",
     "train_dist_align": "train_dist_align.py",
@@ -231,9 +227,6 @@ TASK_SCRIPTS = {
     "eval_prolip": "evaluate_prolip.py",
     "train_grove": "train_grove.py",
     "eval_grove": "evaluate_grove.py",
-    "eval_icpe": "evaluate_icpe.py",
-    "train_d2p": "train_d2p.py",
-    "eval_d2p": "evaluate_d2p.py",
     # Stage 1: Zero-shot
     "eval_clip_zero_shot": "evaluate_clip_zero_shot.py",
     # Stage 2: VQA downstream
@@ -253,6 +246,10 @@ TASK_SCRIPTS = {
 def main():
     """Main entry point."""
     args = parse_args()
+
+    # Exclude faulty CPU cores (e.g. unstable CPU 2 on this server) before
+    # spawning the task subprocess, which inherits this affinity.
+    apply_cpu_affinity()
 
     config.ensure_project_dirs()
 

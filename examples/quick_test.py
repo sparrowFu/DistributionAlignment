@@ -1,8 +1,9 @@
 """
-GaussianImageDistribution - Quick Test
+GaussianImageDistribution - Quick Test (MSDA)
 
-This script performs a quick sanity check of the distribution alignment model.
-Tests basic functionality without full training pipeline.
+A quick sanity check of the MSDA distribution alignment model: model creation,
+forward pass, MSDA loss computation, and a backward step. For the full pipeline
+test see examples/test_dist_align.py.
 
 Usage:
     python examples/quick_test.py
@@ -21,21 +22,27 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import torch
 from models.dist_align_model import DistributionAlignmentModel
-from losses.dist_align_losses import DistributionAlignmentLoss, CombinedDistributionLoss
+from losses.dist_align_losses import MSDALoss
 import config
 from utils.seed import set_seed
 
 
+def _dummy_outputs(model, device):
+    """Run a forward pass on dummy data and return the output dict."""
+    B, K, L = 2, 5, 77
+    images = torch.randn(B, 3, 224, 224, device=device)
+    input_ids = torch.randint(0, 49408, (B, K, L), device=device)
+    attention_mask = torch.ones(B, K, L, dtype=torch.long, device=device)
+    return model(images, input_ids, attention_mask)
+
+
 def quick_test():
-    """Run quick test of model and loss functions."""
+    """Run quick test of the MSDA model and loss."""
     print("=" * 60)
-    print("Quick Test - Distribution Alignment Model")
+    print("Quick Test - MSDA Distribution Alignment Model")
     print("=" * 60)
 
-    # Set seed
     set_seed(42)
-
-    # Device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"\nDevice: {device}")
     print(f"PyTorch version: {torch.__version__}")
@@ -49,16 +56,11 @@ def quick_test():
         model = DistributionAlignmentModel(
             freeze_clip=True,
             distribution_merging="moment_matching",
-            dropout_rate=0.1
-        )
-
-        total_params = sum(p.numel() for p in model.parameters())
-        trainable_params = model.num_trainable_parameters()
-
-        print(f"[OK] Model created successfully")
-        print(f"  Total parameters: {total_params:,}")
-        print(f"  Trainable parameters: {trainable_params:,}")
-
+            dropout_rate=0.1,
+            cov_rank=config.MSDA_COV_RANK,
+        ).to(device)
+        print(f"[OK] Model created. Trainable params: {model.num_trainable_parameters():,}")
+        print(f"  cov_rank r = {model.cov_rank}")
     except Exception as e:
         print(f"[FAIL] Model creation failed: {e}")
         return False
@@ -69,165 +71,70 @@ def quick_test():
     print("-" * 60)
 
     try:
-        batch_size = 2
-        num_captions = 5
-        max_seq_len = 77
-
-        dummy_images = torch.randn(batch_size, 3, 224, 224)
-        dummy_captions = torch.randint(0, 49408, (batch_size, num_captions, max_seq_len))
-        dummy_attention_mask = torch.ones(batch_size, num_captions, max_seq_len)
-
-        print(f"Input pixel_values shape: {dummy_images.shape}")
-        print(f"Input input_ids shape: {dummy_captions.shape}")
-        print(f"Input attention_mask shape: {dummy_attention_mask.shape}")
-
         with torch.no_grad():
-            outputs = model(dummy_images, dummy_captions, dummy_attention_mask)
-
-        print(f"[OK] Forward pass successful")
-        print(f"Output shapes:")
+            outputs = _dummy_outputs(model, device)
+        print(f"[OK] Forward pass successful. Output shapes:")
         for key, value in outputs.items():
-            print(f"  {key}: {value.shape}")
-
+            shape = value.shape if value is not None else None
+            print(f"  {key}: {shape}")
     except Exception as e:
         print(f"✗ Forward pass failed: {e}")
         import traceback
         traceback.print_exc()
         return False
 
-    # Test 3: Loss computation
+    # Test 3: MSDA loss computation
     print("\n" + "-" * 60)
-    print("Test 3: Loss Computation")
+    print("Test 3: MSDA Loss Computation")
     print("-" * 60)
 
     try:
-        criterion = DistributionAlignmentLoss(
-            lambda_contrastive=1.0,
-            lambda_kl=0.5,
-            temperature=0.07,
-            kl_type="symmetric"
+        criterion = MSDALoss(
+            tau=config.MSDA_TAU, m_pos=config.MSDA_M_POS, target_var=config.MSDA_TARGET_VAR
         )
-
-        loss, loss_dict = criterion(
-            outputs['img_features'],
-            outputs['text_features'],
-            outputs['img_mu'],
-            outputs['img_logvar'],
-            outputs['text_mu'],
-            outputs['text_logvar']
+        loss, d = criterion(
+            outputs['img_mu'], outputs['img_logvar'], outputs['img_U'],
+            outputs['text_mu'], outputs['text_logvar'],
+            outputs['text_mus'], outputs['text_logvars'], outputs['text_Us'],
         )
-
-        print(f"✓ Loss computation successful")
-        print(f"  Total loss: {loss_dict['total']:.4f}")
-        print(f"  Contrastive loss: {loss_dict['contrastive']:.4f}")
-        print(f"  KL loss: {loss_dict['kl']:.4f}")
-
+        print(f"✓ MSDA loss computed: total={d['total']:.4f}")
+        print(f"  set-NCE={d['set_nce']:.4f} var={d['var']:.4f} "
+              f"cover={d['cover']:.4f} cov={d['cov']:.4f} reg={d['reg']:.4f}")
     except Exception as e:
         print(f"✗ Loss computation failed: {e}")
         import traceback
         traceback.print_exc()
         return False
 
-    # Test 4: Combined loss
+    # Test 4: Backward pass
     print("\n" + "-" * 60)
-    print("Test 4: Combined Loss (with variance regularization)")
-    print("-" * 60)
-
-    try:
-        combined_criterion = CombinedDistributionLoss(
-            lambda_contrastive=1.0,
-            lambda_kl=0.5,
-            lambda_var=0.1,
-            temperature=0.07,
-            kl_type="symmetric"
-        )
-
-        combined_loss, combined_dict = combined_criterion(
-            outputs['img_features'],
-            outputs['text_features'],
-            outputs['img_mu'],
-            outputs['img_logvar'],
-            outputs['text_mu'],
-            outputs['text_logvar']
-        )
-
-        print(f"✓ Combined loss computation successful")
-        print(f"  Total loss: {combined_dict['total']:.4f}")
-        print(f"  Contrastive loss: {combined_dict['contrastive']:.4f}")
-        print(f"  KL loss: {combined_dict['kl']:.4f}")
-        print(f"  Variance loss: {combined_dict.get('variance', 0):.4f}")
-
-    except Exception as e:
-        print(f"✗ Combined loss failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-    # Test 5: Backward pass
-    print("\n" + "-" * 60)
-    print("Test 5: Backward Pass")
+    print("Test 4: Backward Pass")
     print("-" * 60)
 
     try:
         import torch.optim as optim
-
-        # Recompute forward pass to get gradients
-        batch_size = 2
-        num_captions = 5
-        max_seq_len = 77
-
-        dummy_images = torch.randn(batch_size, 3, 224, 224)
-        dummy_captions = torch.randint(0, 49408, (batch_size, num_captions, max_seq_len))
-        dummy_attention_mask = torch.ones(batch_size, num_captions, max_seq_len)
-
-        # Forward pass (without no_grad)
-        outputs = model(dummy_images, dummy_captions, dummy_attention_mask)
-
-        # Compute loss
-        loss, loss_dict = criterion(
-            outputs['img_features'],
-            outputs['text_features'],
-            outputs['img_mu'],
-            outputs['img_logvar'],
-            outputs['text_mu'],
-            outputs['text_logvar']
+        outputs = _dummy_outputs(model, device)
+        loss, d = criterion(
+            outputs['img_mu'], outputs['img_logvar'], outputs['img_U'],
+            outputs['text_mu'], outputs['text_logvar'],
+            outputs['text_mus'], outputs['text_logvars'], outputs['text_Us'],
         )
-
-        # Backward pass
         optimizer = optim.Adam(model.trainable_parameters(), lr=1e-4)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-
-        print(f"✓ Backward pass successful")
-        print(f"  Loss value: {loss_dict['total']:.4f}")
-
-        # Check gradients
-        has_gradients = False
-        for name, param in model.named_parameters():
-            if param.grad is not None and param.grad.abs().sum() > 0:
-                has_gradients = True
-                break
-
-        if has_gradients:
-            print(f"  Gradients computed correctly")
-        else:
-            print(f"  Warning: No gradients found")
-
+        print(f"✓ Backward pass successful. Loss={d['total']:.4f}")
     except Exception as e:
         print(f"✗ Backward pass failed: {e}")
         import traceback
         traceback.print_exc()
         return False
 
-    # Summary
     print("\n" + "=" * 60)
     print("✓ All quick tests passed!")
     print("=" * 60)
-    print("\nThe distribution alignment model is working correctly.")
-    print("You can proceed with full training using:")
-    print("  python main.py --task train_dist_align")
-
+    print("\nThe MSDA distribution alignment model is working correctly.")
+    print("Full training:  python main.py --task train_dist_align")
     return True
 
 

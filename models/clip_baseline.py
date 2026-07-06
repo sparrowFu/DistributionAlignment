@@ -14,6 +14,7 @@ from transformers import CLIPModel, CLIPProcessor
 
 import config
 from utils.logger import get_logger
+from utils.image_preprocess import preprocess_images_on_gpu
 
 
 logger = get_logger("clip_baseline")
@@ -197,7 +198,8 @@ class CLIPFineTuneBaseline(nn.Module):
         Returns:
             Processed image tensor
         """
-        return self.processor(images=images, return_tensors="pt")["pixel_values"]
+        device = next(self.parameters()).device
+        return preprocess_images_on_gpu(images, device)
 
     def process_text(
         self,

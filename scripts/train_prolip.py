@@ -16,7 +16,7 @@ from pathlib import Path
 
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 
 import sys
@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
 from data.caption_dataset import ImageCaptionDataset, filter_none_collate
-from losses.dist_align_losses import DistributionAlignmentLoss
+from losses.dist_align_losses import CombinedDistributionLoss
 from models.prolip_model import ProLIPModel
 from utils.logger import get_logger, log_exception
 from utils.seed import set_seed
@@ -32,12 +32,17 @@ from utils.seed import set_seed
 
 logger = get_logger("train_prolip", config.TRAIN_PROLIP_LOG_PATH)
 
+# Exclude faulty CPU cores (e.g. unstable CPU 2) before DataLoader workers and
+# torch threads are created. Inherited by forked worker processes.
+from utils.cpu_affinity import apply_cpu_affinity
+apply_cpu_affinity()
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train ProLIP Baseline (B3)")
     parser.add_argument("--epochs", type=int, default=config.DIST_ALIGN_EPOCHS)
     parser.add_argument("--batch-size", type=int, default=config.DIST_ALIGN_BATCH_SIZE)
-    parser.add_argument("--lr", type=int, default=config.DIST_ALIGN_MLP_LR)
+    parser.add_argument("--lr", type=float, default=config.DIST_ALIGN_MLP_LR)
     parser.add_argument("--weight-decay", type=float, default=config.DIST_ALIGN_WEIGHT_DECAY)
     parser.add_argument("--temperature", type=float, default=config.DIST_ALIGN_TEMPERATURE)
     parser.add_argument("--captions-path", type=str, default=None)
@@ -70,7 +75,10 @@ def main():
     # Train/val split
     val_size = int(len(dataset) * args.val_split)
     train_size = len(dataset) - val_size
-    train_ds, val_ds = Subset(dataset, range(train_size)), Subset(dataset, range(train_size, len(dataset)))
+    train_ds, val_ds = random_split(
+        dataset, [train_size, val_size],
+        generator=torch.Generator().manual_seed(args.seed),
+    )
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                               num_workers=config.NUM_WORKERS, collate_fn=filter_none_collate)
@@ -87,7 +95,7 @@ def main():
     logger.info(f"Trainable parameters: {sum(p.numel() for p in trainable):,}")
 
     # Loss: contrastive + variance reg, NO consistency (lambda_consist=0)
-    criterion = DistributionAlignmentLoss(
+    criterion = CombinedDistributionLoss(
         temperature=args.temperature,
         lambda_contrastive=config.DIST_ALIGN_LAMBDA_CONTRASTIVE,
         lambda_kl=0.0,  # ProLIP does not use consistency loss
@@ -118,7 +126,9 @@ def main():
         best_val_loss = ckpt.get("best_val_loss", float("inf"))
         logger.info(f"Resumed from epoch {start_epoch}, best_val_loss: {best_val_loss:.4f}")
 
+    last_epoch = start_epoch
     for epoch in range(start_epoch, args.epochs):
+        last_epoch = epoch
         model.train()
         model.clip_model.eval()
 
@@ -202,7 +212,7 @@ def main():
     torch.save({
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
-        "epoch": epoch + 1,
+        "epoch": last_epoch + 1,
         "best_val_loss": best_val_loss,
     }, last_ckpt_path)
     logger.info(f"Training completed. Best val loss: {best_val_loss:.4f}")

@@ -24,6 +24,7 @@ from transformers import CLIPModel, CLIPProcessor
 
 import config
 from utils.logger import get_logger
+from utils.image_preprocess import preprocess_images_on_gpu
 
 
 logger = get_logger("clip_zero_shot")
@@ -192,7 +193,8 @@ class CLIPZeroShotVQA(nn.Module):
 
     def process_images(self, images: List) -> torch.Tensor:
         """Process PIL images to tensors using CLIP processor."""
-        return self.processor(images=images, return_tensors="pt")["pixel_values"]
+        device = next(self.parameters()).device
+        return preprocess_images_on_gpu(images, device)
 
     def process_text(self, texts: List[str]) -> Dict[str, torch.Tensor]:
         """Process text strings to token IDs using CLIP processor."""

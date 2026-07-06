@@ -1,11 +1,14 @@
 """
 GaussianImageDistribution - Distribution Alignment Loss Functions
 
-This module implements loss functions for distribution-based alignment,
-including CLIP contrastive loss, KL divergence loss, and variance regularization.
+This module implements loss functions for distribution-based alignment.
+The primary loss is MSDALoss (Multi-caption Semantic Distribution Alignment).
+Generic contrastive/KL losses (DistributionAlignmentLoss, CombinedDistributionLoss)
+are retained for the ProLIP baseline.
 """
 
-from typing import Dict, Tuple
+import math
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -331,600 +334,307 @@ class CombinedDistributionLoss(nn.Module):
         return total_loss, loss_dict
 
 
-class DistributionalContrastiveLoss(nn.Module):
+class MSDALoss(nn.Module):
     """
-    Distributional Contrastive Learning via Optimal Transport.
-
-    Replaces point-level contrastive similarity with distribution-level
-    similarity based on Wasserstein-2 distance between Gaussian distributions.
-
-    Key idea:
-        Standard CLIP:  sim(x, y) = x · y^T / τ
-        This method:    sim(N_x, N_y) = exp(-W_2(N_x, N_y) / τ)
-
-    For diagonal Gaussians, W_2 has a closed-form solution:
-        W_2^2 = ||μ_1 - μ_2||^2 + ||σ_1 - σ_2||^2
-
-    The distributional similarity naturally encodes:
-    - Mean alignment (via μ distance)
-    - Uncertainty matching (via σ distance)
-    - One-to-many relationships (via σ magnitude)
-    """
-
-    def __init__(
-        self,
-        lambda_ot: float = 1.0,
-        temperature: float = 0.1,
-        min_sigma: float = 1e-3,
-        target_variance: float = 0.5,
-        lambda_var: float = 0.1,
-    ):
-        """
-        Initialize distributional contrastive loss.
-
-        Args:
-            lambda_ot: Weight for distributional contrastive loss
-            temperature: Temperature for similarity (τ), controls sharpness
-            min_sigma: Minimum sigma to prevent numerical collapse
-            target_variance: Target variance for regularization
-            lambda_var: Weight for variance regularization
-        """
-        super().__init__()
-
-        self.lambda_ot = lambda_ot
-        self.temperature = temperature
-        self.min_sigma = min_sigma
-        self.target_variance = target_variance
-        self.lambda_var = lambda_var
-
-    def compute_w2_squared_matrix(
-        self,
-        mu1: torch.Tensor,
-        logvar1: torch.Tensor,
-        mu2: torch.Tensor,
-        logvar2: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Compute pairwise W_2^2 distance matrix between two sets of distributions.
-
-        For diagonal Gaussians:
-            W_2^2(N(μ₁,Σ₁), N(μ₂,Σ₂)) = ||μ₁ - μ₂||² + ||σ₁ - σ₂||²
-
-        Args:
-            mu1: Mean of first distributions, shape (B1, D)
-            logvar1: Log variance of first distributions, shape (B1, D)
-            mu2: Mean of second distributions, shape (B2, D)
-            logvar2: Log variance of second distributions, shape (B2, D)
-
-        Returns:
-            W_2^2 distance matrix of shape (B1, B2)
-        """
-        sigma1 = torch.exp(0.5 * logvar1).clamp(min=self.min_sigma)  # (B1, D)
-        sigma2 = torch.exp(0.5 * logvar2).clamp(min=self.min_sigma)  # (B2, D)
-
-        # ||μ₁ - μ₂||²: (B1, B2) via broadcasting
-        # ||μ₁ - μ₂||² = ||μ₁||² + ||μ₂||² - 2 μ₁·μ₂ᵀ
-        mu1_sq = (mu1 ** 2).sum(dim=-1, keepdim=True)  # (B1, 1)
-        mu2_sq = (mu2 ** 2).sum(dim=-1, keepdim=True)  # (B2, 1)
-        mu_cross = torch.matmul(mu1, mu2.T)  # (B1, B2)
-        dist_mu_sq = mu1_sq + mu2_sq.T - 2 * mu_cross  # (B1, B2)
-        dist_mu_sq = dist_mu_sq.clamp(min=0.0)
-
-        # ||σ₁ - σ₂||²: (B1, B2) via broadcasting
-        # ||σ₁ - σ₂||² = ||σ₁||² + ||σ₂||² - 2 σ₁·σ₂ᵀ
-        s1_sq = (sigma1 ** 2).sum(dim=-1, keepdim=True)  # (B1, 1)
-        s2_sq = (sigma2 ** 2).sum(dim=-1, keepdim=True)  # (B2, 1)
-        s_cross = torch.matmul(sigma1, sigma2.T)  # (B1, B2)
-        dist_sigma_sq = s1_sq + s2_sq.T - 2 * s_cross  # (B1, B2)
-        dist_sigma_sq = dist_sigma_sq.clamp(min=0.0)
-
-        # Total W_2^2
-        w2_sq = dist_mu_sq + dist_sigma_sq  # (B1, B2)
-
-        return w2_sq
-
-    def distributional_infonce(
-        self,
-        img_mu: torch.Tensor,
-        img_logvar: torch.Tensor,
-        text_mu: torch.Tensor,
-        text_logvar: torch.Tensor,
-    ) -> Tuple[torch.Tensor, Dict[str, float]]:
-        """
-        Compute distributional InfoNCE loss based on W_2 distance.
-
-        sim(N_i, N_j) = exp(-W_2^2(N_i, N_j) / τ)
-
-        L = -½ [ log exp(-W_2^2(f_x(i), f_y(i)) / τ) / Σ_j exp(-W_2^2(f_x(i), f_y(j)) / τ) ]
-            -½ [ log exp(-W_2^2(f_y(i), f_x(i)) / τ) / Σ_j exp(-W_2^2(f_y(i), f_x(j)) / τ) ]
-
-        Args:
-            img_mu, img_logvar: Image distribution params, shape (B, D)
-            text_mu, text_logvar: Text distribution params, shape (B, D)
-
-        Returns:
-            Tuple of (loss, info_dict)
-        """
-        B = img_mu.shape[0]
-
-        # Compute W_2^2 distance matrix: (B, B)
-        w2_sq = self.compute_w2_squared_matrix(
-            img_mu, img_logvar, text_mu, text_logvar
-        )
-
-        # Distributional similarity: sim = exp(-W_2^2 / τ)
-        # Use negative W_2^2 as logits for cross entropy
-        logits = -w2_sq / self.temperature  # (B, B)
-
-        # Labels: diagonal elements are positive pairs
-        labels = torch.arange(B, device=img_mu.device)
-
-        # Bidirectional contrastive loss
-        loss_i2t = F.cross_entropy(logits, labels)
-        loss_t2i = F.cross_entropy(logits.T, labels)
-        loss = (loss_i2t + loss_t2i) / 2
-
-        # Compute average W_2 distance for positive pairs (diagonal)
-        with torch.no_grad():
-            pos_w2 = w2_sq[torch.arange(B), torch.arange(B)]
-            avg_w2_pos = pos_w2.mean().sqrt().item()
-            avg_w2_all = w2_sq.mean().sqrt().item()
-
-        info = {
-            'loss_i2t': loss_i2t.item(),
-            'loss_t2i': loss_t2i.item(),
-            'avg_w2_pos': avg_w2_pos,
-            'avg_w2_all': avg_w2_all,
-        }
-
-        return loss, info
-
-    def variance_regularization(
-        self,
-        img_logvar: torch.Tensor,
-        text_logvar: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Variance regularization to prevent distribution collapse.
-
-        Prevents σ from collapsing to 0 (trivial mapping) or
-        exploding to infinity.
-
-        Args:
-            img_logvar: Image log variance, shape (B, D)
-            text_logvar: Text log variance, shape (B, D)
-
-        Returns:
-            Variance regularization loss scalar
-        """
-        img_var = torch.exp(img_logvar)
-        text_var = torch.exp(text_logvar)
-
-        img_var_loss = F.mse_loss(img_var, torch.ones_like(img_var) * self.target_variance)
-        text_var_loss = F.mse_loss(text_var, torch.ones_like(text_var) * self.target_variance)
-
-        return self.lambda_var * (img_var_loss + text_var_loss)
-
-    def forward(
-        self,
-        img_features: torch.Tensor,
-        text_features: torch.Tensor,
-        img_mu: torch.Tensor,
-        img_logvar: torch.Tensor,
-        text_mu: torch.Tensor,
-        text_logvar: torch.Tensor,
-    ) -> Tuple[torch.Tensor, Dict[str, float]]:
-        """
-        Compute total distributional contrastive loss.
-
-        L_total = λ_ot · L_dist_contrastive + λ_var · L_variance
-
-        Args:
-            img_features: CLIP image features, shape (B, D) [unused, kept for API compat]
-            text_features: CLIP text features, shape (B, D) [unused, kept for API compat]
-            img_mu, img_logvar: Image distribution parameters, shape (B, D)
-            text_mu, text_logvar: Text distribution parameters, shape (B, D)
-
-        Returns:
-            Tuple of (total_loss, loss_dict)
-        """
-        # Distributional contrastive loss
-        ot_loss, ot_info = self.distributional_infonce(
-            img_mu, img_logvar, text_mu, text_logvar
-        )
-
-        # Variance regularization
-        var_loss = self.variance_regularization(img_logvar, text_logvar)
-
-        # Total loss
-        total_loss = self.lambda_ot * ot_loss + var_loss
-
-        loss_dict = {
-            'total': total_loss.item(),
-            'contrastive': ot_loss.item(),
-            'kl': var_loss.item(),  # reuse key name for compatibility with training loop
-            'avg_w2_pos': ot_info['avg_w2_pos'],
-            'avg_w2_all': ot_info['avg_w2_all'],
-            'variance': var_loss.item(),
-        }
-
-        return total_loss, loss_dict
-
-
-class UncertaintyCalibratedContrastiveLoss(nn.Module):
-    """
-    Uncertainty-Calibrated Distributional Contrastive Learning.
-
-    Three components:
-        1. Uncertainty-Calibrated Similarity: σ modulates similarity sharpness
-           sim(x,y) = μ_x · μ_y / (τ · √(1 + ‖σ_x‖²) · √(1 + ‖σ_y‖²))
-
-        2. Distributional Consistency: σ²_img must match Var(μ_text_1,...,μ_text_K)
-           L_consist = MSE(σ²_img, Var_{k=1..K}(μ_text_k))
-
-        3. Variance regularization to prevent collapse
+    Multi-caption Semantic Distribution Alignment (MSDA) loss.
 
     Total loss:
-        L_total = λ_cl · L_calibrated_cl + λ_consist · L_consist + λ_var · L_var
+        L = lambda_ctr * L_set-NCE
+          + lambda_mu  * L_mu
+          + lambda_var * L_var      (stop-gradient on caption spread; core)
+          + lambda_cover * L_cover
+          + lambda_cov  * L_cov     (active only when cov_rank > 0)
+          + lambda_reg  * L_reg
+
+    Both image and text are general Gaussians N(mu, Sigma) with
+    Sigma = diag(sigma^2) + U U^T. The image variance is supervised to match
+    the multi-caption semantic spread, and the image covariance directions are
+    supervised to match caption deviation directions.
     """
 
     def __init__(
         self,
-        lambda_cl: float = 1.0,
-        lambda_consist: float = 1.0,
-        lambda_var: float = 0.1,
-        temperature: float = 0.07,
-        target_variance: float = 0.5,
+        lambda_ctr: float = 1.0,
+        lambda_mu: float = 0.5,
+        lambda_var: float = 1.0,
+        lambda_cover: float = 0.5,
+        lambda_cov: float = 0.1,
+        lambda_reg: float = 0.01,
+        tau: float = 0.07,
+        m_pos: float = 1.0,
+        target_var: float = 0.5,
+        eps: float = 1e-6,
+        use_neg_cover: bool = False,
+        m_neg: float = 2.0,
+        use_uncertainty_sim: bool = True,
     ):
         """
-        Initialize Uncertainty-Calibrated Contrastive Loss.
+        Initialize MSDA loss.
 
         Args:
-            lambda_cl: Weight for uncertainty-calibrated contrastive loss (λ_cl)
-            lambda_consist: Weight for distributional consistency loss (λ_consist)
-            lambda_var: Weight for variance regularization (λ_var)
-            temperature: Temperature parameter τ for similarity scaling
-            target_variance: Target variance for regularization
+            lambda_ctr: Weight for set-level contrastive loss L_set-NCE
+            lambda_mu: Weight for mean-center alignment loss L_mu
+            lambda_var: Weight for variance semantic consistency L_var (core)
+            lambda_cover: Weight for multi-caption coverage loss L_cover
+            lambda_cov: Weight for covariance direction alignment L_cov
+            lambda_reg: Weight for variance regularization L_reg
+            tau: Temperature for uncertainty-discounted similarity
+            m_pos: Per-dim-normalized positive coverage radius
+            target_var: Target variance sigma_0^2 for L_reg
+            eps: Numerical stabilizer for Mahalanobis / log
+            use_neg_cover: Whether to add the negative coverage repulsion term
+            m_neg: Negative coverage margin
+            use_uncertainty_sim: Use uncertainty-discounted similarity (True) or
+                                standard cosine (False) in L_set-NCE
         """
         super().__init__()
-
-        self.lambda_cl = lambda_cl
-        self.lambda_consist = lambda_consist
+        self.lambda_ctr = lambda_ctr
+        self.lambda_mu = lambda_mu
         self.lambda_var = lambda_var
-        self.temperature = temperature
-        self.target_variance = target_variance
+        self.lambda_cover = lambda_cover
+        self.lambda_cov = lambda_cov
+        self.lambda_reg = lambda_reg
+        self.tau = tau
+        self.m_pos = m_pos
+        self.target_var = target_var
+        self.eps = eps
+        self.use_neg_cover = use_neg_cover
+        self.m_neg = m_neg
+        self.use_uncertainty_sim = use_uncertainty_sim
 
-    def uncertainty_calibrated_similarity(
-        self,
-        img_mu: torch.Tensor,
-        img_logvar: torch.Tensor,
-        text_mu: torch.Tensor,
-        text_logvar: torch.Tensor,
+    @staticmethod
+    def _mahalanobis(
+        diff: torch.Tensor,
+        var: torch.Tensor,
+        U: Optional[torch.Tensor],
+        eps: float,
     ) -> torch.Tensor:
         """
-        Compute uncertainty-calibrated similarity matrix.
-
-        sim(x,y) = μ_x · μ_y / (τ · √(1 + ‖σ_x‖²) · √(1 + ‖σ_y‖²))
-
-        Intuition:
-            - High uncertainty (large σ) → similarity is flattened → softer gradients
-            - Low uncertainty (small σ) → similarity is sharper → more confident gradients
-            - Does NOT force σ_img ≈ σ_text, instead lets σ modulate sharpness
+        Squared Mahalanobis distance d^T (Sigma + eps I)^{-1} d, with
+        Sigma = diag(var) + U U^T. Uses the Woodbury identity so the only solve
+        is the r x r matrix (I + U^T D^{-1} U).
 
         Args:
-            img_mu: Image distribution mean, shape (B, D)
-            img_logvar: Image distribution log variance, shape (B, D)
-            text_mu: Text distribution mean, shape (B, D)
-            text_logvar: Text distribution log variance, shape (B, D)
+            diff: (..., D)
+            var:  (..., D) diagonal variances
+            U:    (..., D, r) or None (diagonal-only when None)
+            eps:  numerical stabilizer
 
         Returns:
-            Similarity matrix of shape (B, B)
+            (...,) per-leading-shape squared Mahalanobis distance.
         """
-        # Compute average variance per sample (mean over dimensions, not sum)
-        # Using mean keeps the scale factor dimension-independent:
-        #   with logvar~0: avg_var=1, scale≈1.41  (reasonable)
-        #   with sum:      total_var=768, scale≈27.7 (kills gradients)
-        img_var_avg = torch.exp(img_logvar).mean(dim=-1)  # (B,)
-        text_var_avg = torch.exp(text_logvar).mean(dim=-1)  # (B,)
-
-        # Uncertainty scaling factors: √(1 + avg_σ²)
-        img_scale = torch.sqrt(1.0 + img_var_avg)  # (B,)
-        text_scale = torch.sqrt(1.0 + text_var_avg)  # (B,)
-
-        # L2 normalize means for cosine-like similarity
-        img_mu_norm = F.normalize(img_mu, dim=-1)  # (B, D)
-        text_mu_norm = F.normalize(text_mu, dim=-1)  # (B, D)
-
-        # Compute dot product of means: (B, B)
-        mean_similarity = torch.matmul(img_mu_norm, text_mu_norm.T)
-
-        # Apply uncertainty calibration: divide by (τ · scale_img · scale_text)
-        # Outer product of scales: (B, B)
-        scale_matrix = img_scale.unsqueeze(1) * text_scale.unsqueeze(0)  # (B, B)
-        calibrated_sim = mean_similarity / (self.temperature * scale_matrix)  # (B, B)
-
-        return calibrated_sim
-
-    def calibrated_infonce(
-        self,
-        img_mu: torch.Tensor,
-        img_logvar: torch.Tensor,
-        text_mu: torch.Tensor,
-        text_logvar: torch.Tensor,
-    ) -> Tuple[torch.Tensor, Dict[str, float]]:
-        """
-        Compute InfoNCE loss with uncertainty-calibrated similarity.
-
-        Args:
-            img_mu, img_logvar: Image distribution params, shape (B, D)
-            text_mu, text_logvar: Text distribution params, shape (B, D)
-
-        Returns:
-            Tuple of (loss, info_dict)
-        """
-        B = img_mu.shape[0]
-
-        # Uncertainty-calibrated similarity matrix
-        logits = self.uncertainty_calibrated_similarity(
-            img_mu, img_logvar, text_mu, text_logvar
-        )
-
-        # Labels: diagonal elements are positive pairs
-        labels = torch.arange(B, device=img_mu.device)
-
-        # Bidirectional contrastive loss
-        loss_i2t = F.cross_entropy(logits, labels)
-        loss_t2i = F.cross_entropy(logits.T, labels)
-        loss = (loss_i2t + loss_t2i) / 2
-
-        # Logging info
-        with torch.no_grad():
-            pos_sim = logits[torch.arange(B), torch.arange(B)].mean().item()
-            img_var_avg = torch.exp(img_logvar).mean(dim=-1).mean().item()
-            text_var_avg = torch.exp(text_logvar).mean(dim=-1).mean().item()
-
-        info = {
-            'loss_i2t': loss_i2t.item(),
-            'loss_t2i': loss_t2i.item(),
-            'avg_pos_sim': pos_sim,
-            'img_var_avg': img_var_avg,
-            'text_var_avg': text_var_avg,
-        }
-
-        return loss, info
-
-    def distributional_consistency_loss(
-        self,
-        img_logvar: torch.Tensor,
-        text_mus: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Distributional Consistency Loss (Core Innovation).
-
-        L_consist = MSE(σ²_img, Var_{k=1..K}(μ_text_k))
-
-        This constrains the image distribution's variance to equal the variance
-        of its K caption means, giving σ² a clear, verifiable semantic meaning:
-        "the image's semantic uncertainty equals the diversity of its descriptions."
-
-        Args:
-            img_logvar: Image distribution log variance, shape (B, D)
-            text_mus: Individual caption distribution means, shape (B, K, D)
-                      where K is the number of captions per image
-
-        Returns:
-            Consistency loss scalar
-        """
-        # σ²_img: (B, D)
-        img_var = torch.exp(img_logvar)
-
-        # Var_{k=1..K}(μ_text_k): variance across K captions, shape (B, D)
-        # Var = E[μ²] - E[μ]²
-        caption_var = text_mus.var(dim=1)  # (B, D)
-
-        # MSE loss between image variance and caption mean variance
-        consist_loss = F.mse_loss(img_var, caption_var)
-
-        return consist_loss
-
-    def variance_regularization(
-        self,
-        img_logvar: torch.Tensor,
-        text_logvar: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Variance regularization to prevent distribution collapse.
-
-        Args:
-            img_logvar: Image log variance, shape (B, D)
-            text_logvar: Text log variance, shape (B, D)
-
-        Returns:
-            Variance regularization loss scalar
-        """
-        img_var = torch.exp(img_logvar)
-        text_var = torch.exp(text_logvar)
-
-        img_var_loss = F.mse_loss(img_var, torch.ones_like(img_var) * self.target_variance)
-        text_var_loss = F.mse_loss(text_var, torch.ones_like(text_var) * self.target_variance)
-
-        return img_var_loss + text_var_loss
+        inv = 1.0 / (var + eps)                  # (..., D) = D^{-1}
+        a = inv * diff                           # (..., D) = D^{-1} d
+        if U is None:
+            return (diff * a).sum(dim=-1)        # d^T D^{-1} d
+        W = inv.unsqueeze(-1) * U                # (..., D, r) = D^{-1} U
+        UtA = U.transpose(-1, -2) @ a.unsqueeze(-1)          # (..., r, 1)
+        S = torch.eye(U.shape[-1], device=U.device) + U.transpose(-1, -2) @ W  # (..., r, r)
+        z = torch.linalg.solve(S, UtA)           # (..., r, 1)
+        correction = (W @ z).squeeze(-1)         # (..., D)
+        sigma_inv_diff = a - correction          # Sigma^{-1} d
+        return (diff * sigma_inv_diff).sum(dim=-1)
 
     def forward(
         self,
-        img_features: torch.Tensor,
-        text_features: torch.Tensor,
         img_mu: torch.Tensor,
         img_logvar: torch.Tensor,
-        text_mu: torch.Tensor,
-        text_logvar: torch.Tensor,
-        text_mus: torch.Tensor = None,
+        img_U: Optional[torch.Tensor],
+        text_mu_bar: torch.Tensor,
+        text_logvar_bar: torch.Tensor,
+        text_mus: torch.Tensor,
+        text_logvars: torch.Tensor,
+        text_Us: Optional[torch.Tensor],
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         """
-        Compute total Uncertainty-Calibrated Distributional Contrastive loss.
-
-        L_total = λ_cl · L_calibrated_cl + λ_consist · L_consist + λ_var · L_var
+        Compute total MSDA loss.
 
         Args:
-            img_features: CLIP image features, shape (B, D) [unused, kept for API compat]
-            text_features: CLIP text features, shape (B, D) [unused, kept for API compat]
-            img_mu, img_logvar: Image distribution parameters, shape (B, D)
-            text_mu, text_logvar: Merged text distribution parameters, shape (B, D)
-            text_mus: Individual caption distribution means, shape (B, K, D)
-                      Required for distributional consistency loss.
+            img_mu, img_logvar: (B, D) image distribution parameters.
+            img_U: (B, D, r) or None.
+            text_mu_bar, text_logvar_bar: (B, D) caption-set distribution params.
+            text_mus: (B, K, D) per-caption means.
+            text_logvars: (B, K, D) per-caption log variances.
+            text_Us: (B, K, D, r) or None.
 
         Returns:
-            Tuple of (total_loss, loss_dict)
+            Tuple of (total_loss, loss_dict).
         """
-        # Component 1: Uncertainty-calibrated contrastive loss
-        cl_loss, cl_info = self.calibrated_infonce(
-            img_mu, img_logvar, text_mu, text_logvar
-        )
+        B, D = img_mu.shape
+        K = text_mus.shape[1]
+        img_var = torch.exp(img_logvar)                       # (B, D)
 
-        # Component 2: Distributional consistency loss (core innovation)
-        if text_mus is not None:
-            consist_loss = self.distributional_consistency_loss(
-                img_logvar, text_mus
-            )
+        # ---- L_set-NCE: uncertainty-discounted bidirectional InfoNCE ----
+        img_mu_n = F.normalize(img_mu, dim=-1)
+        text_mu_n = F.normalize(text_mu_bar, dim=-1)
+        sim = img_mu_n @ text_mu_n.T                          # (B, B)
+        if self.use_uncertainty_sim:
+            img_scale = torch.sqrt(1.0 + img_var.mean(dim=-1))              # (B,)
+            text_scale = torch.sqrt(1.0 + torch.exp(text_logvar_bar).mean(dim=-1))  # (B,)
+            scale = img_scale.unsqueeze(1) * text_scale.unsqueeze(0)        # (B, B)
+            logits = sim / (self.tau * scale)
         else:
-            # Use zeros to keep the value on the same device and maintain gradient graph
-            consist_loss = torch.zeros(1, device=img_mu.device, requires_grad=False).squeeze()
-
-        # Component 3: Variance regularization
-        var_loss = self.variance_regularization(img_logvar, text_logvar)
-
-        # Total loss
-        total_loss = (
-            self.lambda_cl * cl_loss +
-            self.lambda_consist * consist_loss +
-            self.lambda_var * var_loss
+            logits = sim / self.tau
+        labels = torch.arange(B, device=img_mu.device)
+        set_nce = 0.5 * (
+            F.cross_entropy(logits, labels) + F.cross_entropy(logits.T, labels)
         )
+
+        # ---- L_mu: mean-center alignment ----
+        mu_loss = (1.0 - F.cosine_similarity(img_mu, text_mu_bar, dim=-1)).mean()
+
+        # ---- L_var: variance semantic consistency (stop-grad on caption spread)
+        caption_spread = ((text_mus - text_mu_bar.unsqueeze(1)) ** 2).mean(dim=1)  # (B, D)
+        var_loss = F.mse_loss(img_var, caption_spread.detach())
+
+        # ---- L_cover: multi-caption coverage via Mahalanobis ----
+        diff = text_mus - img_mu.unsqueeze(1)                 # (B, K, D)
+        var_exp = img_var.unsqueeze(1).expand_as(diff)        # (B, K, D)
+        U_exp = img_U.unsqueeze(1).expand(-1, K, -1, -1) if img_U is not None else None
+        dM = self._mahalanobis(diff, var_exp, U_exp, self.eps)    # (B, K)
+        dM_mean = dM / D                                      # per-dim normalize
+        cover_loss = F.relu(dM_mean - self.m_pos).mean()
+
+        neg_cover_loss = img_mu.new_zeros(())
+        if self.use_neg_cover and B > 1:
+            # Repel other images' caption centers from this image distribution.
+            bar_exp = text_mu_bar.unsqueeze(1).expand(B, B, D)        # (B, B, D) j
+            img_mu_exp = img_mu.unsqueeze(0).expand(B, B, D)          # (B, B, D) i
+            var_e2 = img_var.unsqueeze(1).expand(B, B, D)
+            U_e2 = img_U.unsqueeze(1).expand(B, B, -1, -1) if img_U is not None else None
+            d_other = self._mahalanobis(
+                bar_exp - img_mu_exp, var_e2, U_e2, self.eps
+            ) / D
+            mask = ~torch.eye(B, dtype=torch.bool, device=img_mu.device)
+            neg_cover_loss = F.relu(self.m_neg - d_other[mask]).mean()
+
+        # ---- L_cov: covariance direction alignment (subspace Frobenius) ----
+        # Compares the image covariance subspace Qv = orth(U) against the caption
+        # deviation subspace Qt. ||Pv - Pt||_F^2 = 2r - 2 ||Qv^T Qt||_F^2.
+        cov_loss = img_mu.new_zeros(())
+        if img_U is not None and self.lambda_cov > 0:
+            r_eff = min(img_U.shape[-1], K)                  # cannot exceed #captions
+            if r_eff > 0:
+                # Image subspace basis Qv (orthonormalize U columns via QR).
+                Qv, _ = torch.linalg.qr(img_U)               # (B, D, r)
+                Qv = Qv[:, :, :r_eff]
+                # Caption deviation subspace basis Qt. The deviation matrix is
+                # K x D with K << D and often ill-conditioned, so derive Qt from
+                # an eigendecomposition of the small K x K Gram matrix instead
+                # of a batched SVD on K x D.
+                # NOTE: detach() -- the caption deviation directions are a *target*
+                # (exactly like L_var's caption spread). Without stop-gradient,
+                # L_cov would also push the caption/text means to match the image
+                # covariance, corrupting the retrieval means and crashing Recall@1
+                # the moment L_cov activates.
+                dev = (text_mus - text_mu_bar.unsqueeze(1)).detach()    # (B, K, D)
+                G = dev @ dev.transpose(-1, -2) + self.eps * torch.eye(
+                    K, device=dev.device)                    # (B, K, K)
+                eigvals, eigvecs = torch.linalg.eigh(G)      # ascending
+                top_vals = eigvals[:, -r_eff:].clamp(min=self.eps)   # (B, r_eff)
+                top_vecs = eigvecs[:, :, -r_eff:]                    # (B, K, r_eff)
+                Qt = torch.matmul(
+                    dev.transpose(-1, -2),
+                    top_vecs / torch.sqrt(top_vals).unsqueeze(1),
+                )                                            # (B, D, r_eff)
+                Qt = F.normalize(Qt, dim=-2)
+                C = Qv.transpose(-1, -2) @ Qt                # (B, r_eff, r_eff)
+                cov_loss = (2 * r_eff - 2 * (C ** 2).sum(dim=(-1, -2))).mean()
+                # QR / eigh / solve backward can emit Inf/NaN at near-degenerate
+                # points (linearly-dependent U columns, near-duplicate captions).
+                # Detach-and-zero any non-finite cov_loss so a single bad batch
+                # cannot corrupt the cov head -- and through L_cover (which shares
+                # img_U and img_mu) the retrieval means. Forward value dropped.
+                if not torch.isfinite(cov_loss).all():
+                    logger.warning(
+                        "L_cov produced a non-finite value; zeroing (detached) "
+                        "for this batch to protect the cov head / retrieval means."
+                    )
+                    # Fresh constant zero -- NOT `nan * 0` (which stays nan under
+                    # IEEE-754). Contributes 0 to the loss and 0 gradient, i.e.
+                    # skip L_cov for this batch only.
+                    cov_loss = torch.zeros_like(cov_loss)
+
+        # ---- L_reg: variance regularization (image + text, symmetric) ----
+        log_t = math.log(self.target_var)
+        img_reg = F.mse_loss(img_logvar, torch.full_like(img_logvar, log_t))
+        text_reg = F.mse_loss(text_logvars, torch.full_like(text_logvars, log_t))
+        reg_loss = img_reg + text_reg
+
+        total = (
+            self.lambda_ctr * set_nce
+            + self.lambda_mu * mu_loss
+            + self.lambda_var * var_loss
+            + self.lambda_cover * cover_loss
+            + self.lambda_cov * cov_loss
+            + self.lambda_reg * reg_loss
+        )
+        # NOTE: L_neg is added at weight 1.0 (no lambda). It is experimental and
+        # disabled by default (MSDA_USE_NEG_COVER=False); enable only for trials.
+        if self.use_neg_cover:
+            total = total + neg_cover_loss
+
+        with torch.no_grad():
+            avg_pos_sim = logits[torch.arange(B), torch.arange(B)].mean()
+            img_var_avg = img_var.mean()
+            text_var_avg = torch.exp(text_logvar_bar).mean()
 
         loss_dict = {
-            'total': total_loss.item(),
-            'contrastive': cl_loss.item(),
-            'kl': consist_loss.item(),  # reuse key for training loop compatibility
-            'consistency': consist_loss.item(),
-            'variance': var_loss.item(),
-            'avg_pos_sim': cl_info['avg_pos_sim'],
-            'img_var_avg': cl_info['img_var_avg'],
-            'text_var_avg': cl_info['text_var_avg'],
+            'total': total.item(),
+            'set_nce': set_nce.item(),
+            'mu': mu_loss.item(),
+            'var': var_loss.item(),
+            'cover': cover_loss.item(),
+            'cov': cov_loss.item(),
+            'reg': reg_loss.item(),
+            'contrastive': set_nce.item(),   # alias for training-loop compat
+            'avg_pos_sim': avg_pos_sim.item(),
+            'img_var_avg': img_var_avg.item(),
+            'text_var_avg': text_var_avg.item(),
         }
 
-        return total_loss, loss_dict
+        return total, loss_dict
 
 
 if __name__ == "__main__":
     # Test loss functions
-    print("Testing distribution alignment loss functions...")
+    print("Testing MSDA loss functions...")
 
-    B, D, K = 4, 768, 5
-
-    # Create dummy outputs
-    img_features = torch.randn(B, D)
-    text_features = torch.randn(B, D)
+    B, D, K, r = 4, 768, 5, 4
     img_mu = torch.randn(B, D)
     img_logvar = torch.randn(B, D)
-    text_mu = torch.randn(B, D)
-    text_logvar = torch.randn(B, D)
+    img_U = torch.randn(B, D, r)
+    text_mu_bar = torch.randn(B, D)
+    text_logvar_bar = torch.randn(B, D)
     text_mus = torch.randn(B, K, D)
+    text_logvars = torch.randn(B, K, D)
+    text_Us = torch.randn(B, K, D, r)
 
-    # Test DistributionAlignmentLoss
-    print("\n1. Testing DistributionAlignmentLoss:")
-    criterion = DistributionAlignmentLoss(
-        lambda_contrastive=1.0,
-        lambda_kl=0.5,
-        kl_type="symmetric"
-    )
-    loss, loss_dict = criterion(
-        img_features, text_features,
-        img_mu, img_logvar, text_mu, text_logvar
-    )
-    print(f"   Total loss: {loss_dict['total']:.4f}")
-    print(f"   Contrastive loss: {loss_dict['contrastive']:.4f}")
-    print(f"   KL loss: {loss_dict['kl']:.4f}")
+    print("\n1. Testing MSDALoss (full, with covariance):")
+    crit = MSDALoss()
+    loss, d = crit(img_mu, img_logvar, img_U, text_mu_bar, text_logvar_bar,
+                   text_mus, text_logvars, text_Us)
+    for k in ('total', 'set_nce', 'mu', 'var', 'cover', 'cov', 'reg'):
+        print(f"   {k}: {d[k]:.4f}")
 
-    # Test VarianceRegularizationLoss
-    print("\n2. Testing VarianceRegularizationLoss:")
-    var_criterion = VarianceRegularizationLoss(target_variance=0.5, lambda_var=0.1)
-    var_loss = var_criterion(img_logvar)
-    print(f"   Variance loss: {var_loss.item():.4f}")
+    print("\n2. Testing MSDALoss (diagonal only, img_U=None):")
+    crit_d = MSDALoss()
+    loss_d, d_d = crit_d(img_mu, img_logvar, None, text_mu_bar, text_logvar_bar,
+                         text_mus, text_logvars, None)
+    print(f"   total: {d_d['total']:.4f}, cov: {d_d['cov']:.4f} (expect 0)")
 
-    # Test CombinedDistributionLoss
-    print("\n3. Testing CombinedDistributionLoss:")
-    combined_criterion = CombinedDistributionLoss(
-        lambda_contrastive=1.0,
-        lambda_kl=0.5,
-        lambda_var=0.1,
-        kl_type="symmetric"
-    )
-    combined_loss, combined_dict = combined_criterion(
-        img_features, text_features,
-        img_mu, img_logvar, text_mu, text_logvar
-    )
-    print(f"   Total loss: {combined_dict['total']:.4f}")
-    print(f"   Contrastive loss: {combined_dict['contrastive']:.4f}")
-    print(f"   KL loss: {combined_dict['kl']:.4f}")
-    print(f"   Variance loss: {combined_dict.get('variance', 0):.4f}")
-
-    # Test DistributionalContrastiveLoss
-    print("\n4. Testing DistributionalContrastiveLoss:")
-    ot_criterion = DistributionalContrastiveLoss(
-        lambda_ot=1.0,
-        temperature=0.1,
-        min_sigma=1e-3,
-        target_variance=0.5,
-        lambda_var=0.1,
-    )
-    ot_loss, ot_dict = ot_criterion(
-        img_features, text_features,
-        img_mu, img_logvar, text_mu, text_logvar
-    )
-    print(f"   Total loss: {ot_dict['total']:.4f}")
-    print(f"   OT contrastive: {ot_dict['contrastive']:.4f}")
-    print(f"   Variance reg: {ot_dict['variance']:.4f}")
-    print(f"   Avg W2 (positive): {ot_dict['avg_w2_pos']:.4f}")
-    print(f"   Avg W2 (all): {ot_dict['avg_w2_all']:.4f}")
-
-    # Test UncertaintyCalibratedContrastiveLoss
-    print("\n5. Testing UncertaintyCalibratedContrastiveLoss:")
-    uc_criterion = UncertaintyCalibratedContrastiveLoss(
-        lambda_cl=1.0,
-        lambda_consist=1.0,
-        lambda_var=0.1,
-        temperature=0.07,
-        target_variance=0.5,
-    )
-    uc_loss, uc_dict = uc_criterion(
-        img_features, text_features,
-        img_mu, img_logvar, text_mu, text_logvar,
-        text_mus=text_mus,
-    )
-    print(f"   Total loss: {uc_dict['total']:.4f}")
-    print(f"   Calibrated CL loss: {uc_dict['contrastive']:.4f}")
-    print(f"   Consistency loss: {uc_dict['consistency']:.4f}")
-    print(f"   Variance reg: {uc_dict['variance']:.4f}")
-    print(f"   Avg positive similarity: {uc_dict['avg_pos_sim']:.4f}")
-    print(f"   Avg img var: {uc_dict['img_var_avg']:.4f}")
-    print(f"   Avg text var: {uc_dict['text_var_avg']:.4f}")
-
-    # Test gradient flow
-    print("\n6. Testing gradient flow:")
-    img_mu_g = torch.randn(B, D, requires_grad=True)
-    img_lv_g = torch.randn(B, D, requires_grad=True)
-    txt_mu_g = torch.randn(B, D, requires_grad=True)
-    txt_lv_g = torch.randn(B, D, requires_grad=True)
-    txt_mus_g = torch.randn(B, K, D, requires_grad=True)
-    loss_g, _ = uc_criterion(
-        torch.randn(B, D), torch.randn(B, D),
-        img_mu_g, img_lv_g, txt_mu_g, txt_lv_g,
-        text_mus=txt_mus_g,
-    )
+    print("\n3. Testing gradient flow (mu / logvar / U):")
+    im = img_mu.clone().requires_grad_(True)
+    il = img_logvar.clone().requires_grad_(True)
+    iU = img_U.clone().requires_grad_(True)
+    tm = text_mus.clone().requires_grad_(True)
+    tl = text_logvars.clone().requires_grad_(True)
+    loss_g, _ = crit(im, il, iU, text_mu_bar, text_logvar_bar, tm, tl, text_Us)
     loss_g.backward()
-    print(f"   grad img_mu: {img_mu_g.grad.norm():.4f}")
-    print(f"   grad img_logvar: {img_lv_g.grad.norm():.4f}")
-    print(f"   grad text_mu: {txt_mu_g.grad.norm():.4f}")
-    print(f"   grad text_logvar: {txt_lv_g.grad.norm():.4f}")
-    print(f"   grad text_mus: {txt_mus_g.grad.norm():.4f}")
-
-    print("\nAll loss functions tested successfully!")
+    print(f"   grad img_mu: {im.grad.norm():.4f}")
+    print(f"   grad img_logvar: {il.grad.norm():.4f}")
+    print(f"   grad img_U: {iU.grad.norm():.4f}")
+    print(f"   grad text_mus: {tm.grad.norm():.4f}")
+    print(f"   grad text_logvars: {tl.grad.norm():.4f}")
+    assert im.grad.norm() > 0 and il.grad.norm() > 0 and iU.grad.norm() > 0
+    print("\nAll MSDA loss tests passed.")

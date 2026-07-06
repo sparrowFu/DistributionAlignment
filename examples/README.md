@@ -64,7 +64,6 @@ python main.py --task train_dist_align
 python main.py --task train_clip_baseline
 python main.py --task train_prolip
 python main.py --task train_grove
-python main.py --task train_d2p
 
 # Stage 1: Evaluate
 python main.py --task eval_dist_align
@@ -72,8 +71,6 @@ python main.py --task eval_clip_baseline
 python main.py --task eval_clip_zero_shot
 python main.py --task eval_prolip
 python main.py --task eval_grove
-python main.py --task eval_icpe
-python main.py --task eval_d2p
 
 # Stage 2: VQA
 python main.py --task train_vqa --model-type dist_align

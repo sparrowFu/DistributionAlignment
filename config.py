@@ -117,6 +117,17 @@ NUM_WORKERS = 0 if IS_WINDOWS else 8
 
 
 # =============================================================================
+# CPU Affinity (server-specific)
+# =============================================================================
+# Faulty CPU cores to exclude from this process. CPU 2 on this server is
+# unstable: when the training process or a DataLoader worker is scheduled onto
+# it, the run crashes with SIGSEGV (exit code -11) at a random point mid-run.
+# Listed cores are removed from the process CPU affinity at startup via
+# utils.cpu_affinity.apply_cpu_affinity (no-op on Windows). Adjust per machine.
+EXCLUDED_CPUS = [2]
+
+
+# =============================================================================
 # CLIP Baseline Training Hyperparameters
 # =============================================================================
 # Number of training epochs
@@ -185,23 +196,36 @@ DIST_ALIGN_LAMBDA_VAR = 0.1           # Weight for variance regularization (opti
 DIST_ALIGN_DROPOUT_RATE = 0.1         # Dropout rate for MLP heads
 DIST_ALIGN_DISTRIBUTION_MERGING = "moment_matching"  # Method: "moment_matching", "poe", "simple"
 DIST_ALIGN_KL_TYPE = "symmetric"      # KL divergence type: "symmetric", "forward", "reverse", "wasserstein"
-DIST_ALIGN_TARGET_VARIANCE = 0.5      # Target variance for regularization
-DIST_ALIGN_USE_VARIANCE_LOSS = False # Whether to use variance regularization loss
+DIST_ALIGN_TARGET_VARIANCE = 0.5      # Target variance for regularization (used by ProLIP baseline)
 
-# Distributional Contrastive Learning via OT configuration
-DIST_ALIGN_USE_OT_CONTRASTIVE = False  # Use OT-based distributional contrastive loss
-DIST_ALIGN_OT_TEMPERATURE = 10.0      # Temperature for W2-based similarity (τ), larger for high-dim W2
-DIST_ALIGN_LAMBDA_OT = 1.0            # Weight for distributional contrastive loss
-DIST_ALIGN_LAMBDA_VAR_OT = 0.1        # Weight for variance regularization in OT mode
-DIST_ALIGN_MIN_SIGMA = 1e-3           # Minimum sigma to prevent numerical collapse
 
-# Uncertainty-Calibrated Distributional Contrastive Learning configuration
-DIST_ALIGN_USE_UC_CL = True           # Use Uncertainty-Calibrated Distributional Contrastive Learning
-DIST_ALIGN_UC_TEMPERATURE = 0.07      # Temperature for uncertainty-calibrated similarity
-DIST_ALIGN_LAMBDA_UC_CL = 1.0         # Weight for uncertainty-calibrated contrastive loss (λ_cl)
-DIST_ALIGN_LAMBDA_CONSIST = 1.0       # Weight for distributional consistency loss (λ_consist)
-DIST_ALIGN_LAMBDA_UC_VAR = 0.1        # Weight for variance regularization in UC-CL mode (λ_var)
-DIST_ALIGN_UC_TARGET_VARIANCE = 0.5   # Target variance for regularization
+# =============================================================================
+# MSDA: Multi-caption Semantic Distribution Alignment (replaces UC-CL/OT/KL)
+# =============================================================================
+# Image and text are both modeled as general Gaussians N(mu, Sigma) with a
+# learned covariance Sigma = diag(sigma^2) + U U^T (U in R^{D x r}). r controls
+# off-diagonal capacity; r=0 falls back to diagonal. The same modeling is applied
+# symmetrically to image and text.
+MSDA_COV_RANK = 4                 # low-rank covariance rank r (0 = diagonal only)
+MSDA_TAU = 0.07                   # temperature for L_set-NCE similarity
+MSDA_LAMBDA_CTR = 1.0             # weight for set-level contrastive loss
+MSDA_LAMBDA_MU = 0.5              # weight for mean-center alignment loss
+MSDA_LAMBDA_VAR = 1.0             # weight for variance semantic consistency (core)
+MSDA_LAMBDA_COVER = 0.5           # weight for multi-caption coverage loss
+MSDA_LAMBDA_COV = 0.01            # weight for covariance direction alignment (was 0.1: cov_loss magnitude ~2r=8, so 0.1*3~0.3 dominated NCE and crashed Recall@1 the moment L_cov activated)
+MSDA_LAMBDA_REG = 0.01            # weight for variance regularization
+MSDA_M_POS = 1.0                  # coverage positive radius (per-dim normalized)
+MSDA_TARGET_VAR = 0.5             # target variance sigma_0^2 for L_reg
+MSDA_VAR_FLOOR = 1e-4             # numerical floor on sigma^2 (softplus positivity + div-by-zero guard; NOT a semantic floor -- the range is learned via L_var / L_reg)
+MSDA_COV_EPS = 1e-6               # numerical epsilon for Mahalanobis / log
+MSDA_USE_NEG_COVER = False        # optional negative coverage repulsion
+MSDA_M_NEG = 2.0                  # negative coverage margin
+MSDA_GRAD_CLIP_NORM = 1.0         # global grad-norm clip (clip_grad_norm_) -- guards against L_cov / cover spikes destabilizing the retrieval means
+
+# 3-stage training schedule (fraction of total epochs each stage spans)
+MSDA_STAGE_WARMUP_FRAC = 0.2      # L_set-NCE + L_mu
+MSDA_STAGE_MAIN_FRAC = 0.6        # + L_var + L_cover
+MSDA_STAGE_FULL_FRAC = 0.2        # + L_cov
 
 
 # =============================================================================
@@ -312,39 +336,6 @@ GROVE_TEMPERATURE = 0.07
 
 
 # =============================================================================
-# Baseline B5: ICPE Configuration
-# =============================================================================
-# ICPE is training-free: computes intra-class covariance on CLIP features
-
-ICPE_EVAL_RESULTS_PATH = OUTPUT_DIR / "icpe_eval_results.json"
-EVAL_ICPE_LOG_PATH = LOG_DIR / "evaluate_icpe.log"
-
-# ICPE hyperparameters (no training needed)
-ICPE_NUM_NEIGHBORS = 10           # k for k-NN based covariance estimation
-ICPE_REGULARIZATION = 1e-6        # Regularization for covariance
-
-
-# =============================================================================
-# Baseline B6: D2P Configuration
-# =============================================================================
-# D2P: Distribution to Point matching
-
-D2P_BEST_CKPT = CHECKPOINT_DIR / "d2p_best.pt"
-D2P_EVAL_RESULTS_PATH = OUTPUT_DIR / "d2p_eval_results.json"
-TRAIN_D2P_LOG_PATH = LOG_DIR / "train_d2p.log"
-EVAL_D2P_LOG_PATH = LOG_DIR / "evaluate_d2p.log"
-
-# D2P hyperparameters
-D2P_EPOCHS = 10
-D2P_BATCH_SIZE = 32
-D2P_LR = 1e-4
-D2P_WEIGHT_DECAY = 1e-4
-D2P_TEMPERATURE = 0.07
-D2P_NUM_SAMPLES = 10              # Number of distribution samples for matching
-D2P_DROPOUT_RATE = 0.1
-
-
-# =============================================================================
 # Flickr30K Dataset Configuration
 # =============================================================================
 FLICKR30K_ROOT = PROJECT_ROOT / "TrainDatasets" / "flickr30k"
@@ -386,35 +377,80 @@ ABLATION_LOG_PATH = LOG_DIR / "ablation.log"
 # Ablation configurations (each is a dict of overrides)
 ABLATION_CONFIGS = {
     "full_model": {
-        "lambda_cl": 1.0, "lambda_consist": 1.0, "lambda_var": 0.1,
-        "description": "Full model (UC-CL + Consist + Var)"
+        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
+        "lambda_cover": 0.5, "lambda_cov": 0.01, "lambda_reg": 0.01,
+        "cov_rank": MSDA_COV_RANK, "num_captions": 5,
+        "use_uncertainty_sim": True,
+        "description": "Full MSDA (set-NCE + mu + var + cover + cov + reg)",
     },
-    "no_consistency": {
-        "lambda_cl": 1.0, "lambda_consist": 0.0, "lambda_var": 0.1,
-        "description": "w/o Distributional Consistency (λ_c=0)"
+    "no_var": {
+        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 0.0,
+        "lambda_cover": 0.5, "lambda_cov": 0.01, "lambda_reg": 0.01,
+        "cov_rank": MSDA_COV_RANK, "num_captions": 5,
+        "use_uncertainty_sim": True,
+        "description": "w/o L_var (variance semantic consistency)",
     },
-    "no_uc": {
-        "lambda_cl": 1.0, "lambda_consist": 1.0, "lambda_var": 0.1,
-        "use_uc_cl": False,
-        "description": "w/o Uncertainty Calibration (standard cosine)"
+    "no_cover": {
+        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
+        "lambda_cover": 0.0, "lambda_cov": 0.1, "lambda_reg": 0.01,
+        "cov_rank": MSDA_COV_RANK, "num_captions": 5,
+        "use_uncertainty_sim": True,
+        "description": "w/o L_cover (multi-caption coverage)",
     },
-    "no_var_reg": {
-        "lambda_cl": 1.0, "lambda_consist": 1.0, "lambda_var": 0.0,
-        "description": "w/o Variance Regularization (λ_v=0)"
+    "no_cov": {
+        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
+        "lambda_cover": 0.5, "lambda_cov": 0.0, "lambda_reg": 0.01,
+        "cov_rank": MSDA_COV_RANK, "num_captions": 5,
+        "use_uncertainty_sim": True,
+        "description": "w/o L_cov (covariance direction)",
     },
-    "no_distribution_merging": {
-        "lambda_cl": 1.0, "lambda_consist": 1.0, "lambda_var": 0.1,
-        "num_captions": 1,
-        "description": "w/o Distribution Merging (use single caption)"
+    "no_mu": {
+        "lambda_ctr": 1.0, "lambda_mu": 0.0, "lambda_var": 1.0,
+        "lambda_cover": 0.5, "lambda_cov": 0.01, "lambda_reg": 0.01,
+        "cov_rank": MSDA_COV_RANK, "num_captions": 5,
+        "use_uncertainty_sim": True,
+        "description": "w/o L_mu (mean-center alignment)",
     },
-    "only_consistency": {
-        "lambda_cl": 0.0, "lambda_consist": 1.0, "lambda_var": 0.1,
-        "description": "Only Consistency Loss (λ_cl=0)"
+    "diagonal_only": {
+        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
+        "lambda_cover": 0.5, "lambda_cov": 0.0, "lambda_reg": 0.01,
+        "cov_rank": 0, "num_captions": 5,
+        "use_uncertainty_sim": True,
+        "description": "Diagonal only (cov_rank=0, no covariance)",
+    },
+    "no_uncertainty_sim": {
+        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
+        "lambda_cover": 0.5, "lambda_cov": 0.01, "lambda_reg": 0.01,
+        "cov_rank": MSDA_COV_RANK, "num_captions": 5,
+        "use_uncertainty_sim": False,
+        "description": "w/o uncertainty-discounted similarity (standard cosine)",
+    },
+    "k1": {
+        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
+        "lambda_cover": 0.5, "lambda_cov": 0.0, "lambda_reg": 0.01,
+        "cov_rank": MSDA_COV_RANK, "num_captions": 1,
+        "use_uncertainty_sim": True,
+        "description": "K=1 caption (single-caption fairness)",
+    },
+    "k3": {
+        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
+        "lambda_cover": 0.5, "lambda_cov": 0.01, "lambda_reg": 0.01,
+        "cov_rank": MSDA_COV_RANK, "num_captions": 3,
+        "use_uncertainty_sim": True,
+        "description": "K=3 captions",
+    },
+    "k5": {
+        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
+        "lambda_cover": 0.5, "lambda_cov": 0.01, "lambda_reg": 0.01,
+        "cov_rank": MSDA_COV_RANK, "num_captions": 5,
+        "use_uncertainty_sim": True,
+        "description": "K=5 captions (full)",
     },
 }
 
 # Sensitivity analysis parameter grids
-ABLATION_LAMBDA_CONSIST_VALUES = [0.1, 0.5, 1.0, 2.0, 5.0]
+ABLATION_LAMBDA_VAR_VALUES = [0.1, 0.5, 1.0, 2.0, 5.0]
+ABLATION_LAMBDA_COVER_VALUES = [0.1, 0.5, 1.0, 2.0]
 ABLATION_TAU_VALUES = [0.05, 0.07, 0.1, 0.2]
 
 
@@ -437,8 +473,6 @@ VIS_GAP_LOG_PATH = LOG_DIR / "visualize_gap.log"
 # =============================================================================
 VQA_PROLIP_CKPT = CHECKPOINT_DIR / "vqa_prolip_best.pt"
 VQA_GROVE_CKPT = CHECKPOINT_DIR / "vqa_grove_best.pt"
-VQA_ICPE_CKPT = CHECKPOINT_DIR / "vqa_icpe_best.pt"
-VQA_D2P_CKPT = CHECKPOINT_DIR / "vqa_d2p_best.pt"
 
 
 # =============================================================================

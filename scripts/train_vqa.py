@@ -35,6 +35,11 @@ from utils.seed import set_seed
 
 logger = get_logger("train_vqa", config.VQA_LOG_PATH)
 
+# Exclude faulty CPU cores (e.g. unstable CPU 2) before DataLoader workers and
+# torch threads are created. Inherited by forked worker processes.
+from utils.cpu_affinity import apply_cpu_affinity
+apply_cpu_affinity()
+
 
 def parse_args():
     """Parse command line arguments."""
@@ -108,7 +113,6 @@ def get_default_base_ckpt(model_type: str) -> str:
         "clip_baseline": str(config.CLIP_BASELINE_BEST_CKPT),
         "prolip": str(config.PROLIP_BEST_CKPT),
         "grove": str(config.GROVE_BEST_CKPT),
-        "d2p": str(config.D2P_BEST_CKPT),
     }
     return ckpt_map.get(model_type, None)
 
@@ -150,6 +154,7 @@ def train_epoch(
     total_loss = 0.0
     total_correct = 0
     total_samples = 0
+    processed_batches = 0
 
     # Per-type accuracy tracking
     type_correct = defaultdict(int)
@@ -160,6 +165,7 @@ def train_epoch(
     for batch_idx, batch in enumerate(pbar):
         if batch is None:
             continue
+        processed_batches += 1
 
         # Get data
         pil_images = batch["images"]          # List[PIL.Image]
@@ -209,7 +215,7 @@ def train_epoch(
                 f"Loss: {loss.item():.4f}, Acc: {acc:.4f}"
             )
 
-    num_batches = max(len(dataloader), 1)
+    num_batches = max(processed_batches, 1)
     metrics = {
         "loss": total_loss / num_batches,
         "accuracy": total_correct / max(total_samples, 1),
@@ -236,6 +242,7 @@ def evaluate(
     total_loss = 0.0
     total_correct = 0
     total_samples = 0
+    processed_batches = 0
     type_correct = defaultdict(int)
     type_total = defaultdict(int)
 
@@ -244,6 +251,7 @@ def evaluate(
     for batch in pbar:
         if batch is None:
             continue
+        processed_batches += 1
 
         pil_images = batch["images"]
         questions = batch["questions"]
@@ -274,7 +282,7 @@ def evaluate(
         acc = total_correct / max(total_samples, 1)
         pbar.set_postfix({"loss": f"{total_loss / max(len(dataloader), 1):.4f}", "acc": f"{acc:.4f}"})
 
-    num_batches = max(len(dataloader), 1)
+    num_batches = max(processed_batches, 1)
     metrics = {
         "loss": total_loss / num_batches,
         "accuracy": total_correct / max(total_samples, 1),
@@ -478,7 +486,9 @@ def main():
                      f"best_val_acc: {best_val_acc:.4f}")
 
     logger.info(f"Starting training from epoch {start_epoch + 1}...")
+    last_epoch = start_epoch
     for epoch in range(start_epoch, args.epochs):
+        last_epoch = epoch
         # Train
         train_metrics = train_epoch(
             model, train_dataloader, criterion, optimizer,
@@ -533,7 +543,7 @@ def main():
         "classifier_state_dict": model.classifier.state_dict(),
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
-        "epoch": epoch + 1,
+        "epoch": last_epoch + 1,
         "best_val_loss": best_val_loss,
         "best_val_acc": best_val_acc,
         "patience_counter": patience_counter,

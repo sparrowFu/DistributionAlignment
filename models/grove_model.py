@@ -20,6 +20,7 @@ from transformers import CLIPModel, CLIPProcessor
 
 import config
 from utils.logger import get_logger
+from utils.image_preprocess import preprocess_images_on_gpu
 from models.baseline_utils import merge_distributions_moment_matching, encode_clip_features
 
 
@@ -248,7 +249,8 @@ class GroVEModel(nn.Module):
         return text_mu
 
     def process_images(self, images: List) -> torch.Tensor:
-        return self.processor(images=images, return_tensors="pt")["pixel_values"]
+        device = next(self.parameters()).device
+        return preprocess_images_on_gpu(images, device)
 
     def process_text(self, texts: List[str]) -> Dict[str, torch.Tensor]:
         return self.processor(

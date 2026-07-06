@@ -14,6 +14,7 @@ from transformers import CLIPModel, CLIPProcessor
 
 import config
 from utils.logger import get_logger
+from utils.image_preprocess import preprocess_images_on_gpu
 
 
 logger = get_logger("dist_align_model")
@@ -40,7 +41,8 @@ class DistributionAlignmentModel(nn.Module):
         hidden_dim: int = 768,
         freeze_clip: bool = True,
         distribution_merging: str = "moment_matching",
-        dropout_rate: float = 0.1
+        dropout_rate: float = 0.1,
+        cov_rank: Optional[int] = None,
     ):
         """
         Initialize distribution alignment model.
@@ -53,6 +55,9 @@ class DistributionAlignmentModel(nn.Module):
             distribution_merging: Method to merge multiple text distributions
                                  ("moment_matching", "poe", "simple")
             dropout_rate: Dropout rate for MLP heads
+            cov_rank: Low-rank covariance rank r for the general Gaussian
+                      Sigma = diag(sigma^2) + U U^T. Applied symmetrically to
+                      image and text. 0 = diagonal only. Defaults to config.
         """
         super().__init__()
 
@@ -61,6 +66,8 @@ class DistributionAlignmentModel(nn.Module):
         self.freeze_clip = freeze_clip
         self.distribution_merging = distribution_merging
         self.dropout_rate = dropout_rate
+        # Low-rank covariance rank r (0 = diagonal-only). Defaults to config.
+        self.cov_rank = cov_rank if cov_rank is not None else config.MSDA_COV_RANK
 
         # Load CLIP model from local files
         logger.info(f"Loading CLIP model from: {self.model_path}")
@@ -113,6 +120,11 @@ class DistributionAlignmentModel(nn.Module):
             nn.Linear(hidden_dim, hidden_dim)
         )
 
+        # Low-rank covariance factor heads U in R^{D x r} (image and text).
+        # Built via _build_cov_heads() so load() can rebuild them to match a
+        # checkpoint's cov_rank before load_state_dict.
+        self._build_cov_heads()
+
         # Initialize distribution heads
         self._init_distribution_heads()
 
@@ -133,27 +145,87 @@ class DistributionAlignmentModel(nn.Module):
                     if layer.bias is not None:
                         nn.init.zeros_(layer.bias)
 
+    def _cov_factor(
+        self, head: nn.Module, features: torch.Tensor
+    ) -> Optional[torch.Tensor]:
+        """Predict the low-rank covariance factor U.
+
+        Args:
+            head: A cov head (img_cov_head or text_cov_head).
+            features: Backbone features of shape (..., D).
+
+        Returns:
+            U of shape (..., D, r), or None when cov_rank == 0.
+        """
+        if self.cov_rank == 0:
+            return None
+        lead = features.shape[:-1]
+        u = head(features)                                  # (..., D*r)
+        u = u.view(*lead, self.hidden_dim, self.cov_rank)   # (..., D, r)
+        return u
+
+    def _build_cov_heads(self) -> None:
+        """(Re)create the low-rank covariance factor heads for ``self.cov_rank``.
+
+        Small (non-zero) init keeps Sigma near-diagonal at the start while still
+        letting the L_cov subspace-alignment gradient bootstrap U (zero init
+        would make that loss have zero gradient w.r.t. U). Called from
+        ``__init__`` and from ``load()`` (to match a checkpoint's cov_rank).
+        """
+        # Drop any existing heads so a cov_rank change during load() is clean.
+        if hasattr(self, "img_cov_head"):
+            del self.img_cov_head
+        if hasattr(self, "text_cov_head"):
+            del self.text_cov_head
+
+        if self.cov_rank > 0:
+            self.img_cov_head = nn.Linear(self.hidden_dim, self.hidden_dim * self.cov_rank)
+            self.text_cov_head = nn.Linear(self.hidden_dim, self.hidden_dim * self.cov_rank)
+            nn.init.normal_(self.img_cov_head.weight, std=1e-2)
+            nn.init.zeros_(self.img_cov_head.bias)
+            nn.init.normal_(self.text_cov_head.weight, std=1e-2)
+            nn.init.zeros_(self.text_cov_head.bias)
+
+    def _floor_logvar(self, raw_logvar: torch.Tensor) -> torch.Tensor:
+        """Map a raw head output to log-variance with a small numerical floor.
+
+        sigma^2 = softplus(x) + VAR_FLOOR, so sigma^2 > VAR_FLOOR (~1e-4) and is
+        smooth and strictly positive everywhere. This is a *numerical* floor only
+        (prevents exp / division blow-up), NOT a semantic floor: the variance
+        range is learned through training, driven by L_var (data-driven caption
+        spread) and L_reg (pull toward sigma_0^2). The old hard 0.1 floor is
+        removed so sigma^2 can track the true caption spread even when it is
+        below 0.1.
+        """
+        return torch.log(F.softplus(raw_logvar) + config.MSDA_VAR_FLOOR)
+
     def merge_distributions(
         self,
         mus: torch.Tensor,
         logvars: torch.Tensor,
+        us: Optional[torch.Tensor] = None,
         method: str = "moment_matching"
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Merge multiple Gaussian distributions into one.
+        Merge K per-caption Gaussians N(mu_k, Sigma_k) into a set distribution.
+
+        The merged diagonal variance diag(Sigma_bar) includes both the per-caption
+        diagonal sigma_k^2 and the diagonal of U_k U_k^T, so it is the diagonal
+        of the full moment-matched covariance.
 
         Args:
-            mus: Distribution means of shape (B, K, D)
-            logvars: Distribution log variances of shape (B, K, D)
-            method: Merging method ("moment_matching", "poe", "simple")
+            mus: Per-caption means of shape (B, K, D)
+            logvars: Per-caption log variances of shape (B, K, D)
+            us: Per-caption low-rank factors of shape (B, K, D, r) or None
+            method: Merging method. MSDA uses "moment_matching"; "poe" and
+                   "simple" are retained as diagonal-only compatibility stubs.
 
         Returns:
-            Tuple of (combined_mu, combined_logvar), each of shape (B, D)
+            Tuple of (combined_mu, combined_logvar), each of shape (B, D),
+            where combined_logvar is log(diag(Sigma_bar) + eps).
         """
-        B, K, D = mus.shape
-
         if method == "moment_matching":
-            return self._moment_matching(mus, logvars)
+            return self._moment_matching(mus, logvars, us)
         elif method == "poe":
             return self._product_of_experts(mus, logvars)
         elif method == "simple":
@@ -164,16 +236,19 @@ class DistributionAlignmentModel(nn.Module):
     def _moment_matching(
         self,
         mus: torch.Tensor,
-        logvars: torch.Tensor
+        logvars: torch.Tensor,
+        us: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Merge distributions using moment matching.
+        Moment-match K Gaussians into a set distribution.
 
-        Minimizes KL divergence between merged and original distributions.
+        diag(Sigma_bar) = (1/K) sum_k [ sigma_k^2 + diag(U_k U_k^T) + mu_k^2 ]
+                          - mu_bar^2
 
         Args:
-            mus: Distribution means of shape (B, K, D)
-            logvars: Distribution log variances of shape (B, K, D)
+            mus: Per-caption means of shape (B, K, D)
+            logvars: Per-caption log variances of shape (B, K, D)
+            us: Per-caption low-rank factors of shape (B, K, D, r) or None
 
         Returns:
             Tuple of (combined_mu, combined_logvar), each of shape (B, D)
@@ -184,13 +259,15 @@ class DistributionAlignmentModel(nn.Module):
         # Uniform weights
         weights = torch.ones(K, device=device) / K  # (K,)
 
-        # Combine means: μ = Σ wᵢμᵢ
+        # Combine means: mu_bar = sum_k w_k mu_k
         combined_mu = (weights.view(1, K, 1) * mus).sum(dim=1)  # (B, D)
 
-        # Combine variances: σ² = Σ wᵢ(σᵢ² + μᵢ²) - μ²
-        vars = torch.exp(logvars)  # (B, K, D)
-        combined_var = (weights.view(1, K, 1) * (vars + mus ** 2)).sum(dim=1) - combined_mu ** 2
-        combined_logvar = torch.log(combined_var + 1e-6)  # (B, D)
+        # Combine variances: diag(Sigma_bar) = sum_k w_k(sigma_k^2 + diag(UU^T) + mu_k^2) - mu_bar^2
+        diag_cov = torch.exp(logvars)  # sigma_k^2, (B, K, D)
+        if us is not None:
+            diag_cov = diag_cov + (us ** 2).sum(dim=-1)  # + diag(U U^T)
+        combined_var = (weights.view(1, K, 1) * (diag_cov + mus ** 2)).sum(dim=1) - combined_mu ** 2
+        combined_logvar = torch.log(combined_var + config.MSDA_COV_EPS)  # (B, D)
 
         return combined_mu, combined_logvar
 
@@ -235,7 +312,10 @@ class DistributionAlignmentModel(nn.Module):
         attention_mask: torch.Tensor
     ) -> Dict[str, torch.Tensor]:
         """
-        Forward pass - encode images and captions to distributions.
+        Forward pass - encode images and K captions into distributions.
+
+        Image and text are both modeled as general Gaussians N(mu, Sigma) with
+        Sigma = diag(sigma^2) + U U^T (U may be None when cov_rank == 0).
 
         Args:
             pixel_values: Image tensor of shape (B, C, H, W) from processor
@@ -243,15 +323,15 @@ class DistributionAlignmentModel(nn.Module):
             attention_mask: Attention mask of shape (B, K, max_len)
 
         Returns:
-            Dictionary containing:
-                - img_features: CLIP image features (B, hidden_dim)
-                - text_features: CLIP text features (B, hidden_dim)
-                - img_mu: Image distribution mean (B, hidden_dim)
-                - img_logvar: Image distribution log variance (B, hidden_dim)
-                - text_mu: Merged text distribution mean (B, hidden_dim)
-                - text_logvar: Merged text distribution log variance (B, hidden_dim)
-                - text_mus: Per-caption distribution means (B, K, hidden_dim)
-                            Used by distributional consistency loss.
+            Dictionary containing (all standard keys are kept for backward
+            compatibility with eval scripts):
+                - img_features / text_features: CLIP features (B, D)
+                - img_mu / img_logvar / img_sigma: image distribution (B, D)
+                - text_mu / text_logvar / text_sigma: caption-set distribution (B, D)
+                - text_mus: per-caption means (B, K, D)
+                - text_logvars: per-caption log variances (B, K, D)
+                - img_U: image covariance factor (B, D, r) or None
+                - text_Us: per-caption covariance factors (B, K, D, r) or None
         """
         # CLIP encoding (keep features for contrastive loss)
         img_features = self.clip_model.get_image_features(pixel_values)
@@ -271,24 +351,27 @@ class DistributionAlignmentModel(nn.Module):
         # Average text features for contrastive loss
         text_features_avg = text_features.mean(dim=1)  # (B, hidden_dim)
 
-        # Image distribution
+        # Image distribution: mu, sigma^2, U
         img_mu = self.img_mu_head(img_features)  # (B, hidden_dim)
-        img_logvar = self.img_logvar_head(img_features)  # (B, hidden_dim)
+        img_logvar = self._floor_logvar(self.img_logvar_head(img_features))  # (B, hidden_dim)
+        img_U = self._cov_factor(self.img_cov_head, img_features) if self.cov_rank > 0 else None
 
-        # Text distributions (K captions)
-        text_mus, text_logvars = [], []
+        # Text distributions (K captions): mu, sigma^2, U
+        text_mus, text_logvars, text_Us = [], [], []
         for k in range(K):
-            mu_k = self.text_mu_head(text_features[:, k, :])
-            logvar_k = self.text_logvar_head(text_features[:, k, :])
-            text_mus.append(mu_k)
-            text_logvars.append(logvar_k)
+            fk = text_features[:, k, :]
+            text_mus.append(self.text_mu_head(fk))
+            text_logvars.append(self._floor_logvar(self.text_logvar_head(fk)))
+            if self.cov_rank > 0:
+                text_Us.append(self._cov_factor(self.text_cov_head, fk))
 
         text_mus = torch.stack(text_mus, dim=1)  # (B, K, hidden_dim)
         text_logvars = torch.stack(text_logvars, dim=1)  # (B, K, hidden_dim)
+        text_Us = torch.stack(text_Us, dim=1) if self.cov_rank > 0 else None  # (B, K, D, r)
 
-        # Merge distributions
+        # Merge into caption-set distribution (moment matching, full-cov diagonal)
         text_mu, text_logvar = self.merge_distributions(
-            text_mus, text_logvars, method=self.distribution_merging
+            text_mus, text_logvars, us=text_Us, method=self.distribution_merging
         )
 
         # Compute sigma for downstream use
@@ -304,7 +387,10 @@ class DistributionAlignmentModel(nn.Module):
             'text_mu': text_mu,
             'text_logvar': text_logvar,
             'text_sigma': text_sigma,
-            'text_mus': text_mus,  # Per-caption means for distributional consistency loss
+            'text_mus': text_mus,            # Per-caption means
+            'text_logvars': text_logvars,    # Per-caption log variances
+            'img_U': img_U,                  # Image covariance factor (or None)
+            'text_Us': text_Us,              # Per-caption covariance factors (or None)
         }
 
     def process_images(
@@ -320,7 +406,8 @@ class DistributionAlignmentModel(nn.Module):
         Returns:
             Processed image tensor of shape (B, C, H, W)
         """
-        return self.processor(images=images, return_tensors="pt")["pixel_values"]
+        device = next(self.parameters()).device
+        return preprocess_images_on_gpu(images, device)
 
     def process_text(
         self,
@@ -407,6 +494,7 @@ class DistributionAlignmentModel(nn.Module):
             "freeze_clip": self.freeze_clip,
             "distribution_merging": self.distribution_merging,
             "dropout_rate": self.dropout_rate,
+            "cov_rank": self.cov_rank,
         }
         torch.save(state, path)
         logger.info(f"Model saved to: {path}")
@@ -420,6 +508,17 @@ class DistributionAlignmentModel(nn.Module):
             strict: Whether to strictly enforce state dict matching
         """
         state = torch.load(path, map_location="cpu", weights_only=False)
+
+        # Match the checkpoint's covariance rank BEFORE loading weights, so a
+        # cov_rank=0 (diagonal) checkpoint can load into a model constructed
+        # with a different default cov_rank (and vice versa) without missing/
+        # unexpected key errors.
+        if "cov_rank" in state and state["cov_rank"] != self.cov_rank:
+            logger.info(f"cov_rank {self.cov_rank} -> {state['cov_rank']} (from checkpoint); "
+                        f"rebuilding covariance heads")
+            self.cov_rank = state["cov_rank"]
+            self._build_cov_heads()
+
         self.load_state_dict(state["model_state_dict"], strict=strict)
         logger.info(f"Model loaded from: {path}")
 
@@ -432,6 +531,8 @@ class DistributionAlignmentModel(nn.Module):
             self.distribution_merging = state["distribution_merging"]
         if "dropout_rate" in state:
             self.dropout_rate = state["dropout_rate"]
+        if "cov_rank" in state:
+            self.cov_rank = state["cov_rank"]
 
 
 if __name__ == "__main__":
@@ -474,4 +575,24 @@ if __name__ == "__main__":
 
     print(f"\nOutput shapes:")
     for key, value in outputs.items():
-        print(f"  {key}: {value.shape}")
+        shape = value.shape if value is not None else None
+        print(f"  {key}: {shape}")
+
+    # Verify covariance factor shapes (default model uses cov_rank > 0)
+    assert outputs['img_U'] is not None, "img_U should exist for cov_rank>0"
+    assert outputs['img_U'].shape == (batch_size, 768, config.MSDA_COV_RANK)
+    assert outputs['text_Us'].shape == (batch_size, num_captions, 768, config.MSDA_COV_RANK)
+    assert outputs['text_logvars'].shape == (batch_size, num_captions, 768)
+    print("\nCovariance factor shapes verified.")
+
+    # Verify diagonal-only mode (cov_rank=0) returns None for U
+    diag_model = DistributionAlignmentModel(
+        freeze_clip=config.DIST_ALIGN_FREEZE_CLIP,
+        distribution_merging=config.DIST_ALIGN_DISTRIBUTION_MERGING,
+        dropout_rate=config.DIST_ALIGN_DROPOUT_RATE,
+        cov_rank=0,
+    )
+    with torch.no_grad():
+        diag_out = diag_model(dummy_images, dummy_input_ids, dummy_attention_mask)
+    assert diag_out['img_U'] is None and diag_out['text_Us'] is None
+    print("Diagonal-only mode (cov_rank=0): img_U/text_Us are None. Verified.")

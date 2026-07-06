@@ -28,8 +28,6 @@ from models.clip_baseline import CLIPFineTuneBaseline
 from models.dist_align_model import DistributionAlignmentModel
 from models.prolip_model import ProLIPModel
 from models.grove_model import GroVEModel
-from models.icpe_model import ICPEModel
-from models.d2p_model import D2PModel
 from utils.logger import get_logger, log_exception
 from utils.seed import set_seed
 
@@ -73,24 +71,6 @@ MODEL_CONFIGS = {
         ),
         "default_ckpt": config.GROVE_BEST_CKPT,
         "output_path": config.OUTPUT_DIR / "flickr30k_grove_results.json",
-        "has_distribution": True,
-    },
-    "icpe": {
-        "model_fn": lambda: ICPEModel(
-            num_neighbors=config.ICPE_NUM_NEIGHBORS,
-            regularization=config.ICPE_REGULARIZATION,
-        ),
-        "default_ckpt": None,  # ICPE is training-free
-        "output_path": config.OUTPUT_DIR / "flickr30k_icpe_results.json",
-        "has_distribution": True,
-    },
-    "d2p": {
-        "model_fn": lambda: D2PModel(
-            freeze_clip=True,
-            dropout_rate=config.D2P_DROPOUT_RATE,
-        ),
-        "default_ckpt": config.D2P_BEST_CKPT,
-        "output_path": config.OUTPUT_DIR / "flickr30k_d2p_results.json",
         "has_distribution": True,
     },
     "clip_zero_shot": {
@@ -206,7 +186,7 @@ def extract_features_clip(model, dataloader, device, num_samples=None):
 
 @torch.no_grad()
 def extract_features_distribution(model, dataloader, device, num_samples=None):
-    """Extract features for distribution-based models (dist_align, prolip, grove, d2p)."""
+    """Extract features for distribution-based models (dist_align, prolip, grove)."""
     model.eval()
     all_img_mu, all_text_mu = [], []
     all_img_logvar, all_text_logvar = [], []
@@ -256,63 +236,6 @@ def extract_features_distribution(model, dataloader, device, num_samples=None):
         text_logvar = text_logvar[:num_samples]
 
     return img_mu, text_mu, img_logvar, text_logvar
-
-
-@torch.no_grad()
-def extract_features_icpe(model, dataloader, device, num_samples=None):
-    """
-    Extract features for ICPE (training-free).
-
-    ICPE first collects all CLIP features, then computes k-NN covariance
-    as distributional representation, and finally does retrieval.
-    """
-    model.eval()
-    all_img, all_text = [], []
-    sample_count = 0
-
-    # Phase 1: Collect raw CLIP features
-    for batch in tqdm(dataloader, desc="Collecting CLIP features"):
-        if batch is None:
-            continue
-
-        pil_images = batch["image"]
-        caption_lists = batch["captions"]
-
-        pixel_values = model.process_images(pil_images).to(device)
-
-        selected_captions = [caps[0] for caps in caption_lists]
-        text_inputs = model.process_text(selected_captions)
-        input_ids = text_inputs["input_ids"].to(device)
-        attention_mask = text_inputs["attention_mask"].to(device)
-
-        # Get CLIP features directly
-        img_feat = model.encode_image(pixel_values)
-        text_feat = model.encode_text(input_ids, attention_mask)
-
-        all_img.append(F.normalize(img_feat, dim=-1).cpu())
-        all_text.append(F.normalize(text_feat, dim=-1).cpu())
-
-        sample_count += len(pil_images)
-        if num_samples and sample_count >= num_samples:
-            break
-
-    img_features = torch.cat(all_img, dim=0)
-    text_features = torch.cat(all_text, dim=0)
-
-    if num_samples:
-        img_features = img_features[:num_samples]
-        text_features = text_features[:num_samples]
-
-    # Phase 2: Compute ICPE covariance (k-NN based)
-    logger.info("Computing ICPE k-NN covariance for image features...")
-    img_logvar = model.compute_icpe_covariance(img_features)
-    img_logvar = torch.log(img_logvar)
-
-    logger.info("Computing ICPE k-NN covariance for text features...")
-    text_logvar = model.compute_icpe_covariance(text_features)
-    text_logvar = torch.log(text_logvar)
-
-    return img_features, text_features, img_logvar, text_logvar
 
 
 # =============================================================================
@@ -528,25 +451,7 @@ def main():
     # Extract features and compute recall based on model type
     has_distribution = model_cfg["has_distribution"]
 
-    if args.model_type == "icpe":
-        # ICPE: collect features, compute k-NN covariance, then retrieve
-        img_mu, text_mu, img_logvar, text_logvar = extract_features_icpe(
-            model, dataloader, args.device, args.num_samples,
-        )
-
-        # Standard cosine recall on raw CLIP features (ICPE mu = CLIP features)
-        recall_metrics = compute_recall_chunked(
-            img_mu, text_mu, args.recall_at_k, chunk_size=1000,
-        )
-
-        # Also compute UC-style recall with ICPE variance
-        uc_recall = compute_recall_uc_chunked(
-            img_mu, img_logvar, text_mu, text_logvar,
-            args.recall_at_k, temperature=0.07, chunk_size=1000,
-        )
-        recall_metrics.update(uc_recall)
-
-    elif has_distribution:
+    if has_distribution:
         # Distribution-based models: extract mu and logvar
         img_mu, text_mu, img_logvar, text_logvar = extract_features_distribution(
             model, dataloader, args.device, args.num_samples,
