@@ -305,7 +305,7 @@ LLM_MODELS = {
 
 # API call settings
 LLM_API_DELAY = 0.5          # Delay between API calls (seconds)
-LLM_API_MAX_RETRIES = 3      # Maximum retries for failed API calls
+LLM_API_MAX_RETRIES = 5      # Maximum retries for failed API calls
 LLM_API_RETRY_WAIT = 5       # Base wait time for retries (seconds)
 LLM_API_TIMEOUT = 60         # Request timeout (seconds)
 
