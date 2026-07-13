@@ -28,6 +28,7 @@ from data.caption_dataset import ImageCaptionDataset, filter_none_collate
 from models.clip_baseline import CLIPFineTuneBaseline
 from losses.clip_losses import clip_contrastive_loss
 from utils.logger import get_logger, log_exception
+from utils.lr_scheduler import apply_lr_for_epoch
 from utils.seed import set_seed
 
 
@@ -59,6 +60,14 @@ def parse_args():
                         help="Learning rate")
     parser.add_argument("--weight-decay", type=float, default=config.CLIP_BASELINE_WEIGHT_DECAY,
                         help="Weight decay")
+    parser.add_argument("--lr-scheduler", type=str, default=config.LR_SCHEDULER,
+                        choices=["none", "cosine"],
+                        help="LR schedule: 'cosine' (cosine + linear warmup) or 'none' "
+                             "(constant LR)")
+    parser.add_argument("--warmup-epochs", type=int, default=config.LR_WARMUP_EPOCHS,
+                        help="Linear warmup epochs for the cosine schedule (0 disables warmup)")
+    parser.add_argument("--min-lr-ratio", type=float, default=config.LR_MIN_LR_RATIO,
+                        help="Cosine floor as a fraction of the base LR")
     parser.add_argument("--temperature", type=float, default=config.CLIP_BASELINE_TEMPERATURE,
                         help="Temperature for contrastive loss")
 
@@ -257,6 +266,8 @@ def main():
     logger.info(f"Batch size: {args.batch_size}")
     logger.info(f"Learning rate: {args.lr}")
     logger.info(f"Temperature: {args.temperature}")
+    logger.info(f"LR scheduler: {args.lr_scheduler} (warmup {args.warmup_epochs}, "
+                f"min_lr_ratio {args.min_lr_ratio})")
     logger.info(f"Freeze image: {args.freeze_image}")
     logger.info(f"Freeze text: {args.freeze_text}")
     logger.info(f"Device: {args.device}")
@@ -277,6 +288,7 @@ def main():
         lr=args.lr,
         weight_decay=args.weight_decay
     )
+    base_lrs = [g["lr"] for g in optimizer.param_groups]
 
     # Load dataset
     captions_path = args.captions_path or config.CAPTIONS_PATH
@@ -340,12 +352,19 @@ def main():
         start_epoch = ckpt.get("epoch", 0)
         best_val_loss = ckpt.get("best_val_loss", float('inf'))
         patience_counter = ckpt.get("patience_counter", 0)
+        base_lrs = ckpt.get("base_lrs", base_lrs)
         logger.info(f"Resumed from epoch {start_epoch}, best_val_loss: {best_val_loss:.4f}")
 
     logger.info(f"Starting training from epoch {start_epoch + 1}...")
     last_epoch = start_epoch
     for epoch in range(start_epoch, args.epochs):
         last_epoch = epoch
+
+        # Apply LR schedule for this epoch (no-op when scheduler == "none")
+        apply_lr_for_epoch(optimizer, base_lrs, epoch, args.epochs,
+                           args.warmup_epochs, args.min_lr_ratio,
+                           args.lr_scheduler, logger)
+
         # Train
         train_metrics = train_epoch(
             model, train_dataloader, optimizer,
@@ -388,6 +407,7 @@ def main():
         "epoch": last_epoch + 1,
         "best_val_loss": best_val_loss,
         "patience_counter": patience_counter,
+        "base_lrs": base_lrs,
     }
     torch.save(final_state, str(final_checkpoint_path))
     logger.info(f"Final model saved to {final_checkpoint_path}")

@@ -104,6 +104,18 @@ SEED = 42
 
 
 # =============================================================================
+# Learning-Rate Scheduling (shared across all training scripts)
+# =============================================================================
+# Cosine annealing with linear warmup, applied per-epoch. See utils/lr_scheduler.py.
+# LR_SCHEDULER: "cosine" (default) or "none" for a constant LR (legacy behavior).
+# LR_WARMUP_EPOCHS: linear warmup length (0 disables warmup, pure cosine).
+# LR_MIN_LR_RATIO: cosine floor as a fraction of the base LR (e.g. 5e-5 -> 1e-6).
+LR_SCHEDULER = "cosine"
+LR_WARMUP_EPOCHS = 1
+LR_MIN_LR_RATIO = 0.02
+
+
+# =============================================================================
 # Dataset Settings
 # =============================================================================
 # Number of captions to use per image (minimum 5, will pad if necessary)
@@ -214,6 +226,7 @@ MSDA_LAMBDA_VAR = 1.0             # weight for variance semantic consistency (co
 MSDA_LAMBDA_COVER = 0.5           # weight for multi-caption coverage loss
 MSDA_LAMBDA_COV = 0.01            # weight for covariance direction alignment (was 0.1: cov_loss magnitude ~2r=8, so 0.1*3~0.3 dominated NCE and crashed Recall@1 the moment L_cov activated)
 MSDA_LAMBDA_REG = 0.01            # weight for variance regularization
+MSDA_VAR_LOSS_MODE = "rescaled"   # L_var target mode: "rescaled" (mean-match; fix) | "raw" (original)
 MSDA_M_POS = 1.0                  # coverage positive radius (per-dim normalized)
 MSDA_TARGET_VAR = 0.5             # target variance sigma_0^2 for L_reg
 MSDA_VAR_FLOOR = 1e-4             # numerical floor on sigma^2 (softplus positivity + div-by-zero guard; NOT a semantic floor -- the range is learned via L_var / L_reg)

@@ -34,6 +34,7 @@ from data.caption_dataset import ImageCaptionDataset, filter_none_collate
 from models.dist_align_model import DistributionAlignmentModel
 from losses.dist_align_losses import MSDALoss
 from utils.logger import get_logger, log_exception
+from utils.lr_scheduler import apply_lr_for_epoch
 from utils.seed import set_seed
 from utils.retrieval import compute_recall_bidirectional
 
@@ -68,6 +69,14 @@ def parse_args():
                         help="Learning rate for MLP / covariance heads")
     parser.add_argument("--weight-decay", type=float, default=config.DIST_ALIGN_WEIGHT_DECAY,
                         help="Weight decay")
+    parser.add_argument("--lr-scheduler", type=str, default=config.LR_SCHEDULER,
+                        choices=["none", "cosine"],
+                        help="LR schedule: 'cosine' (cosine + linear warmup) or 'none' "
+                             "(constant LR). Scales both clip-lr and mlp-lr param groups.")
+    parser.add_argument("--warmup-epochs", type=int, default=config.LR_WARMUP_EPOCHS,
+                        help="Linear warmup epochs for the cosine schedule (0 disables warmup)")
+    parser.add_argument("--min-lr-ratio", type=float, default=config.LR_MIN_LR_RATIO,
+                        help="Cosine floor as a fraction of the base LR")
     parser.add_argument("--temperature", type=float, default=config.MSDA_TAU,
                         help="Temperature tau for L_set-NCE similarity")
 
@@ -84,6 +93,10 @@ def parse_args():
                         help="Weight for covariance direction alignment")
     parser.add_argument("--lambda-reg", type=float, default=config.MSDA_LAMBDA_REG,
                         help="Weight for variance regularization")
+    parser.add_argument("--var-loss-mode", type=str, default=config.MSDA_VAR_LOSS_MODE,
+                        choices=["raw", "rescaled"],
+                        help="L_var target mode: 'rescaled' (mean-match caption_spread "
+                             "to σ²; fixes variance-head collapse) or 'raw' (original)")
     parser.add_argument("--m-pos", type=float, default=config.MSDA_M_POS,
                         help="Per-dim-normalized positive coverage radius")
     parser.add_argument("--target-var", type=float, default=config.MSDA_TARGET_VAR,
@@ -419,7 +432,10 @@ def main():
     logger.info(f"Lambda (ctr/mu/var/cover/cov/reg): "
                 f"{args.lambda_ctr}/{args.lambda_mu}/{args.lambda_var}/"
                 f"{args.lambda_cover}/{args.lambda_cov}/{args.lambda_reg}")
+    logger.info(f"Var loss mode: {args.var_loss_mode}")
     logger.info(f"Staged schedule: {not args.no_staged}")
+    logger.info(f"LR scheduler: {args.lr_scheduler} (warmup {args.warmup_epochs}, "
+                f"min_lr_ratio {args.min_lr_ratio})")
     logger.info("=" * 60)
 
     # Create model
@@ -447,11 +463,13 @@ def main():
         use_neg_cover=args.use_neg_cover,
         m_neg=config.MSDA_M_NEG,
         use_uncertainty_sim=not args.no_uncertainty_sim,
+        var_loss_mode=args.var_loss_mode,
     )
     logger.info("Using MSDA loss")
 
     # Create optimizer
     optimizer = create_optimizer(model, args)
+    base_lrs = [g["lr"] for g in optimizer.param_groups]
 
     # Resume from checkpoint if specified
     start_epoch = 0
@@ -478,6 +496,7 @@ def main():
         best_val_loss = checkpoint.get("best_val_loss", float('inf'))
         best_recall = checkpoint.get("best_recall", -float('inf'))
         patience_counter = checkpoint.get("patience_counter", 0)
+        base_lrs = checkpoint.get("base_lrs", base_lrs)
         logger.info(f"Resumed from epoch {start_epoch}, best_val_loss: {best_val_loss:.4f}, "
                      f"best_recall: {best_recall:.4f}, patience_counter: {patience_counter}")
 
@@ -537,6 +556,11 @@ def main():
         criterion.lambda_cover = args.lambda_cover * mult["cover"]
         criterion.lambda_cov = args.lambda_cov * mult["cov"]
         logger.info(f"Epoch {epoch + 1} stage multipliers: {mult}")
+
+        # Apply LR schedule for this epoch (no-op when scheduler == "none")
+        apply_lr_for_epoch(optimizer, base_lrs, epoch, args.epochs,
+                           args.warmup_epochs, args.min_lr_ratio,
+                           args.lr_scheduler, logger)
 
         # Train
         train_metrics = train_epoch(
@@ -603,6 +627,7 @@ def main():
         "best_val_loss": best_val_loss,
         "best_recall": best_recall,
         "patience_counter": patience_counter,
+        "base_lrs": base_lrs,
         "select_by": args.select_by,
     }
     torch.save(final_state, str(final_checkpoint_path))

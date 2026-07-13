@@ -367,6 +367,7 @@ class MSDALoss(nn.Module):
         use_neg_cover: bool = False,
         m_neg: float = 2.0,
         use_uncertainty_sim: bool = True,
+        var_loss_mode: str = "rescaled",
     ):
         """
         Initialize MSDA loss.
@@ -386,6 +387,15 @@ class MSDALoss(nn.Module):
             m_neg: Negative coverage margin
             use_uncertainty_sim: Use uncertainty-discounted similarity (True) or
                                 standard cosine (False) in L_set-NCE
+            var_loss_mode: How L_var supervises σ² against caption_spread:
+                "raw"      - target = caption_spread (original). The large mean
+                             offset between σ² (~0.1) and caption_spread (~0.003)
+                             drowns the per-image signal and collapses the variance
+                             head to a near-constant.
+                "rescaled" - target = caption_spread rescaled so its batch mean
+                             matches σ²'s batch mean. Removes the offset, preserves
+                             per-image variation (CV), so the head learns to track
+                             caption diversity. (Default; the fix.)
         """
         super().__init__()
         self.lambda_ctr = lambda_ctr
@@ -401,6 +411,23 @@ class MSDALoss(nn.Module):
         self.use_neg_cover = use_neg_cover
         self.m_neg = m_neg
         self.use_uncertainty_sim = use_uncertainty_sim
+        self.var_loss_mode = var_loss_mode
+
+    def _variance_target(self, img_var: torch.Tensor, caption_spread: torch.Tensor,
+                         mode: str) -> torch.Tensor:
+        """Return the (detached) L_var target for img_var given caption_spread.
+
+        Args:
+            img_var: (B, D) predicted σ².
+            caption_spread: (B, D) per-dim variance of caption means (the raw
+                semantic-spread signal).
+            mode: "raw" (identity) or "rescaled" (mean-match to img_var).
+        """
+        if mode == "rescaled":
+            scale = (img_var.mean().detach() + self.eps) / (
+                caption_spread.mean().detach() + self.eps)
+            return (caption_spread * scale).detach()
+        return caption_spread.detach()
 
     @staticmethod
     def _mahalanobis(
@@ -485,7 +512,8 @@ class MSDALoss(nn.Module):
 
         # ---- L_var: variance semantic consistency (stop-grad on caption spread)
         caption_spread = ((text_mus - text_mu_bar.unsqueeze(1)) ** 2).mean(dim=1)  # (B, D)
-        var_loss = F.mse_loss(img_var, caption_spread.detach())
+        var_target = self._variance_target(img_var, caption_spread, self.var_loss_mode)
+        var_loss = F.mse_loss(img_var, var_target)
 
         # ---- L_cover: multi-caption coverage via Mahalanobis ----
         diff = text_mus - img_mu.unsqueeze(1)                 # (B, K, D)

@@ -1,0 +1,29 @@
+# 与 conda 环境 CudaVersion128Fuxp 锁定的版本一致
+# 注意:torch / torchvision / torchaudio / triton 在 Dockerfile 里
+#       通过 --index-url https://download.pytorch.org/whl/cu128 单独安装,
+#       不写在这里(避免 pip 把它们从默认 PyPI 拉成 CPU 版)。
+
+# ---- 科学计算 / 数据 -------------------------------------------------------
+numpy==2.2.6
+scipy==1.15.3
+pandas==2.3.3
+pyarrow==24.0.0
+Pillow==12.2.0
+scikit-learn>=1.2.0
+pyyaml==6.0.3
+
+# ---- 可视化 ----------------------------------------------------------------
+matplotlib==3.10.9
+
+# ---- 进度条 / 工具 ---------------------------------------------------------
+tqdm==4.68.2
+
+# ---- HuggingFace 栈(CLAUDE: 模型加载 / tokenizer)-------------------------
+transformers==5.12.1
+tokenizers==0.22.2
+huggingface-hub==1.19.0
+safetensors==0.8.0
+timm==1.0.27
+
+# ---- LLM VQA(eval_llm_vqa.py 依赖)---------------------------------------
+openai>=1.0.0

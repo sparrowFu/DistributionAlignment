@@ -24,6 +24,7 @@ from data.caption_dataset import ImageCaptionDataset, filter_none_collate
 from losses.clip_losses import clip_contrastive_loss
 from models.grove_model import GroVEModel
 from utils.logger import get_logger, log_exception
+from utils.lr_scheduler import apply_lr_for_epoch
 from utils.seed import set_seed
 
 
@@ -41,6 +42,13 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=config.GROVE_BATCH_SIZE)
     parser.add_argument("--lr", type=float, default=config.GROVE_LR)
     parser.add_argument("--weight-decay", type=float, default=config.GROVE_WEIGHT_DECAY)
+    parser.add_argument("--lr-scheduler", type=str, default=config.LR_SCHEDULER,
+                        choices=["none", "cosine"],
+                        help="LR schedule: 'cosine' (cosine + linear warmup) or 'none' (constant LR)")
+    parser.add_argument("--warmup-epochs", type=int, default=config.LR_WARMUP_EPOCHS,
+                        help="Linear warmup epochs for the cosine schedule (0 disables warmup)")
+    parser.add_argument("--min-lr-ratio", type=float, default=config.LR_MIN_LR_RATIO,
+                        help="Cosine floor as a fraction of the base LR")
     parser.add_argument("--temperature", type=float, default=config.GROVE_TEMPERATURE)
     parser.add_argument("--captions-path", type=str, default=None)
     parser.add_argument("--images-dir", type=str, default=None)
@@ -60,6 +68,8 @@ def main():
     logger.info("=" * 60)
     logger.info("GroVE (B4) Training")
     logger.info("=" * 60)
+    logger.info(f"LR scheduler: {args.lr_scheduler} (warmup {args.warmup_epochs}, "
+                f"min_lr_ratio {args.min_lr_ratio})")
 
     # Dataset
     captions_path = args.captions_path or config.CAPTIONS_PATH
@@ -91,6 +101,7 @@ def main():
     logger.info(f"Trainable parameters: {sum(p.numel() for p in trainable):,}")
 
     optimizer = torch.optim.Adam(trainable, lr=args.lr, weight_decay=args.weight_decay)
+    base_lrs = [g["lr"] for g in optimizer.param_groups]
 
     start_epoch = 0
     best_val_loss = float("inf")
@@ -110,11 +121,18 @@ def main():
                         state[k] = v.to(args.device)
         start_epoch = ckpt.get("epoch", 0)
         best_val_loss = ckpt.get("best_val_loss", float("inf"))
+        base_lrs = ckpt.get("base_lrs", base_lrs)
         logger.info(f"Resumed from epoch {start_epoch}, best_val_loss: {best_val_loss:.4f}")
 
     last_epoch = start_epoch
     for epoch in range(start_epoch, args.epochs):
         last_epoch = epoch
+
+        # Apply LR schedule for this epoch (no-op when scheduler == "none")
+        apply_lr_for_epoch(optimizer, base_lrs, epoch, args.epochs,
+                           args.warmup_epochs, args.min_lr_ratio,
+                           args.lr_scheduler, logger)
+
         model.train()
         model.clip_model.eval()
 
@@ -194,6 +212,7 @@ def main():
         "optimizer_state_dict": optimizer.state_dict(),
         "epoch": last_epoch + 1,
         "best_val_loss": best_val_loss,
+        "base_lrs": base_lrs,
     }, last_ckpt_path)
     logger.info(f"Training completed. Best val loss: {best_val_loss:.4f}")
 

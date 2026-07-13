@@ -30,6 +30,7 @@ from data.vqa_dataset import VQADataset, vqa_collate_fn
 from models.vqa_model import VQAModel, TRAINABLE_MODEL_TYPES, ALL_MODEL_TYPES
 from models.clip_zero_shot import CLIPZeroShotVQA
 from utils.logger import get_logger, log_exception
+from utils.lr_scheduler import apply_lr_for_epoch
 from utils.seed import set_seed
 
 
@@ -64,6 +65,14 @@ def parse_args():
                         help="Learning rate for classification head")
     parser.add_argument("--weight-decay", type=float, default=config.VQA_WEIGHT_DECAY,
                         help="Weight decay")
+    parser.add_argument("--lr-scheduler", type=str, default=config.LR_SCHEDULER,
+                        choices=["none", "cosine"],
+                        help="LR schedule: 'cosine' (cosine + linear warmup) or 'none' "
+                             "(constant LR)")
+    parser.add_argument("--warmup-epochs", type=int, default=config.LR_WARMUP_EPOCHS,
+                        help="Linear warmup epochs for the cosine schedule (0 disables warmup)")
+    parser.add_argument("--min-lr-ratio", type=float, default=config.LR_MIN_LR_RATIO,
+                        help="Cosine floor as a fraction of the base LR")
     parser.add_argument("--hidden-dim", type=int, default=config.VQA_HIDDEN_DIM,
                         help="Hidden dimension of classification head")
     parser.add_argument("--dropout", type=float, default=config.VQA_DROPOUT,
@@ -348,6 +357,8 @@ def main():
     logger.info(f"Epochs: {args.epochs}")
     logger.info(f"Batch size: {args.batch_size}")
     logger.info(f"Learning rate: {args.lr}")
+    logger.info(f"LR scheduler: {args.lr_scheduler} (warmup {args.warmup_epochs}, "
+                f"min_lr_ratio {args.min_lr_ratio})")
     logger.info(f"Hidden dim: {args.hidden_dim}")
     logger.info(f"Dropout: {args.dropout}")
     logger.info(f"Device: {args.device}")
@@ -457,6 +468,7 @@ def main():
     # Loss and optimizer
     criterion = nn.CrossEntropyLoss()
     optimizer = get_optimizer_for_model(model, args.lr, args.weight_decay)
+    base_lrs = [g["lr"] for g in optimizer.param_groups]
 
     # Resume from checkpoint if specified
     start_epoch = 0
@@ -482,6 +494,7 @@ def main():
         best_val_loss = ckpt.get("best_val_loss", float("inf"))
         best_val_acc = ckpt.get("best_val_acc", 0.0)
         patience_counter = ckpt.get("patience_counter", 0)
+        base_lrs = ckpt.get("base_lrs", base_lrs)
         logger.info(f"Resumed from epoch {start_epoch}, best_val_loss: {best_val_loss:.4f}, "
                      f"best_val_acc: {best_val_acc:.4f}")
 
@@ -489,6 +502,12 @@ def main():
     last_epoch = start_epoch
     for epoch in range(start_epoch, args.epochs):
         last_epoch = epoch
+
+        # Apply LR schedule for this epoch (no-op when scheduler == "none")
+        apply_lr_for_epoch(optimizer, base_lrs, epoch, args.epochs,
+                           args.warmup_epochs, args.min_lr_ratio,
+                           args.lr_scheduler, logger)
+
         # Train
         train_metrics = train_epoch(
             model, train_dataloader, criterion, optimizer,
@@ -547,6 +566,7 @@ def main():
         "best_val_loss": best_val_loss,
         "best_val_acc": best_val_acc,
         "patience_counter": patience_counter,
+        "base_lrs": base_lrs,
         "model_type": args.model_type,
         "num_classes": model.num_classes,
         "hidden_dim": args.hidden_dim,
