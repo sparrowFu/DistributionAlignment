@@ -104,7 +104,7 @@ def main():
     trainable = model.trainable_parameters()
     logger.info(f"Trainable parameters: {sum(p.numel() for p in trainable):,}")
 
-    # Loss: contrastive + variance reg, NO consistency (lambda_consist=0)
+    # Loss: contrastive + variance reg, NO consistency (lambda_kl=0.0)
     criterion = CombinedDistributionLoss(
         temperature=args.temperature,
         lambda_contrastive=config.DIST_ALIGN_LAMBDA_CONTRASTIVE,

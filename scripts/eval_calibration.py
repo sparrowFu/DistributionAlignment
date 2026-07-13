@@ -1,9 +1,9 @@
 """
 GaussianImageDistribution - Exp3: Uncertainty Calibration Evaluation Script
 
-Evaluates calibration metrics (ECE, NLL, Brier, AUROC) for models with
+Evaluates calibration metrics (ECE, NLL, Brier) for models with
 uncertainty estimates. Only compares methods that model σ: B3 ProLIP,
-B4 GroVE, and Ours (UC-CL).
+B4 GroVE, and Ours (MSDA).
 
 Usage:
     python scripts/eval_calibration.py --methods dist_align prolip grove

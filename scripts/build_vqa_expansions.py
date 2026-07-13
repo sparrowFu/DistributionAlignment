@@ -160,7 +160,7 @@ class CaptionGenerator:
     """Call an OpenAI-compatible chat API to emit a final caption directly."""
 
     def __init__(self, api_key: str, base_url: str, model: str,
-                 max_retries: int = 3, retry_wait: float = 5.0,
+                 max_retries: int = 5, retry_wait: float = 5.0,
                  delay: float = 0.5, timeout: int = 60, max_tokens: int = 96):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")

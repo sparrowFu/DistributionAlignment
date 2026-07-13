@@ -344,7 +344,7 @@ class VQAModel(nn.Module):
         logger.info(f"VQA model saved to: {path}")
 
     def load_classifier(self, path: str) -> None:
-        """Load model state (classifier + base model adapters)."""
+        """Load classifier state (and legacy adapter weights if present in old checkpoints)."""
         state = torch.load(path, map_location="cpu", weights_only=False)
         self.classifier.load_state_dict(state["classifier_state_dict"])
 

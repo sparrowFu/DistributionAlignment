@@ -7,7 +7,7 @@ distributional representations with posterior variance.
 
 Reference: kaaikai/grove (GroVE, NeurIPS 2024)
 
-Key difference from UC-CL: σ is determined by the GP kernel function,
+Key difference from MSDA: σ is determined by the GP kernel function,
 not explicitly constrained to caption diversity.
 """
 

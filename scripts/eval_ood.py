@@ -42,9 +42,9 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Exp4: OOD Detection")
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--methods", type=str, nargs="+",
-                        choices=["sigma_norm", "confidence", "energy"],
-                        default=["sigma_norm", "confidence", "energy"],
-                        help="OOD scoring methods")
+                        choices=["sigma_norm", "confidence"],
+                        default=["sigma_norm", "confidence"],
+                        help="OOD scoring methods (currently unused; sigma_norm and inv_confidence are always computed)")
     parser.add_argument("--ood-datasets", type=str, nargs="+",
                         default=["svhn", "cifar10"],
                         choices=["svhn", "cifar10", "tiny_imagenet"])

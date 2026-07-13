@@ -358,7 +358,7 @@ class MSDALoss(nn.Module):
         lambda_mu: float = 0.5,
         lambda_var: float = 1.0,
         lambda_cover: float = 0.5,
-        lambda_cov: float = 0.1,
+        lambda_cov: float = 0.01,
         lambda_reg: float = 0.01,
         tau: float = 0.07,
         m_pos: float = 1.0,

@@ -191,7 +191,7 @@ def compute_recall_uc_chunked(
     """
     Compute Recall@K using uncertainty-calibrated similarity.
 
-    sim(x,y) = μ_x · μ_y / (τ · √(1 + ‖σ_x‖²) · √(1 + ‖σ_y‖²))
+    sim(x,y) = μ_x · μ_y / (τ · √(1 + mean(σ_x²)) · √(1 + mean(σ_y²)))
     """
     import torch.nn.functional as F
 

@@ -16,7 +16,7 @@ WHY THIS EXISTS
 COMPUTES
     - img_var  = exp(img_logvar)                     # the predicted σ² (N,D)
     - caption_spread = mean_k (μ_k - μ̄)²            # the EXACT L_var target (N,D)
-      (matches losses/dist_align_losses.py:487)
+      (matches losses/dist_align_losses.py:514)
     - coefficient of variation (CV = std/mean) of each → is each signal varying?
     - scale ratio img_var / caption_spread
     - Pearson/Spearman in RAW and LOG space (log-space test = fix hypothesis)
@@ -107,7 +107,7 @@ def diagnose(img_logvar: torch.Tensor, img_mu: torch.Tensor, text_mus: torch.Ten
     eps = 1e-12
     img_var = torch.exp(img_logvar)                               # (N,D) predicted σ²
     text_mu_bar = text_mus.mean(dim=1)                            # (N,D) caption center
-    # EXACT L_var target: losses/dist_align_losses.py:487
+    # EXACT L_var target: losses/dist_align_losses.py:514
     caption_spread = ((text_mus - text_mu_bar.unsqueeze(1)) ** 2).mean(dim=1)  # (N,D)
 
     # Per-image scalars (mean over D)

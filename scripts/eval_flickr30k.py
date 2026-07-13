@@ -290,7 +290,7 @@ def compute_recall_uc_chunked(
     """
     Compute Recall@K using uncertainty-calibrated similarity.
 
-    sim(x,y) = mu_x . mu_y / (tau * sqrt(1 + ||sigma_x||^2) * sqrt(1 + ||sigma_y||^2))
+    sim(x,y) = mu_x . mu_y / (tau * sqrt(1 + mean(sigma_x^2)) * sqrt(1 + mean(sigma_y^2)))
     """
     n = img_mu.shape[0]
 

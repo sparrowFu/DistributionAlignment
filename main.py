@@ -35,8 +35,8 @@ Available tasks:
   Stage 1 (Alignment Training):
     train_clip_baseline    Train CLIP baseline model (B2)
     eval_clip_baseline     Evaluate CLIP baseline model (B2)
-    train_dist_align       Train distribution alignment model (Ours/UC-CL)
-    eval_dist_align        Evaluate distribution alignment model (Ours/UC-CL)
+    train_dist_align       Train distribution alignment model (Ours/MSDA)
+    eval_dist_align        Evaluate distribution alignment model (Ours/MSDA)
     train_prolip           Train ProLIP baseline model (B3)
     eval_prolip            Evaluate ProLIP baseline model (B3)
     train_grove            Train GroVE baseline model (B4)

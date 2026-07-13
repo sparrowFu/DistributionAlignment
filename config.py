@@ -201,8 +201,8 @@ DIST_ALIGN_FREEZE_CLIP = True  # Whether to freeze CLIP parameters
 
 # Loss function weights
 DIST_ALIGN_LAMBDA_CONTRASTIVE = 1.0  # Weight for contrastive loss
-DIST_ALIGN_LAMBDA_KL = 10.0          # Weight for KL divergence loss (primary optimization target)
-DIST_ALIGN_LAMBDA_VAR = 0.1           # Weight for variance regularization (optional)
+DIST_ALIGN_LAMBDA_KL = 10.0          # Weight for KL divergence loss (legacy; unused by MSDA; ProLIP sets lambda_kl=0.0)
+DIST_ALIGN_LAMBDA_VAR = 0.1           # Weight for variance regularization (used by ProLIP baseline)
 
 # Distribution configuration
 DIST_ALIGN_DROPOUT_RATE = 0.1         # Dropout rate for MLP heads
@@ -405,7 +405,7 @@ ABLATION_CONFIGS = {
     },
     "no_cover": {
         "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
-        "lambda_cover": 0.0, "lambda_cov": 0.1, "lambda_reg": 0.01,
+        "lambda_cover": 0.0, "lambda_cov": 0.01, "lambda_reg": 0.01,
         "cov_rank": MSDA_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
         "description": "w/o L_cover (multi-caption coverage)",

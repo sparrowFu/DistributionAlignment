@@ -136,7 +136,7 @@ class DistributionAlignmentModel(nn.Module):
             param.requires_grad = False
 
     def _init_distribution_heads(self) -> None:
-        """Initialize distribution modeling heads with Xavier initialization."""
+        """Initialize mu/logvar distribution heads with Xavier init (cov heads are initialized separately in _build_cov_heads)."""
         for head in [self.img_mu_head, self.img_logvar_head,
                      self.text_mu_head, self.text_logvar_head]:
             for layer in head:

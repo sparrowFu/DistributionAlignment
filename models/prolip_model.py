@@ -31,7 +31,7 @@ class ProLIPModel(nn.Module):
     ProLIP Baseline wrapper.
 
     ProLIP extends CLIP by learning probabilistic embeddings where each sample
-    is represented as a Gaussian N(μ, σ²I). Unlike our UC-CL, ProLIP's σ is
+    is represented as a Gaussian N(μ, σ²I). Unlike our MSDA, ProLIP's σ is
     learned implicitly from an inclusion-based loss on 1B image-text pairs.
 
     This wrapper:
@@ -39,7 +39,7 @@ class ProLIPModel(nn.Module):
     2. Adds μ and σ heads (same architecture as our method for fairness)
     3. Loads ProLIP pretrained weights if available, otherwise uses random init
 
-    Key difference from UC-CL: σ has no explicit semantic constraint.
+    Key difference from MSDA: σ has no explicit semantic constraint.
     """
 
     def __init__(
@@ -79,7 +79,7 @@ class ProLIPModel(nn.Module):
         if freeze_clip:
             self._freeze_clip()
 
-        # ProLIP: μ and σ heads (same architecture as UC-CL for fair comparison)
+        # ProLIP: μ and σ heads (same architecture as MSDA for fair comparison)
         # σ is learned via inclusion loss, NOT constrained to caption variance
         self.img_mu_head = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
