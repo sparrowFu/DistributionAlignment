@@ -136,7 +136,7 @@ def extract_clip_finetune(model, dataloader, device, num_samples):
 
 @torch.no_grad()
 def extract_prolip(model, dataloader, device, num_samples):
-    """ProLIP: CLIP + MLP mu heads."""
+    """ProLIP: real ViT-H/14 mu / log-variance heads."""
     model.eval()
     all_img, all_text, all_img_lv, all_text_lv = [], [], [], []
     for pv, ids, mask in _iterate_batches(dataloader, model, device, num_samples):
@@ -214,10 +214,7 @@ METHOD_CONFIGS = {
         "extract_fn": extract_clip_finetune,
     },
     "ProLIP": {
-        "model_fn": lambda: ProLIPModel(
-            freeze_clip=True,
-            dropout_rate=config.DIST_ALIGN_DROPOUT_RATE,
-        ),
+        "model_fn": lambda: ProLIPModel(freeze=True),
         "checkpoint": str(config.PROLIP_BEST_CKPT),
         "extract_fn": extract_prolip,
     },

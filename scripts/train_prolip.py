@@ -1,9 +1,10 @@
 """
-GaussianImageDistribution - ProLIP (B3) Training Script
+GaussianImageDistribution - ProLIP Fine-tuning Script
 
-ProLIP uses the same 4-MLP-head architecture as dist_align, but sigma has
-no explicit semantic constraint (no consistency loss). Trained with
-contrastive loss + variance regularization.
+Full fine-tunes the real ProLIP ViT-H/14 model (image + text encoders and the
+learned mu / log(sigma^2) uncertainty heads) on image-caption pairs using
+ProLIP's probabilistic inclusion loss (prolip.loss.ProLIPLoss): probabilistic
+pairwise contrastive loss + inclusion loss + VIB regularization.
 
 Usage:
     python scripts/train_prolip.py
@@ -11,26 +12,29 @@ Usage:
 """
 
 import argparse
-import json
+import random
 from pathlib import Path
+from typing import Dict
 
 import torch
-import torch.nn.functional as F
+import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 
 import sys
+# Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
 from data.caption_dataset import ImageCaptionDataset, filter_none_collate
-from losses.dist_align_losses import CombinedDistributionLoss
 from models.prolip_model import ProLIPModel
+from prolip.loss import ProLIPLoss
 from utils.logger import get_logger, log_exception
 from utils.lr_scheduler import apply_lr_for_epoch
 from utils.seed import set_seed
 
 
+# Setup logger
 logger = get_logger("train_prolip", config.TRAIN_PROLIP_LOG_PATH)
 
 # Exclude faulty CPU cores (e.g. unstable CPU 2) before DataLoader workers and
@@ -40,85 +44,263 @@ apply_cpu_affinity()
 
 
 def parse_args():
+    """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Train ProLIP Baseline (B3)")
-    parser.add_argument("--epochs", type=int, default=config.DIST_ALIGN_EPOCHS)
-    parser.add_argument("--batch-size", type=int, default=config.DIST_ALIGN_BATCH_SIZE)
-    parser.add_argument("--lr", type=float, default=config.DIST_ALIGN_MLP_LR)
-    parser.add_argument("--weight-decay", type=float, default=config.DIST_ALIGN_WEIGHT_DECAY)
+
+    # Data arguments
+    parser.add_argument("--captions-path", type=str, default=None,
+                        help="Path to captions parquet file (uses config default if None)")
+    parser.add_argument("--images-dir", type=str, default=None,
+                        help="Path to images directory (uses config default if None)")
+
+    # Training arguments
+    parser.add_argument("--epochs", type=int, default=config.PROLIP_EPOCHS,
+                        help="Number of training epochs")
+    parser.add_argument("--batch-size", type=int, default=config.PROLIP_BATCH_SIZE,
+                        help="Training batch size")
+    parser.add_argument("--lr", type=float, default=config.PROLIP_LR,
+                        help="Learning rate")
+    parser.add_argument("--weight-decay", type=float, default=config.PROLIP_WEIGHT_DECAY,
+                        help="Weight decay")
     parser.add_argument("--lr-scheduler", type=str, default=config.LR_SCHEDULER,
                         choices=["none", "cosine"],
-                        help="LR schedule: 'cosine' (cosine + linear warmup) or 'none' (constant LR)")
+                        help="LR schedule: 'cosine' (cosine + linear warmup) or 'none' "
+                             "(constant LR)")
     parser.add_argument("--warmup-epochs", type=int, default=config.LR_WARMUP_EPOCHS,
                         help="Linear warmup epochs for the cosine schedule (0 disables warmup)")
     parser.add_argument("--min-lr-ratio", type=float, default=config.LR_MIN_LR_RATIO,
                         help="Cosine floor as a fraction of the base LR")
-    parser.add_argument("--temperature", type=float, default=config.DIST_ALIGN_TEMPERATURE)
-    parser.add_argument("--captions-path", type=str, default=None)
-    parser.add_argument("--images-dir", type=str, default=None)
-    parser.add_argument("--val-split", type=float, default=0.1)
-    parser.add_argument("--seed", type=int, default=config.SEED)
-    parser.add_argument("--device", type=str,
-                        default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--temperature", type=float, default=config.PROLIP_TEMPERATURE,
+                        help="Legacy alias (ProLIP loss uses the learned logit_scale)")
+
+    # ProLIP inclusion-loss weights
+    parser.add_argument("--ppcl-lambda", type=float, default=config.PROLIP_PPCL_LAMBDA,
+                        help="Weight for the probabilistic pairwise contrastive loss")
+    parser.add_argument("--inclusion-alpha", type=float, default=config.PROLIP_INCLUSION_ALPHA,
+                        help="Weight for the inclusion loss (image subset text); 0 disables")
+    parser.add_argument("--vib-beta", type=float, default=config.PROLIP_VIB_BETA,
+                        help="Weight for the VIB (KL) regularization")
+
+    # System arguments
+    parser.add_argument("--seed", type=int, default=config.SEED,
+                        help="Random seed")
+    parser.add_argument("--num-workers", type=int, default=config.NUM_WORKERS,
+                        help="Number of data loading workers")
+    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
+                        help="Device to use")
+
+    # Validation and early stopping arguments
+    parser.add_argument("--val-split", type=float, default=0.1,
+                        help="Validation set ratio (default: 0.1)")
+    parser.add_argument("--early-stop-patience", type=int, default=3,
+                        help="Early stopping patience in epochs (default: 3)")
+    parser.add_argument("--no-early-stop", action="store_true",
+                        help="Disable early stopping")
+
+    # Output arguments
+    parser.add_argument("--checkpoint-dir", type=str, default=None,
+                        help="Checkpoint directory (uses config default if None)")
     parser.add_argument("--resume", type=str, default=None,
-                        help="Path to checkpoint to resume training from")
+                        help="Path to checkpoint to resume training from "
+                             "(e.g. checkpoints/prolip_last.pt). "
+                             "Restores model weights, optimizer state, epoch, and best_val_loss.")
+
     return parser.parse_args()
 
 
-def main():
-    args = parse_args()
-    set_seed(args.seed)
+def _forward_loss(model, criterion, pixel_values, input_ids):
+    """Run the model and compute the ProLIP inclusion loss + mean-retrieval accuracy."""
+    outputs = model(pixel_values, input_ids)
 
+    loss = criterion(
+        outputs["image_features"], outputs["text_features"],
+        logit_scale=outputs["logit_scale"], logit_bias=outputs["logit_bias"],
+    )
+
+    # Mean-retrieval accuracy (normalized means), for logging only
+    img_mean = outputs["image_features"]["mean"]
+    text_mean = outputs["text_features"]["mean"]
+    logits = img_mean @ text_mean.T
+    labels = torch.arange(logits.shape[0], device=logits.device)
+    acc = (logits.argmax(dim=1) == labels).float().mean()
+
+    return loss, {"loss": loss.item(), "acc": acc.item()}
+
+
+def train_epoch(model, dataloader, optimizer, criterion, device, epoch):
+    """Train for one epoch."""
+    model.train()
+
+    total_loss = 0.0
+    total_acc = 0.0
+    processed_batches = 0
+
+    pbar = tqdm(dataloader, desc=f"Epoch {epoch + 1}")
+
+    for batch_idx, batch in enumerate(pbar):
+        if batch is None:
+            continue
+        processed_batches += 1
+
+        pil_images = batch["image"]
+        captions_list = batch["captions"]
+
+        # Randomly select one caption per image
+        selected_captions = [random.choice(captions) for captions in captions_list]
+
+        pixel_values = model.process_images(pil_images)
+        text_inputs = model.process_text(selected_captions)
+        input_ids = text_inputs["input_ids"].to(device)
+
+        loss, loss_info = _forward_loss(model, criterion, pixel_values, input_ids)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss_info["loss"]
+        total_acc += loss_info["acc"]
+
+        pbar.set_postfix({
+            "loss": f"{loss_info['loss']:.4f}",
+            "acc": f"{loss_info['acc']:.4f}",
+        })
+
+        if (batch_idx + 1) % 10 == 0:
+            logger.debug(
+                f"Epoch {epoch + 1}, Batch {batch_idx + 1}/{len(dataloader)}, "
+                f"Loss: {loss_info['loss']:.4f}, Acc: {loss_info['acc']:.4f}"
+            )
+
+    num_batches = max(processed_batches, 1)
+    return {"loss": total_loss / num_batches, "acc": total_acc / num_batches}
+
+
+@torch.no_grad()
+def evaluate(model, dataloader, criterion, device):
+    """Evaluate the model."""
+    model.eval()
+
+    total_loss = 0.0
+    total_acc = 0.0
+    processed_batches = 0
+
+    pbar = tqdm(dataloader, desc="Evaluating")
+
+    for batch in pbar:
+        if batch is None:
+            continue
+        processed_batches += 1
+
+        pil_images = batch["image"]
+        captions_list = batch["captions"]
+
+        # Use first caption for consistency
+        selected_captions = [captions[0] for captions in captions_list]
+
+        pixel_values = model.process_images(pil_images)
+        text_inputs = model.process_text(selected_captions)
+        input_ids = text_inputs["input_ids"].to(device)
+
+        _, loss_info = _forward_loss(model, criterion, pixel_values, input_ids)
+
+        total_loss += loss_info["loss"]
+        total_acc += loss_info["acc"]
+
+        pbar.set_postfix({"loss": f"{loss_info['loss']:.4f}"})
+
+    num_batches = max(processed_batches, 1)
+    return {"loss": total_loss / num_batches, "acc": total_acc / num_batches}
+
+
+def main():
+    """Main training function."""
+    args = parse_args()
+
+    # Set random seed
+    set_seed(args.seed)
+    logger.info(f"Random seed set to {args.seed}")
+
+    # Log configuration
     logger.info("=" * 60)
-    logger.info("ProLIP (B3) Training")
+    logger.info("ProLIP (B3) Fine-tuning")
     logger.info("=" * 60)
+    logger.info(f"Epochs: {args.epochs}")
+    logger.info(f"Batch size: {args.batch_size}")
+    logger.info(f"Learning rate: {args.lr}")
     logger.info(f"LR scheduler: {args.lr_scheduler} (warmup {args.warmup_epochs}, "
                 f"min_lr_ratio {args.min_lr_ratio})")
+    logger.info(f"Inclusion loss: ppcl_lambda={args.ppcl_lambda}, "
+                f"inclusion_alpha={args.inclusion_alpha}, vib_beta={args.vib_beta}")
+    logger.info(f"Device: {args.device}")
+    logger.info("=" * 60)
 
-    # Dataset
+    # Create model (full fine-tuning, nothing frozen)
+    logger.info("Creating model...")
+    model = ProLIPModel(freeze=False)
+    model = model.to(args.device)
+    logger.info(f"Model created with {model.num_trainable_parameters():,} trainable parameters")
+
+    # ProLIP inclusion loss
+    criterion = ProLIPLoss(
+        ppcl_lambda=args.ppcl_lambda,
+        inclusion_alpha=args.inclusion_alpha,
+        vib_beta=args.vib_beta,
+    )
+
+    # Create optimizer
+    optimizer = optim.Adam(
+        model.trainable_parameters(),
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+    )
+    base_lrs = [g["lr"] for g in optimizer.param_groups]
+
+    # Load dataset
     captions_path = args.captions_path or config.CAPTIONS_PATH
     images_dir = args.images_dir or config.IMAGES_DIR
-    dataset = ImageCaptionDataset(
-        captions_path=captions_path, images_dir=images_dir,
+
+    logger.info(f"Loading dataset from {captions_path}")
+    logger.info(f"Images directory: {images_dir}")
+
+    full_dataset = ImageCaptionDataset(
+        captions_path=captions_path,
+        images_dir=images_dir,
         num_captions=config.NUM_CAPTIONS,
     )
 
-    # Train/val split
-    val_size = int(len(dataset) * args.val_split)
-    train_size = len(dataset) - val_size
-    train_ds, val_ds = random_split(
-        dataset, [train_size, val_size],
+    # Split into train and validation sets
+    val_size = int(len(full_dataset) * args.val_split)
+    train_size = len(full_dataset) - val_size
+    train_dataset, val_dataset = random_split(
+        full_dataset, [train_size, val_size],
         generator=torch.Generator().manual_seed(args.seed),
     )
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
-                              num_workers=config.NUM_WORKERS, collate_fn=filter_none_collate)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
-                            num_workers=config.NUM_WORKERS, collate_fn=filter_none_collate)
-
-    logger.info(f"Train: {train_size}, Val: {val_size}")
-
-    # Model
-    model = ProLIPModel(freeze_clip=True, dropout_rate=config.DIST_ALIGN_DROPOUT_RATE)
-    model = model.to(args.device)
-
-    trainable = model.trainable_parameters()
-    logger.info(f"Trainable parameters: {sum(p.numel() for p in trainable):,}")
-
-    # Loss: contrastive + variance reg, NO consistency (lambda_kl=0.0)
-    criterion = CombinedDistributionLoss(
-        temperature=args.temperature,
-        lambda_contrastive=config.DIST_ALIGN_LAMBDA_CONTRASTIVE,
-        lambda_kl=0.0,  # ProLIP does not use consistency loss
-        lambda_var=config.DIST_ALIGN_LAMBDA_VAR,
-        target_variance=config.DIST_ALIGN_TARGET_VARIANCE,
-        kl_type=config.DIST_ALIGN_KL_TYPE,
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=args.num_workers,
+        collate_fn=filter_none_collate,
     )
 
-    optimizer = torch.optim.Adam(trainable, lr=args.lr, weight_decay=args.weight_decay)
-    base_lrs = [g["lr"] for g in optimizer.param_groups]
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        collate_fn=filter_none_collate,
+    )
 
+    logger.info(f"Train samples: {train_size}, Val samples: {val_size}")
+    logger.info(f"Batch size: {args.batch_size}, Train batches per epoch: {len(train_dataloader)}")
+
+    # Training loop with early stopping
     start_epoch = 0
     best_val_loss = float("inf")
+    patience_counter = 0
+    checkpoint_dir = Path(args.checkpoint_dir) if args.checkpoint_dir else config.CHECKPOINT_DIR
 
     if args.resume:
         resume_path = Path(args.resume)
@@ -126,7 +308,7 @@ def main():
             raise FileNotFoundError(f"Resume checkpoint not found: {resume_path}")
         logger.info(f"Resuming from checkpoint: {resume_path}")
         ckpt = torch.load(str(resume_path), map_location=args.device, weights_only=False)
-        model.load_state_dict(ckpt["model_state_dict"])
+        model.load(resume_path)
         if "optimizer_state_dict" in ckpt:
             optimizer.load_state_dict(ckpt["optimizer_state_dict"])
             for state in optimizer.state.values():
@@ -135,9 +317,11 @@ def main():
                         state[k] = v.to(args.device)
         start_epoch = ckpt.get("epoch", 0)
         best_val_loss = ckpt.get("best_val_loss", float("inf"))
+        patience_counter = ckpt.get("patience_counter", 0)
         base_lrs = ckpt.get("base_lrs", base_lrs)
         logger.info(f"Resumed from epoch {start_epoch}, best_val_loss: {best_val_loss:.4f}")
 
+    logger.info(f"Starting training from epoch {start_epoch + 1}...")
     last_epoch = start_epoch
     for epoch in range(start_epoch, args.epochs):
         last_epoch = epoch
@@ -147,94 +331,48 @@ def main():
                            args.warmup_epochs, args.min_lr_ratio,
                            args.lr_scheduler, logger)
 
-        model.train()
-        model.clip_model.eval()
+        # Train
+        train_metrics = train_epoch(model, train_dataloader, optimizer, criterion, args.device, epoch)
 
-        epoch_loss = 0.0
-        num_batches = 0
+        # Validate
+        val_metrics = evaluate(model, val_dataloader, criterion, args.device)
 
-        for batch in tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.epochs}"):
-            if batch is None:
-                continue
+        logger.info(
+            f"Epoch {epoch + 1}/{args.epochs} - "
+            f"Train Loss: {train_metrics['loss']:.4f}, Acc: {train_metrics['acc']:.4f} | "
+            f"Val Loss: {val_metrics['loss']:.4f}, Val Acc: {val_metrics['acc']:.4f}"
+        )
 
-            pil_images = batch["image"]
-            caption_lists = batch["captions"]
-            batch_size = len(pil_images)
-            num_captions = len(caption_lists[0])
+        # Save best checkpoint
+        if val_metrics["loss"] < best_val_loss:
+            best_val_loss = val_metrics["loss"]
+            best_checkpoint_path = checkpoint_dir / "prolip_best.pt"
+            model.save(str(best_checkpoint_path))
+            logger.info(f"Best model saved (val_loss: {best_val_loss:.4f}) -> {best_checkpoint_path}")
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            logger.info(f"No improvement. Patience: {patience_counter}/{args.early_stop_patience}")
 
-            pixel_values = model.process_images(pil_images).to(args.device)
+        # Early stopping
+        if not args.no_early_stop and patience_counter >= args.early_stop_patience:
+            logger.info(f"Early stopping triggered at epoch {epoch + 1}")
+            break
 
-            all_captions = []
-            for cl in caption_lists:
-                all_captions.extend(cl)
-            text_inputs = model.process_text(all_captions)
-            input_ids = text_inputs["input_ids"].view(batch_size, num_captions, -1).to(args.device)
-            attention_mask = text_inputs["attention_mask"].view(batch_size, num_captions, -1).to(args.device)
-
-            outputs = model(pixel_values, input_ids, attention_mask)
-
-            loss, loss_dict = criterion(
-                outputs['img_features'], outputs['text_features'],
-                outputs['img_mu'], outputs['img_logvar'],
-                outputs['text_mu'], outputs['text_logvar'],
-            )
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-            epoch_loss += loss.item()
-            num_batches += 1
-
-        avg_loss = epoch_loss / max(num_batches, 1)
-        logger.info(f"Epoch {epoch+1}: train_loss={avg_loss:.4f}")
-
-        # Validation
-        val_loss = 0.0
-        val_batches = 0
-        model.eval()
-        with torch.no_grad():
-            for batch in val_loader:
-                if batch is None:
-                    continue
-                pil_images = batch["image"]
-                caption_lists = batch["captions"]
-                bs = len(pil_images)
-                nc = len(caption_lists[0])
-                pv = model.process_images(pil_images).to(args.device)
-                caps = []
-                for cl in caption_lists:
-                    caps.extend(cl)
-                ti = model.process_text(caps)
-                ids = ti["input_ids"].view(bs, nc, -1).to(args.device)
-                mask = ti["attention_mask"].view(bs, nc, -1).to(args.device)
-                out = model(pv, ids, mask)
-                l, _ = criterion(
-                    out['img_features'], out['text_features'],
-                    out['img_mu'], out['img_logvar'],
-                    out['text_mu'], out['text_logvar'],
-                )
-                val_loss += l.item()
-                val_batches += 1
-
-        avg_val_loss = val_loss / max(val_batches, 1)
-        logger.info(f"Epoch {epoch+1}: val_loss={avg_val_loss:.4f}")
-
-        if avg_val_loss < best_val_loss:
-            best_val_loss = avg_val_loss
-            model.save(str(config.PROLIP_BEST_CKPT))
-            logger.info(f"Best model saved (val_loss: {best_val_loss:.4f})")
-
-    # Save last checkpoint with full training state for resumption
-    last_ckpt_path = str(config.PROLIP_BEST_CKPT).replace("_best.pt", "_last.pt")
-    torch.save({
-        "model_state_dict": model.state_dict(),
+    # Save final model with full training state for resumption
+    final_checkpoint_path = checkpoint_dir / "prolip_last.pt"
+    final_state = {
+        "model_state_dict": model.prolip.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "epoch": last_epoch + 1,
         "best_val_loss": best_val_loss,
+        "patience_counter": patience_counter,
         "base_lrs": base_lrs,
-    }, last_ckpt_path)
-    logger.info(f"Training completed. Best val loss: {best_val_loss:.4f}")
+    }
+    torch.save(final_state, str(final_checkpoint_path))
+    logger.info(f"Final model saved to {final_checkpoint_path}")
+    logger.info(f"Best validation loss: {best_val_loss:.4f}")
+    logger.info("Training completed!")
 
 
 if __name__ == "__main__":

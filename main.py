@@ -39,6 +39,7 @@ Available tasks:
     eval_dist_align        Evaluate distribution alignment model (Ours/MSDA)
     train_prolip           Train ProLIP baseline model (B3)
     eval_prolip            Evaluate ProLIP baseline model (B3)
+    eval_prolip_zero_shot  Evaluate ProLIP Zero-Shot baseline (B3)
     train_grove            Train GroVE baseline model (B4)
     eval_grove             Evaluate GroVE baseline model (B4)
     eval_clip_zero_shot    Evaluate CLIP Zero-Shot baseline (B1)
@@ -77,7 +78,7 @@ Examples:
             # Stage 1: Alignment training
             "train_clip_baseline", "eval_clip_baseline",
             "train_dist_align", "eval_dist_align",
-            "train_prolip", "eval_prolip",
+            "train_prolip", "eval_prolip", "eval_prolip_zero_shot",
             "train_grove", "eval_grove",
             "eval_clip_zero_shot",
             # Stage 2: VQA downstream
@@ -225,6 +226,7 @@ TASK_SCRIPTS = {
     "eval_dist_align": "evaluate_dist_align.py",
     "train_prolip": "train_prolip.py",
     "eval_prolip": "evaluate_prolip.py",
+    "eval_prolip_zero_shot": "evaluate_prolip_zero_shot.py",
     "train_grove": "train_grove.py",
     "eval_grove": "evaluate_grove.py",
     # Stage 1: Zero-shot

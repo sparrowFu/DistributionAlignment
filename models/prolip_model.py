@@ -1,230 +1,217 @@
 """
 GaussianImageDistribution - ProLIP Baseline (B3)
 
-Probabilistic representation learning via inclusion-based embeddings.
-ProLIP models each sample as a Gaussian distribution in the embedding space,
-with σ learned implicitly from the inclusion loss during pretraining.
+Real ProLIP ViT-H/14 (SanghyukChun/ProLIP-ViT-H-14-FT-DC-1B-1_28M) loaded via
+the `prolip` library. Each image/text is modeled as a Gaussian N(mu, sigma^2 I)
+where mu and log(sigma^2) come from ProLIP's pretrained uncertainty heads.
+sigma is learned implicitly via ProLIP's inclusion objective during
+pretraining; unlike our MSDA, it carries no explicit semantic constraint.
 
-Reference: https://arxiv.org/abs/2410.02337 (ProLIP)
+Two usage modes (mirror the CLIP baseline):
+  - zero_shot : ProLIPModel(freeze=True) -- frozen pretrained weights, no checkpoint
+  - fine_tune : ProLIPModel() then .load(config.PROLIP_BEST_CKPT), or train via
+                scripts/train_prolip.py with the ProLIP inclusion loss.
 
-This wrapper loads ProLIP pretrained weights and provides the same interface
-as DistributionAlignmentModel for fair comparison.
+Three local artifacts (no network): config.PROLIP_{MODEL,PROCESSOR,TOKENIZER}_PATH.
+
+Reference: https://arxiv.org/abs/2410.18857 (ProLIP)
 """
 
-from typing import Dict, List, Optional, Tuple
+import os
+from typing import Dict, List, Optional
 
 import torch
 import torch.nn as nn
-from transformers import CLIPModel, CLIPProcessor
+import torch.nn.functional as F
 
 import config
 from utils.logger import get_logger
-from utils.image_preprocess import preprocess_images_on_gpu
-from models.baseline_utils import merge_distributions_moment_matching, encode_clip_features, init_heads_xavier
+
+
+# All ProLIP artifacts are local (see config.PROLIP_*_PATH); never hit the hub.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
+from prolip.model import ProLIPHF                # noqa: E402
+from prolip.tokenizer import HFTokenizer          # noqa: E402
+from transformers import CLIPProcessor            # noqa: E402
 
 
 logger = get_logger("prolip_model")
 
 
-class ProLIPModel(nn.Module):
+def merge_distributions_moment_matching(
+    mus: torch.Tensor, logvars: torch.Tensor
+) -> tuple:
+    """Merge K caption Gaussians N(mu_k, sigma_k^2 I) via moment matching.
+
+    Args:
+        mus: (B, K, D) per-caption means (raw, un-normalized)
+        logvars: (B, K, D) per-caption log variances
+
+    Returns:
+        (combined_mu, combined_logvar) each (B, D)
     """
-    ProLIP Baseline wrapper.
+    combined_mu = mus.mean(dim=1)
+    var = torch.exp(logvars)
+    combined_var = (var + mus ** 2).mean(dim=1) - combined_mu ** 2
+    combined_logvar = torch.log(combined_var.clamp(min=1e-6))
+    return combined_mu, combined_logvar
 
-    ProLIP extends CLIP by learning probabilistic embeddings where each sample
-    is represented as a Gaussian N(μ, σ²I). Unlike our MSDA, ProLIP's σ is
-    learned implicitly from an inclusion-based loss on 1B image-text pairs.
 
-    This wrapper:
-    1. Loads a pretrained CLIP ViT-L/14 as the base encoder
-    2. Adds μ and σ heads (same architecture as our method for fairness)
-    3. Loads ProLIP pretrained weights if available, otherwise uses random init
+class ProLIPModel(nn.Module):
+    """Wrapper around the real ProLIP ViT-H/14 model.
 
-    Key difference from MSDA: σ has no explicit semantic constraint.
+    Exposes a CLIP-baseline-compatible interface (process_images / process_text /
+    forward / save / load / trainable_parameters) so the retrieval and training
+    scripts mirror the CLIP trio. ``forward`` returns the ProLIP-native feature
+    dicts (normalized means, for the inclusion loss) plus flat repo-style aliases
+    (img_mu / text_mu / img_logvar / text_logvar) consumed by the downstream
+    experiment scripts.
     """
 
     def __init__(
         self,
         model_path: Optional[str] = None,
-        hidden_dim: int = 768,
-        freeze_clip: bool = True,
-        dropout_rate: float = 0.1,
-        prolip_weights_path: Optional[str] = None,
+        processor_path: Optional[str] = None,
+        tokenizer_path: Optional[str] = None,
+        freeze: bool = False,
+        context_length: Optional[int] = None,
     ):
         """
-        Initialize ProLIP model.
-
         Args:
-            model_path: Path to local CLIP model directory
-            hidden_dim: Hidden dimension for embeddings
-            freeze_clip: Whether to freeze CLIP parameters
-            dropout_rate: Dropout rate for heads
-            prolip_weights_path: Path to ProLIP pretrained weights (optional)
+            model_path: ProLIPHF weights dir (config.PROLIP_MODEL_PATH if None)
+            processor_path: CLIP image processor dir (config.PROLIP_PROCESSOR_PATH)
+            tokenizer_path: HFTokenizer dir (config.PROLIP_TOKENIZER_PATH)
+            freeze: freeze all backbone params (zero-shot mode)
+            context_length: tokenizer context length (config.PROLIP_CONTEXT_LENGTH)
         """
         super().__init__()
 
-        self.model_path = model_path or str(config.CLIP_VIT_L_14_PATH)
-        self.hidden_dim = hidden_dim
-        self.freeze_clip = freeze_clip
-        self.dropout_rate = dropout_rate
+        self.model_path = str(model_path or config.PROLIP_MODEL_PATH)
+        self.processor_path = str(processor_path or config.PROLIP_PROCESSOR_PATH)
+        self.tokenizer_path = str(tokenizer_path or config.PROLIP_TOKENIZER_PATH)
+        self.context_length = context_length or config.PROLIP_CONTEXT_LENGTH
+        self.freeze = freeze
 
-        # Load CLIP backbone (same as our method)
-        logger.info(f"Loading CLIP model from: {self.model_path}")
-        self.clip_model = CLIPModel.from_pretrained(
-            self.model_path, local_files_only=True
-        )
+        logger.info(f"Loading ProLIPHF from: {self.model_path}")
+        self.prolip = ProLIPHF.from_pretrained(self.model_path)
+
+        logger.info(f"Loading processor from: {self.processor_path}")
         self.processor = CLIPProcessor.from_pretrained(
-            self.model_path, local_files_only=True
+            self.processor_path, local_files_only=True
         )
 
-        if freeze_clip:
-            self._freeze_clip()
+        logger.info(f"Loading tokenizer from: {self.tokenizer_path}")
+        self.tokenizer = HFTokenizer(self.tokenizer_path, context_length=self.context_length)
 
-        # ProLIP: μ and σ heads (same architecture as MSDA for fair comparison)
-        # σ is learned via inclusion loss, NOT constrained to caption variance
-        self.img_mu_head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.Dropout(dropout_rate),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
-        self.img_logvar_head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.Dropout(dropout_rate),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
-        self.text_mu_head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.Dropout(dropout_rate),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
-        self.text_logvar_head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.Dropout(dropout_rate),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
+        # Compat: transformers>=5 removed PreTrainedTokenizer.batch_encode_plus,
+        # which prolip's HFTokenizer.__call__ relies on. Alias it to the modern
+        # __call__ (same kwargs: return_tensors/max_length/padding/truncation).
+        _tok = self.tokenizer.tokenizer
+        if not hasattr(_tok, "batch_encode_plus"):
+            _tok.batch_encode_plus = _tok.__call__
 
-        # Initialize heads
-        self._init_heads()
-
-        # Load ProLIP pretrained weights if available
-        if prolip_weights_path:
-            self._load_prolip_weights(prolip_weights_path)
+        if freeze:
+            self.freeze_all()
+            logger.info("All ProLIP parameters frozen (zero-shot mode)")
 
         logger.info("ProLIP model initialized")
 
-    def _freeze_clip(self):
-        """Freeze CLIP parameters."""
-        for param in self.clip_model.parameters():
+    # ------------------------------------------------------------------ freeze
+    def freeze_all(self) -> None:
+        """Freeze every ProLIP parameter."""
+        for param in self.prolip.parameters():
             param.requires_grad = False
 
-    def _init_heads(self):
-        """Initialize head weights with Xavier initialization."""
-        init_heads_xavier([self.img_mu_head, self.img_logvar_head,
-                           self.text_mu_head, self.text_logvar_head])
+    def unfreeze_all(self) -> None:
+        """Unfreeze every ProLIP parameter (full fine-tuning)."""
+        for param in self.prolip.parameters():
+            param.requires_grad = True
 
-    def _load_prolip_weights(self, path: str):
-        """Load ProLIP-specific weights (μ and σ heads only)."""
-        try:
-            state = torch.load(path, map_location="cpu", weights_only=False)
-            if "model_state_dict" in state:
-                self.load_state_dict(state["model_state_dict"], strict=False)
-            else:
-                self.load_state_dict(state, strict=False)
-            logger.info(f"ProLIP weights loaded from: {path}")
-        except Exception as e:
-            logger.warning(f"Failed to load ProLIP weights: {e}. Using random init.")
+    # ----------------------------------------------------------- preprocessing
+    def process_images(self, images: List) -> torch.Tensor:
+        """Process a list of PIL images into a pixel_values tensor on the model device."""
+        device = next(self.parameters()).device
+        pixel_values = self.processor(images=images, return_tensors="pt")["pixel_values"]
+        return pixel_values.to(device)
 
-    def merge_distributions(
-        self, mus: torch.Tensor, logvars: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Merge K caption distributions via moment matching."""
-        return merge_distributions_moment_matching(mus, logvars)
+    def process_text(self, texts: List[str]) -> Dict[str, torch.Tensor]:
+        """Tokenize a list of captions.
 
+        Returns a CLIP-style dict {"input_ids", "attention_mask"} for consistency
+        with the rest of the repo. ProLIP's text tower handles padding internally
+        (pad_id=0); ``forward`` ignores ``attention_mask`` -- it is informational.
+        """
+        input_ids = self.tokenizer(texts)                       # (B, context_length)
+        attention_mask = (input_ids != 0).long()
+        return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+    # --------------------------------------------------------------- encoders
+    def encode_images(self, pixel_values: torch.Tensor, normalize: bool = False) -> Dict[str, torch.Tensor]:
+        """Encode images -> {"mean", "std"} (std == log sigma^2)."""
+        return self.prolip.encode_image(pixel_values, normalize=normalize)
+
+    def encode_texts(self, input_ids: torch.Tensor, normalize: bool = False) -> Dict[str, torch.Tensor]:
+        """Encode text -> {"mean", "std"} (std == log sigma^2)."""
+        return self.prolip.encode_text(input_ids, normalize=normalize)
+
+    # ----------------------------------------------------------------- forward
     def forward(
         self,
         pixel_values: torch.Tensor,
         input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
-        """
-        Forward pass.
+        """Encode image and text into probabilistic features.
 
         Args:
             pixel_values: (B, C, H, W)
-            input_ids: (B, K, max_len)
-            attention_mask: (B, K, max_len)
+            input_ids: (B, L) single caption, or (B, K, L) multiple captions
+                       (merged via moment matching into one text Gaussian).
+            attention_mask: unused (ProLIP handles padding); kept for signature
+                            compatibility with the CLIP / dist_align wrappers.
 
         Returns:
-            Dictionary with img/text features and distribution parameters.
+            Dict with ProLIP-native ``image_features`` / ``text_features`` dicts
+            (L2-normalized means, for the inclusion loss) plus flat repo-style
+            aliases (un-normalized means): img_mu / text_mu / img_logvar /
+            text_logvar / img_sigma / text_sigma, and logit_scale / logit_bias.
         """
-        # CLIP encoding
-        img_features, text_features, B, K = encode_clip_features(
-            self.clip_model, pixel_values, input_ids, attention_mask
-        )
-        text_features_avg = text_features.mean(dim=1)
+        img = self.prolip.encode_image(pixel_values, normalize=False)
+        img_mu_raw, img_logvar = img["mean"], img["std"]        # std == log sigma^2
 
-        # Distribution parameters
-        img_mu = self.img_mu_head(img_features)
-        img_logvar = self.img_logvar_head(img_features)
+        if input_ids.dim() == 3:
+            B, K, L = input_ids.shape
+            text = self.prolip.encode_text(input_ids.reshape(B * K, L), normalize=False)
+            cap_mu = text["mean"].view(B, K, -1)
+            cap_logvar = text["std"].view(B, K, -1)
+            text_mu_raw, text_logvar = merge_distributions_moment_matching(cap_mu, cap_logvar)
+        else:
+            text = self.prolip.encode_text(input_ids, normalize=False)
+            text_mu_raw, text_logvar = text["mean"], text["std"]
 
-        text_mus, text_logvars = [], []
-        for k in range(K):
-            mu_k = self.text_mu_head(text_features[:, k, :])
-            logvar_k = self.text_logvar_head(text_features[:, k, :])
-            text_mus.append(mu_k)
-            text_logvars.append(logvar_k)
-
-        text_mus = torch.stack(text_mus, dim=1)
-        text_logvars = torch.stack(text_logvars, dim=1)
-
-        text_mu, text_logvar = self.merge_distributions(text_mus, text_logvars)
-
-        img_sigma = torch.exp(0.5 * img_logvar)
-        text_sigma = torch.exp(0.5 * text_logvar)
+        logit_scale = self.prolip.logit_scale.exp() if self.prolip.logit_scale is not None else None
+        logit_bias = self.prolip.logit_bias
 
         return {
-            "img_features": img_features,
-            "text_features": text_features_avg,
-            "img_mu": img_mu,
+            # ProLIP-native (normalized means, matches upstream model.forward -> ProLIPLoss)
+            "image_features": {"mean": F.normalize(img_mu_raw, dim=-1), "std": img_logvar},
+            "text_features": {"mean": F.normalize(text_mu_raw, dim=-1), "std": text_logvar},
+            "logit_scale": logit_scale,
+            "logit_bias": logit_bias,
+            # Flat repo-style aliases (un-normalized means; downstream scripts normalize)
+            "img_features": img_mu_raw,
+            "text_features_avg": text_mu_raw,
+            "img_mu": img_mu_raw,
+            "text_mu": text_mu_raw,
             "img_logvar": img_logvar,
-            "img_sigma": img_sigma,
-            "text_mu": text_mu,
             "text_logvar": text_logvar,
-            "text_sigma": text_sigma,
-            "text_mus": text_mus,
+            "img_sigma": torch.exp(0.5 * img_logvar),
+            "text_sigma": torch.exp(0.5 * text_logvar),
         }
 
-    def encode_image(self, pixel_values: torch.Tensor) -> torch.Tensor:
-        """Extract deterministic image features (μ)."""
-        clip_feat = self.clip_model.get_image_features(pixel_values)
-        clip_feat = clip_feat.pooler_output
-        return self.img_mu_head(clip_feat)
-
-    def encode_text(
-        self, input_ids: torch.Tensor, attention_mask: torch.Tensor
-    ) -> torch.Tensor:
-        """Extract deterministic text features (μ)."""
-        clip_feat = self.clip_model.get_text_features(
-            input_ids=input_ids, attention_mask=attention_mask
-        )
-        clip_feat = clip_feat.pooler_output
-        return self.text_mu_head(clip_feat)
-
-    def process_images(self, images: List) -> torch.Tensor:
-        """Process PIL images to tensors."""
-        device = next(self.parameters()).device
-        return preprocess_images_on_gpu(images, device)
-
-    def process_text(self, texts: List[str]) -> Dict[str, torch.Tensor]:
-        """Process text strings to model inputs."""
-        return self.processor(
-            text=texts, return_tensors="pt",
-            padding=True, truncation=True, max_length=77,
-        )
-
+    # ----------------------------------------------------------- serialization
     def trainable_parameters(self) -> List[nn.Parameter]:
         return [p for p in self.parameters() if p.requires_grad]
 
@@ -232,16 +219,44 @@ class ProLIPModel(nn.Module):
         return sum(p.numel() for p in self.trainable_parameters())
 
     def save(self, path: str) -> None:
+        """Save ProLIP weights (processor/tokenizer are fixed local artifacts)."""
         state = {
-            "model_state_dict": self.state_dict(),
-            "hidden_dim": self.hidden_dim,
-            "freeze_clip": self.freeze_clip,
-            "dropout_rate": self.dropout_rate,
+            "model_state_dict": self.prolip.state_dict(),
+            "embed_dim": config.PROLIP_EMBED_DIM,
+            "freeze": self.freeze,
         }
         torch.save(state, path)
         logger.info(f"ProLIP model saved to: {path}")
 
     def load(self, path: str, strict: bool = True) -> None:
+        """Load ProLIP weights saved by ``save``."""
         state = torch.load(path, map_location="cpu", weights_only=False)
-        self.load_state_dict(state["model_state_dict"], strict=strict)
+        self.prolip.load_state_dict(state["model_state_dict"], strict=strict)
         logger.info(f"ProLIP model loaded from: {path}")
+
+
+if __name__ == "__main__":
+    # Smoke test: load the model, run a tiny forward pass, print shapes.
+    from utils.logger import setup_logger
+    from utils.seed import set_seed
+
+    setup_logger("prolip_model", config.LOG_DIR / "prolip_model_test.log")
+    set_seed(config.SEED)
+
+    model = ProLIPModel()
+    print(f"Trainable parameters: {model.num_trainable_parameters():,}")
+    print(f"Embed dim: {config.PROLIP_EMBED_DIM}")
+
+    from PIL import Image
+    dummy_images = [Image.new("RGB", (224, 224)) for _ in range(2)]
+    dummy_texts = ["a photo of a cat", "a photo of a dog"]
+
+    pixel_values = model.process_images(dummy_images)
+    text_inputs = model.process_text(dummy_texts)
+    print(f"pixel_values: {pixel_values.shape}")
+    print(f"input_ids: {text_inputs['input_ids'].shape}")
+
+    with torch.no_grad():
+        out = model(pixel_values, text_inputs["input_ids"])
+    print(f"img_mu: {out['img_mu'].shape}, text_mu: {out['text_mu'].shape}")
+    print(f"img_logvar: {out['img_logvar'].shape}, text_logvar: {out['text_logvar'].shape}")

@@ -56,10 +56,7 @@ MODEL_CONFIGS = {
         "has_distribution": False,
     },
     "prolip": {
-        "model_fn": lambda: ProLIPModel(
-            freeze_clip=True,
-            dropout_rate=config.DIST_ALIGN_DROPOUT_RATE,
-        ),
+        "model_fn": lambda: ProLIPModel(freeze=True),
         "default_ckpt": config.PROLIP_BEST_CKPT,
         "output_path": config.OUTPUT_DIR / "flickr30k_prolip_results.json",
         "has_distribution": True,

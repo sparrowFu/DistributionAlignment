@@ -1,5 +1,8 @@
 # gitignore for GaussianImageDistribution project
 
+# Baselines
+baseline/
+
 # Documentation
 docs/
 *.pdf

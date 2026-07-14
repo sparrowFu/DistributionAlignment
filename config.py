@@ -309,23 +309,73 @@ LLM_API_MAX_RETRIES = 5      # Maximum retries for failed API calls
 LLM_API_RETRY_WAIT = 5       # Base wait time for retries (seconds)
 LLM_API_TIMEOUT = 60         # Request timeout (seconds)
 
+# -----------------------------------------------------------------------------
+# Caption-generation backend selection (build_vqa_expansions.py)
+#   "local" -> transformers, load an open-source LLM from a local directory
+#   "api"   -> original OpenAI-compatible HTTP path (SiliconFlow, etc.)
+# All LLM_LOCAL_* settings are defaults; each can be overridden on the CLI:
+#   --backend --model-path --batch-size --dtype --device --no-batch
+# -----------------------------------------------------------------------------
+LLM_BACKEND = "local"                # "local" | "api"
+
+# Which local model family to load.
+#   "gemma" -> AutoProcessor + AutoModelForMultimodalLM (text-only generation)
+#   "llama" -> AutoTokenizer  + AutoModelForCausalLM
+LLM_LOCAL_MODEL_KIND = "gemma"       # "gemma" | "llama"
+
+# Default local paths for each family (override with --model-path or LLM_LOCAL_MODEL_PATH).
+LLM_LOCAL_GEMMA_PATH = "/home/xpfu/WorkSpace/OpenSourceLLM/gemma"
+LLM_LOCAL_LLAMA_PATH = "/home/xpfu/WorkSpace/OpenSourceLLM/llama"
+
+# Explicit override for any family. When non-empty, used regardless of model kind.
+LLM_LOCAL_MODEL_PATH = ""
+LLM_LOCAL_MODEL_NAME = ""            # display name for logs only (may be "")
+
+LLM_LOCAL_DTYPE = "bf16"             # "bf16" | "fp16" | "fp32"
+LLM_LOCAL_DEVICE = "cuda"            # "cuda" | "cuda:0" | "cpu" | "auto"
+LLM_LOCAL_BATCH_SIZE = 32            # captions per forward pass (batched mode)
+LLM_LOCAL_MAX_NEW_TOKENS = 96        # matches API max_tokens
+LLM_LOCAL_DO_SAMPLE = False          # greedy decode == API temperature 0 (reproducible)
+LLM_LOCAL_TRUST_REMOTE_CODE = False  # set True for models needing custom code
+
 
 # =============================================================================
-# Baseline B3: ProLIP Configuration
+# Baseline B3: ProLIP Configuration (real ProLIP ViT-H/14 via the `prolip` lib)
 # =============================================================================
-# HuggingFace model identifier for ProLIP pretrained weights
-PROLIP_MODEL_NAME = "thanossk/prolip-vit-b16-laion400m"
-# If using local cache, specify the path; None means download from HF
-PROLIP_LOCAL_PATH = None
+# Three local artifacts (no network needed). Loaded by models/prolip_model.py.
+#   model     : ProLIPHF weights (config.json + model.safetensors), embed_dim 1024
+#   processor : CLIP image processor (openai/clip-vit-base-patch16) -- correct
+#               CLIP normalization for the ViT-H/14 backbone
+#   tokenizer : HFTokenizer (apple/DFN5B-CLIP-ViT-H-14), CLIP BPE, context 77
+PROLIP_MODEL_PATH = PROJECT_ROOT / "PreTrainedModels" / "prolip"
+PROLIP_PROCESSOR_PATH = PROJECT_ROOT / "PreTrainedModels" / "prolipProcessor"
+PROLIP_TOKENIZER_PATH = PROJECT_ROOT / "PreTrainedModels" / "prolipTokenizer"
+PROLIP_CONTEXT_LENGTH = 77
 
 # ProLIP checkpoint and output paths
 PROLIP_BEST_CKPT = CHECKPOINT_DIR / "prolip_best.pt"
+PROLIP_LAST_CKPT = CHECKPOINT_DIR / "prolip_last.pt"
 PROLIP_EVAL_RESULTS_PATH = OUTPUT_DIR / "prolip_eval_results.json"
+PROLIP_ZERO_SHOT_EVAL_RESULTS_PATH = OUTPUT_DIR / "prolip_zero_shot_eval_results.json"
 TRAIN_PROLIP_LOG_PATH = LOG_DIR / "train_prolip.log"
 EVAL_PROLIP_LOG_PATH = LOG_DIR / "evaluate_prolip.log"
+EVAL_PROLIP_ZERO_SHOT_LOG_PATH = LOG_DIR / "evaluate_prolip_zero_shot.log"
 
-# ProLIP uses its own ViT-B/16, embedding dimension is 512
-PROLIP_EMBED_DIM = 512
+# ProLIP ViT-H/14 embedding dimension (mean / log-variance head output dim)
+PROLIP_EMBED_DIM = 1024
+
+# Fine-tuning hyperparameters (full fine-tuning of the whole ProLIP model with
+# the ProLIP inclusion loss; see prolip.loss.ProLIPLoss).
+PROLIP_EPOCHS = 5
+PROLIP_BATCH_SIZE = 16          # ViT-H/14 is large; keep modest to fit GPU
+PROLIP_LR = 1e-6                # full-backbone fine-tune -> small LR
+PROLIP_WEIGHT_DECAY = 1e-4
+PROLIP_TEMPERATURE = 0.07       # legacy alias (inclusion loss uses learned logit_scale)
+
+# ProLIP inclusion-loss weights
+PROLIP_PPCL_LAMBDA = 1.0        # probabilistic pairwise contrastive loss (always on)
+PROLIP_INCLUSION_ALPHA = 1.0    # inclusion loss weight (image subset text); 0 disables
+PROLIP_VIB_BETA = 1.0e-5        # variational information bottleneck KL weight
 
 
 # =============================================================================

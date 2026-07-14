@@ -1,13 +1,14 @@
 """
-GaussianImageDistribution - ProLIP Fine-tuned Evaluation Script
+GaussianImageDistribution - ProLIP Zero-Shot Evaluation Script
 
-Evaluates the fine-tuned ProLIP model using image-text retrieval with Recall@K.
+Evaluates the ProLIP Zero-Shot baseline using image-text retrieval with
+Recall@K. No training required -- uses frozen pretrained ProLIP directly.
 Reports both directions (I2T and T2I) under cosine and ProLIP's uncertainty-aware
 CSD similarity. Uses a random subset of samples for efficiency.
 
 Usage:
-    python scripts/evaluate_prolip.py
-    python main.py --task eval_prolip
+    python scripts/evaluate_prolip_zero_shot.py
+    python main.py --task eval_prolip_zero_shot
 """
 
 import argparse
@@ -29,15 +30,13 @@ from utils.retrieval_metrics import compute_retrieval_metrics
 from utils.seed import set_seed
 
 
-logger = get_logger("eval_prolip", config.EVAL_PROLIP_LOG_PATH)
+logger = get_logger("eval_prolip_zero_shot", config.EVAL_PROLIP_ZERO_SHOT_LOG_PATH)
 
 
 def parse_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Evaluate ProLIP (Fine-tuned)")
+    parser = argparse.ArgumentParser(description="Evaluate ProLIP Zero-Shot Baseline")
 
-    parser.add_argument("--checkpoint", type=str, default=None,
-                        help="Path to checkpoint (uses best checkpoint if None)")
     parser.add_argument("--captions-path", type=str, default=None,
                         help="Path to captions file (uses config default if None)")
     parser.add_argument("--images-dir", type=str, default=None,
@@ -50,7 +49,8 @@ def parse_args():
                         help="Number of samples to evaluate (default: 5000)")
     parser.add_argument("--output-path", type=str, default=None,
                         help="Output JSON path (uses config default if None)")
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
+    parser.add_argument("--device", type=str,
+                        default="cuda" if torch.cuda.is_available() else "cpu",
                         help="Device to use")
 
     return parser.parse_args()
@@ -58,7 +58,7 @@ def parse_args():
 
 @torch.no_grad()
 def extract_features(model, dataloader, device, num_samples=None):
-    """Extract ProLIP mean and log-variance features."""
+    """Extract ProLIP mean and log-variance features (no training)."""
     model.eval()
 
     all_img_mu, all_text_mu = [], []
@@ -111,13 +111,11 @@ def main():
     args = parse_args()
     set_seed(config.SEED)
 
-    # Load fine-tuned model
-    checkpoint_path = args.checkpoint or str(config.PROLIP_BEST_CKPT)
-    logger.info(f"Loading model from {checkpoint_path}")
-
-    model = ProLIPModel()
-    model.load(checkpoint_path)
+    # Frozen pretrained ProLIP (zero-shot, no checkpoint)
+    logger.info("Loading frozen ProLIP model (zero-shot, no training)...")
+    model = ProLIPModel(freeze=True)
     model = model.to(args.device)
+    logger.info(f"Trainable parameters: {model.num_trainable_parameters():,} (expect 0)")
 
     # Load dataset
     captions_path = args.captions_path or config.CAPTIONS_PATH
@@ -159,10 +157,9 @@ def main():
                 logger.info(f"{direction}/{metric_name}/{k}: {v:.4f}")
 
     # Save results
-    output_path = args.output_path or str(config.PROLIP_EVAL_RESULTS_PATH)
+    output_path = args.output_path or str(config.PROLIP_ZERO_SHOT_EVAL_RESULTS_PATH)
     results = {
-        "model": "ProLIP ViT-H/14 (fine-tuned)",
-        "checkpoint": str(checkpoint_path),
+        "model": "ProLIP ViT-H/14 (zero-shot, frozen)",
         "num_samples": args.num_samples,
         "metrics": metrics,
     }
@@ -178,5 +175,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        log_exception(logger, e, "ProLIP evaluation failed")
+        log_exception(logger, e, "Evaluation failed")
         raise
