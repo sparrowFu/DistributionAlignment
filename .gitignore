@@ -52,6 +52,7 @@ desktop.ini
 
 # Jupyter
 .ipynb_checkpoints/
+*.ipynb
 
 # API keys and secrets
 api_config.json
