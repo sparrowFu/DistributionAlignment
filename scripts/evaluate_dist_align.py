@@ -58,6 +58,8 @@ def parse_args():
                         help="Also compute Recall@K with MSDA uncertainty-discounted similarity")
     parser.add_argument("--tau", type=float, default=config.MSDA_TAU,
                         help="Temperature for uncertainty-discounted similarity")
+    parser.add_argument("--no-loglik", action="store_true",
+                        help="Skip the distribution-likelihood recall")
 
     return parser.parse_args()
 
@@ -249,6 +251,59 @@ def compute_recall_uc_chunked(
     return recall_metrics
 
 
+def compute_recall_loglik_chunked(
+    img_mu, img_logvar, img_U, text_mu, k_values,
+    per_dim_normalize=True, use_logdet=True, chunk_size=256,
+):
+    """Recall@K under the distribution-likelihood score.
+
+    S[n, m] = log N(text_m ; img_n, Sigma_n) computed in chunks. i2t ranks rows
+    (image query -> texts); t2i ranks columns (text query -> images). Ground
+    truth is the diagonal (image i matches text i).
+    """
+    import torch.nn.functional as F
+    from utils.distribution_score import image_text_loglik_matrix
+
+    n = img_mu.shape[0]
+    img_mu_n = F.normalize(img_mu, dim=-1)
+    text_mu_n = F.normalize(text_mu, dim=-1)
+    img_var = torch.exp(img_logvar)
+    device = img_mu.device
+
+    i2t_hits = {k: 0 for k in k_values}
+    t2i_hits = {k: 0 for k in k_values}
+    for start in tqdm(range(0, n, chunk_size), desc="loglik recall chunks"):
+        end = min(start + chunk_size, n)
+        img_U_chunk = img_U[start:end] if img_U is not None else None
+        S = image_text_loglik_matrix(
+            img_mu_n[start:end], img_var[start:end], img_U_chunk, text_mu_n,
+            per_dim_normalize=per_dim_normalize, use_logdet=use_logdet,
+            chunk_size=end - start,
+        )  # (C, n)
+        ranked_i2t = torch.argsort(S, dim=1, descending=True)
+        gt = torch.arange(start, end, device=device).unsqueeze(1)
+        for k in k_values:
+            i2t_hits[k] += (ranked_i2t[:, :k] == gt).any(dim=1).sum().item()
+    for start in tqdm(range(0, n, chunk_size), desc="loglik t2i chunks"):
+        end = min(start + chunk_size, n)
+        # score these text queries against all images (image is the distribution center)
+        img_U_full = img_U if img_U is not None else None
+        S = image_text_loglik_matrix(
+            img_mu_n, img_var, img_U_full, text_mu_n[start:end],
+            per_dim_normalize=per_dim_normalize, use_logdet=use_logdet,
+            chunk_size=256,
+        )  # (n, C): rows=images, cols=texts[start:end]
+        ranked_t2i = torch.argsort(S, dim=0, descending=True)  # (n, C)
+        gt = torch.arange(start, end, device=device).unsqueeze(0)  # (1, C)
+        for k in k_values:
+            t2i_hits[k] += (ranked_t2i[:k] == gt).any(dim=0).sum().item()
+
+    return {
+        **{f"loglik_i2t_recall@{k}": i2t_hits[k] / n for k in k_values},
+        **{f"loglik_t2i_recall@{k}": t2i_hits[k] / n for k in k_values},
+    }
+
+
 def main():
     """Main evaluation function."""
     args = parse_args()
@@ -315,6 +370,15 @@ def main():
             args.recall_at_k, temperature=args.tau, chunk_size=1000
         )
         recall_metrics.update(uc_recall_metrics)
+
+    if not args.no_loglik:
+        loglik_metrics = compute_recall_loglik_chunked(
+            img_mu.to(args.device), img_logvar.to(args.device), img_U.to(args.device) if img_U is not None else None,
+            text_mu.to(args.device), args.recall_at_k,
+            per_dim_normalize=config.MSDA_PER_DIM_NORMALIZE,
+            use_logdet=config.MSDA_USE_LOGDET,
+        )
+        recall_metrics.update(loglik_metrics)
 
     # Save results
     output_path = args.output_path or str(config.DIST_ALIGN_EVAL_RESULTS_PATH)
