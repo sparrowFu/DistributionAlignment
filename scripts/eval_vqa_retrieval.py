@@ -35,16 +35,18 @@ logger = get_logger("eval_vqa_retrieval", config.LOG_DIR / "eval_vqa_retrieval.l
 @torch.no_grad()
 def encode_all(adapter, image_paths: List[Path], captions: List[str],
                batch_size: int, device: str, logger=logger) -> Tuple[
-        torch.Tensor, Optional[torch.Tensor], torch.Tensor, Optional[torch.Tensor]]:
+        torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor],
+        torch.Tensor, Optional[torch.Tensor]]:
     """编码全部唯一图 + 全部 entry caption(文本按字符串去重编码再展开)。
 
-    Returns: (img_mean[N,D], img_logvar|None, cap_mean[M,D], cap_logvar|None)
+    Returns: (img_mean[N,D], img_logvar|None, img_U|None, cap_mean[M,D], cap_logvar|None)
+    img_U 为图像侧低秩协方差因子 (N, D, r),仅 dist_align(cov_rank>0)提供。
     图片缺失则用黑图占位以保持 image_id 对齐,并告警。
     """
     from PIL import Image
 
     # ---- images ----
-    img_means, img_logvars = [], []
+    img_means, img_logvars, img_Us = [], [], []
     for start in tqdm(range(0, len(image_paths), batch_size), desc="encode images"):
         batch_paths = image_paths[start:start + batch_size]
         pils = []
@@ -58,12 +60,15 @@ def encode_all(adapter, image_paths: List[Path], captions: List[str],
                 logger.warning(f"image load failed {p}: {e}; using black placeholder")
                 pils.append(Image.new("RGB", (224, 224)))
         pixel_values = adapter.process_images(pils).to(device)
-        m, lv = adapter.encode_images(pixel_values)
+        m, lv, U = adapter.encode_images(pixel_values)
         img_means.append(m)                       # 保留在 device(GPU)上,供指标阶段直接用
         if lv is not None:
             img_logvars.append(lv)
+        if U is not None:
+            img_Us.append(U)
     img_mean = torch.cat(img_means, dim=0)
     img_logvar = torch.cat(img_logvars, dim=0) if img_logvars else None
+    img_U = torch.cat(img_Us, dim=0) if img_Us else None
 
     # ---- captions (dedup by string) ----
     unique_strs = list(dict.fromkeys(captions))          # 保序去重
@@ -88,15 +93,20 @@ def encode_all(adapter, image_paths: List[Path], captions: List[str],
 
     logger.info(f"encoded: images {img_mean.shape}, captions {cap_mean.shape} "
                 f"(unique strings {len(unique_strs)})")
-    return img_mean, img_logvar, cap_mean, cap_logvar
+    return img_mean, img_logvar, img_U, cap_mean, cap_logvar
 
 
 TYPE_NAMES = {0: "object", 1: "number", 2: "color", 3: "location"}
 
 
-def compute_all_metrics(ds, img_mean, img_logvar, cap_mean, cap_logvar,
+def compute_all_metrics(ds, img_mean, img_logvar, img_U, cap_mean, cap_logvar,
                         k_values, use_csd):
     """计算 Track A(同图 R@K,双向)+ Track B(answer-match@K),分 类型×split×overall。
+
+    三种相似度:
+      cosine(mean·mean)、csd(仅当 use_csd 且双侧有 logvar)、
+      loglik(仅当 img_U is not None,即 dist_align low-rank 模型)。
+    loglik 用 image 侧协方差打分,配置项 config.MSDA_PER_DIM_NORMALIZE / config.MSDA_USE_LOGDET。
 
     ds 需暴露:answer_ids()->Tensor, types()->list, splits()->list,
     image_splits()->list, img_to_caps(list[list[int]]), cap_to_img(list[int])。
@@ -112,13 +122,22 @@ def compute_all_metrics(ds, img_mean, img_logvar, cap_mean, cap_logvar,
     img_to_caps = ds.img_to_caps                       # image_id -> [entry_idx]
     cap_to_img = ds.cap_to_img                         # entry_idx -> image_id
 
+    # ---- loglik 共用:image 侧方差 / 低秩因子 ----
+    img_var = torch.exp(img_logvar) if img_logvar is not None else None    # (n_img, D)
+    cap_to_img_t = torch.tensor(cap_to_img, device=device)
+    entry_img_mean = img_mean[cap_to_img_t]                                # (n_cap, D)
+    entry_img_var = img_var[cap_to_img_t] if img_var is not None else None  # (n_cap, D)
+    entry_img_U = img_U[cap_to_img_t] if img_U is not None else None        # (n_cap, D, r)
+
     # ---- Track A I2T: 查询=图, relevant=该图所有 entry ----
     i2t_rel_all = [set(img_to_caps[i]) for i in range(n_img)]
     # per-type: 只把该类型 entry 当 relevant
     i2t_rel_by_type = {t: [set(c for c in img_to_caps[i] if types[c] == t)
                            for i in range(n_img)] for t in TYPE_NAMES}
 
-    def _i2t(csd, query_mask=None):
+    def _i2t(csd=False, query_mask=None, use_loglik=False,
+             query_var=None, query_U=None, gallery_var=None, gallery_U=None,
+             per_dim_normalize=True, use_logdet=True):
         if query_mask is None:
             idx = list(range(n_img))
         else:
@@ -127,62 +146,101 @@ def compute_all_metrics(ds, img_mean, img_logvar, cap_mean, cap_logvar,
             return {f"recall@{k}": 0.0 for k in k_values}
         return recall_at_k_from_relevance(
             img_mean[idx], cap_mean, cap_logvar,
-            [i2t_rel_all[i] for i in idx], k_values, use_csd=csd)
+            [i2t_rel_all[i] for i in idx], k_values, use_csd=csd,
+            use_loglik=use_loglik, query_var=query_var, query_U=query_U,
+            gallery_var=gallery_var, gallery_U=gallery_U,
+            per_dim_normalize=per_dim_normalize, use_logdet=use_logdet)
 
-    def _i2t_type(csd, t):
+    def _i2t_type(csd=False, t=None, use_loglik=False,
+                  query_var=None, query_U=None, gallery_var=None, gallery_U=None,
+                  per_dim_normalize=True, use_logdet=True):
         rel = i2t_rel_by_type[t]
         mask = [bool(rel[i]) for i in range(n_img)]   # 仅拥有该类型 caption 的图
         if not any(mask):
             return {f"recall@{k}": 0.0 for k in k_values}
         return recall_at_k_from_relevance(
             img_mean[mask], cap_mean, cap_logvar,
-            [rel[i] for i, mm in enumerate(mask) if mm], k_values, use_csd=csd)
+            [rel[i] for i, mm in enumerate(mask) if mm], k_values, use_csd=csd,
+            use_loglik=use_loglik,
+            query_var=query_var[mask] if (use_loglik and query_var is not None) else None,
+            query_U=query_U[mask] if (use_loglik and query_U is not None) else None,
+            gallery_var=gallery_var, gallery_U=gallery_U,
+            per_dim_normalize=per_dim_normalize, use_logdet=use_logdet)
 
-    def _t2i(csd, query_mask=None):
+    def _t2i(csd=False, query_mask=None, use_loglik=False,
+             query_var=None, query_U=None, gallery_var=None, gallery_U=None,
+             per_dim_normalize=True, use_logdet=True):
         idx = list(range(n_cap)) if query_mask is None else [i for i, m in enumerate(query_mask) if m]
         if not idx:
             return {f"recall@{k}": 0.0 for k in k_values}
         return recall_at_k_from_relevance(
             cap_mean[idx], img_mean, img_logvar,
-            [{cap_to_img[i]} for i in idx], k_values, use_csd=csd)
+            [{cap_to_img[i]} for i in idx], k_values, use_csd=csd,
+            use_loglik=use_loglik, query_var=query_var, query_U=query_U,
+            gallery_var=gallery_var, gallery_U=gallery_U,
+            per_dim_normalize=per_dim_normalize, use_logdet=use_logdet)
 
     # ---- Track B answer-match: 查询=entry 的图, gallery=entries, 排除自身 ----
-    entry_img_mean = img_mean[torch.tensor(cap_to_img, device=device)]  # (n_cap, D)
     exclude = torch.arange(n_cap, device=device)
 
-    def _ans_match(csd, query_mask=None):
+    def _ans_match(csd=False, query_mask=None, use_loglik=False,
+                   query_var=None, query_U=None, gallery_var=None, gallery_U=None,
+                   per_dim_normalize=True, use_logdet=True):
         idx = list(range(n_cap)) if query_mask is None else [i for i, m in enumerate(query_mask) if m]
         if not idx:
             return {f"answer_match@{k}": 0.0 for k in k_values}
         return answer_match_at_k(
             entry_img_mean[idx], cap_mean, cap_logvar,
-            answer_ids, answer_ids[idx], exclude[idx], k_values, use_csd=csd)
+            answer_ids, answer_ids[idx], exclude[idx], k_values, use_csd=csd,
+            use_loglik=use_loglik, query_var=query_var, query_U=query_U,
+            gallery_var=gallery_var, gallery_U=gallery_U,
+            per_dim_normalize=per_dim_normalize, use_logdet=use_logdet)
 
-    # ---- 组装:overall + per-split + per-type(cosine;csd 仅当 use_csd)----
+    # ---- 组装:overall + per-split + per-type ----
     split_set = sorted(set(splits))
     result = {"track_a_same_image": {"i2t": {}, "t2i": {}},
               "track_b_answer_match": {"i2t": {}}}
 
-    for sim_name, csd in (("cosine", False), ("csd", True)):
-        if sim_name == "csd" and not (use_csd and cap_logvar is not None and img_logvar is not None):
-            continue
+    per_dim_normalize = bool(getattr(config, "MSDA_PER_DIM_NORMALIZE", True))
+    use_logdet = bool(getattr(config, "MSDA_USE_LOGDET", True))
+    has_loglik = img_U is not None
+
+    sim_iter = [("cosine", False, False)]
+    if use_csd and cap_logvar is not None and img_logvar is not None:
+        sim_iter.append(("csd", True, False))
+    if has_loglik:
+        sim_iter.append(("loglik", False, True))
+
+    for sim_name, csd, lk in sim_iter:
+        # 各 helper 通用 kwargs(loglik 时填入 image 侧 var/U,cosine/csd 留空)
+        kw_i2t = dict(use_loglik=lk, query_var=img_var if lk else None,
+                      query_U=img_U if lk else None,
+                      per_dim_normalize=per_dim_normalize, use_logdet=use_logdet)
+        kw_t2i = dict(use_loglik=lk, gallery_var=img_var if lk else None,
+                      gallery_U=img_U if lk else None,
+                      per_dim_normalize=per_dim_normalize, use_logdet=use_logdet)
+        kw_ans = dict(use_loglik=lk, query_var=entry_img_var if lk else None,
+                      query_U=entry_img_U if lk else None,
+                      per_dim_normalize=per_dim_normalize, use_logdet=use_logdet)
         # I2T
-        i2t_block = {"overall": _i2t(csd)}
+        i2t_block = {"overall": _i2t(csd=csd, **kw_i2t)}
         for sp in split_set:
-            i2t_block[sp] = _i2t(csd, [s == sp for s in img_splits])
-        i2t_block["per_type"] = {str(t): _i2t_type(csd, t) for t in TYPE_NAMES}
+            i2t_block[sp] = _i2t(csd=csd, query_mask=[s == sp for s in img_splits], **kw_i2t)
+        i2t_block["per_type"] = {str(t): _i2t_type(csd=csd, t=t, **kw_i2t) for t in TYPE_NAMES}
         result["track_a_same_image"]["i2t"][sim_name] = i2t_block
         # T2I
-        t2i_block = {"overall": _t2i(csd)}
+        t2i_block = {"overall": _t2i(csd=csd, **kw_t2i)}
         for sp in split_set:
-            t2i_block[sp] = _t2i(csd, [s == sp for s in splits])
-        t2i_block["per_type"] = {str(t): _t2i(csd, [ty == t for ty in types]) for t in TYPE_NAMES}
+            t2i_block[sp] = _t2i(csd=csd, query_mask=[s == sp for s in splits], **kw_t2i)
+        t2i_block["per_type"] = {str(t): _t2i(csd=csd, query_mask=[ty == t for ty in types], **kw_t2i)
+                                 for t in TYPE_NAMES}
         result["track_a_same_image"]["t2i"][sim_name] = t2i_block
         # Track B
-        b_block = {"overall": _ans_match(csd)}
+        b_block = {"overall": _ans_match(csd=csd, **kw_ans)}
         for sp in split_set:
-            b_block[sp] = _ans_match(csd, [s == sp for s in splits])
-        b_block["per_type"] = {str(t): _ans_match(csd, [ty == t for ty in types]) for t in TYPE_NAMES}
+            b_block[sp] = _ans_match(csd=csd, query_mask=[s == sp for s in splits], **kw_ans)
+        b_block["per_type"] = {str(t): _ans_match(csd=csd, query_mask=[ty == t for ty in types], **kw_ans)
+                               for t in TYPE_NAMES}
         result["track_b_answer_match"]["i2t"][sim_name] = b_block
 
     return result
@@ -245,21 +303,27 @@ class ModelAdapter:
 
     # ----- 编码 -----
     def encode_images(self, pixel_values):
+        """Returns (mean, logvar|None, U|None)。
+
+        U 为图像侧低秩协方差因子 (..., D, r),仅 dist_align(cov_rank>0)提供,
+        用于 loglik 打分。CLIP/ProLIP 返回 None。
+        """
         name = self.name
         if name in ("clip_zero_shot", "clip_baseline"):
             m = self.base.encode_image(pixel_values, normalize=True)
-            return m, None
+            return m, None, None
         if name == "dist_align":
             feat = self.base.clip_model.get_image_features(pixel_values).pooler_output
             mu = self.base.img_mu_head(feat)
             lv = self.base._floor_logvar(self.base.img_logvar_head(feat))
-            return mu, lv
+            U = self.base._cov_factor(self.base.img_cov_head, feat) if self.base.cov_rank > 0 else None
+            return mu, lv, U
         # prolip:用 dummy 文本凑一次 forward,取 image 侧
         dummy_ids = torch.zeros((pixel_values.shape[0], 77), dtype=torch.long,
                                 device=pixel_values.device)
         dummy_mask = torch.ones_like(dummy_ids)
         out = self.base(pixel_values, dummy_ids, dummy_mask)
-        return out["image_features"]["mean"], out["img_logvar"]
+        return out["image_features"]["mean"], out["img_logvar"], None
 
     def encode_texts(self, input_ids, attention_mask):
         name = self.name
@@ -324,10 +388,10 @@ def run_one(name, ds, args):
         logger.info(f"smoke subset: {len(captions)} entries, {len(img_paths)} images")
     else:
         sub, img_paths, captions = ds, ds.image_paths(), ds.captions()
-    img_mean, img_lv, cap_mean, cap_lv = encode_all(
+    img_mean, img_lv, img_U, cap_mean, cap_lv = encode_all(
         adapter, img_paths, captions, args.batch_size, args.device)
     use_csd = adapter.supports_csd
-    metrics = compute_all_metrics(sub, img_mean, img_lv, cap_mean, cap_lv,
+    metrics = compute_all_metrics(sub, img_mean, img_lv, img_U, cap_mean, cap_lv,
                                   args.recall_at_k, use_csd)
     return {"model": name, "dim": adapter.dim, "supports_csd": use_csd,
             "num_images": int(img_mean.shape[0]),
