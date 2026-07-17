@@ -6,10 +6,10 @@ models image and text embeddings as general Gaussians N(mu, Sigma) with a
 learned (non-diagonal) covariance, supervised so that the image variance
 matches the multi-caption semantic spread.
 
-A 3-stage schedule activates loss components progressively:
-    Warm-up: L_set-NCE + L_mu
-    Main:    + L_var + L_cover
-    Full:    + L_cov
+A staged schedule activates loss components progressively:
+    Warm-up: L_set only
+    Main:    + L_var
+    Full:    linearly ramp L_cov 0 -> 1
 
 Usage:
     python scripts/train_dist_align.py
@@ -78,33 +78,20 @@ def parse_args():
     parser.add_argument("--min-lr-ratio", type=float, default=config.LR_MIN_LR_RATIO,
                         help="Cosine floor as a fraction of the base LR")
     parser.add_argument("--temperature", type=float, default=config.MSDA_TAU,
-                        help="Temperature tau for L_set-NCE similarity")
+                        help="Temperature tau for L_set-NCE similarity (legacy cosine-NCE temp)")
 
     # MSDA loss arguments
-    parser.add_argument("--lambda-ctr", type=float, default=config.MSDA_LAMBDA_CTR,
-                        help="Weight for set-level contrastive loss")
-    parser.add_argument("--lambda-mu", type=float, default=config.MSDA_LAMBDA_MU,
-                        help="Weight for mean-center alignment loss")
-    parser.add_argument("--lambda-var", type=float, default=config.MSDA_LAMBDA_VAR,
-                        help="Weight for variance semantic consistency (core)")
-    parser.add_argument("--lambda-cover", type=float, default=config.MSDA_LAMBDA_COVER,
-                        help="Weight for multi-caption coverage loss")
-    parser.add_argument("--lambda-cov", type=float, default=config.MSDA_LAMBDA_COV,
-                        help="Weight for covariance direction alignment")
-    parser.add_argument("--lambda-reg", type=float, default=config.MSDA_LAMBDA_REG,
-                        help="Weight for variance regularization")
-    parser.add_argument("--var-loss-mode", type=str, default=config.MSDA_VAR_LOSS_MODE,
-                        choices=["raw", "rescaled"],
-                        help="L_var target mode: 'rescaled' (mean-match caption_spread "
-                             "to σ²; fixes variance-head collapse) or 'raw' (original)")
-    parser.add_argument("--m-pos", type=float, default=config.MSDA_M_POS,
-                        help="Per-dim-normalized positive coverage radius")
-    parser.add_argument("--target-var", type=float, default=config.MSDA_TARGET_VAR,
-                        help="Target variance sigma_0^2 for L_reg")
-    parser.add_argument("--use-neg-cover", action="store_true", default=config.MSDA_USE_NEG_COVER,
-                        help="Add negative coverage repulsion term")
-    parser.add_argument("--no-uncertainty-sim", action="store_true", default=False,
-                        help="Use standard cosine instead of uncertainty-discounted similarity")
+    parser.add_argument("--lambda-ctr", type=float, default=config.MSDA_LAMBDA_CTR)
+    parser.add_argument("--lambda-var", type=float, default=config.MSDA_LAMBDA_VAR)
+    parser.add_argument("--lambda-cov", type=float, default=config.MSDA_LAMBDA_COV)
+    parser.add_argument("--tau-init", type=float, default=config.MSDA_TAU_INIT)
+    parser.add_argument("--learnable-tau", action="store_true", default=config.MSDA_TAU_LEARNABLE)
+    parser.add_argument("--no-learnable-tau", dest="learnable_tau", action="store_false")
+    parser.add_argument("--var-loss-mode", type=str, default=config.MSDA_VAR_LOSS_MODE, choices=["raw", "rescaled"])
+    parser.add_argument("--per-dim-normalize", action="store_true", default=config.MSDA_PER_DIM_NORMALIZE)
+    parser.add_argument("--no-per-dim-normalize", dest="per_dim_normalize", action="store_false")
+    parser.add_argument("--use-logdet", action="store_true", default=config.MSDA_USE_LOGDET)
+    parser.add_argument("--no-use-logdet", dest="use_logdet", action="store_false")
 
     # MSDA model arguments
     parser.add_argument("--cov-rank", type=int, default=config.MSDA_COV_RANK,
@@ -156,31 +143,25 @@ def parse_args():
 
 
 def stage_multipliers(epoch: int, total: int, no_staged: bool) -> Dict[str, float]:
-    """Return per-loss multipliers for the 3-stage MSDA schedule.
+    """Per-loss multipliers for the staged MSDA schedule.
 
-    Warm-up: L_set-NCE + L_mu.  Main: + L_var + L_cover.  Full: + L_cov.
-
-    In the full stage, L_cov is *linearly ramped* from 0 to 1 across the
-    stage's epochs instead of a hard 0->1 step. The cov head (img_U) is
-    essentially untrained before this stage, so L_cov starts near its maximum
-    2*r; a hard step injects a gradient that dominates every other term and
-    crashes Recall@1 the moment L_cov activates. The ramp lets the head warm
-    up gently (together with the reduced MSDA_LAMBDA_COV and grad clipping).
+    Warm-up: L_set only. Main: + L_var. Full: linearly ramp L_cov 0 -> 1
+    (the cov head is untrained before this; a hard step would dominate and
+    destabilize the retrieval means).
     """
-    base = {"ctr": 1.0, "mu": 1.0, "var": 1.0, "cover": 1.0, "cov": 1.0}
+    base = {"ctr": 1.0, "var": 1.0, "cov": 1.0}
     if no_staged or total <= 0:
         return base
     warmup_end = max(1, int(round(total * config.MSDA_STAGE_WARMUP_FRAC)))
     main_end = max(warmup_end + 1,
                    int(round(total * (config.MSDA_STAGE_WARMUP_FRAC + config.MSDA_STAGE_MAIN_FRAC))))
     if epoch < warmup_end:
-        base.update(var=0.0, cover=0.0, cov=0.0)
+        base.update(var=0.0, cov=0.0)
     elif epoch < main_end:
         base.update(cov=0.0)
     else:
-        # Full stage: linearly ramp L_cov 0 -> 1 across the remaining epochs.
         full_len = max(1, total - main_end)
-        j = epoch - main_end  # 0-based index within the full stage
+        j = epoch - main_end
         base["cov"] = min(1.0, (j + 1) / full_len)
     return base
 
@@ -226,7 +207,6 @@ def train_epoch(
     total_loss = 0.0
     total_nce = 0.0
     total_var = 0.0
-    total_cover = 0.0
     total_cov = 0.0
     total_img_var = 0.0
     processed_batches = 0
@@ -277,7 +257,6 @@ def train_epoch(
         total_loss += loss_dict['total']
         total_nce += loss_dict['set_nce']
         total_var += loss_dict['var']
-        total_cover += loss_dict['cover']
         total_cov += loss_dict['cov']
         total_img_var += loss_dict['img_var_avg']
 
@@ -297,7 +276,6 @@ def train_epoch(
                 f"Loss: {loss_dict['total']:.4f}, "
                 f"NCE: {loss_dict['set_nce']:.4f}, "
                 f"Var: {loss_dict['var']:.4f}, "
-                f"Cover: {loss_dict['cover']:.4f}, "
                 f"Cov: {loss_dict['cov']:.4f}"
             )
 
@@ -307,7 +285,6 @@ def train_epoch(
         'loss': total_loss / num_batches,
         'set_nce': total_nce / num_batches,
         'var': total_var / num_batches,
-        'cover': total_cover / num_batches,
         'cov': total_cov / num_batches,
         'img_var_avg': total_img_var / num_batches,
     }
@@ -330,7 +307,6 @@ def evaluate(
     total_loss = 0.0
     total_nce = 0.0
     total_var = 0.0
-    total_cover = 0.0
     total_cov = 0.0
     total_img_var = 0.0
     processed_batches = 0
@@ -374,7 +350,6 @@ def evaluate(
         total_loss += loss_dict['total']
         total_nce += loss_dict['set_nce']
         total_var += loss_dict['var']
-        total_cover += loss_dict['cover']
         total_cov += loss_dict['cov']
         total_img_var += loss_dict['img_var_avg']
 
@@ -390,7 +365,6 @@ def evaluate(
         'loss': total_loss / num_batches,
         'set_nce': total_nce / num_batches,
         'var': total_var / num_batches,
-        'cover': total_cover / num_batches,
         'cov': total_cov / num_batches,
         'img_var_avg': total_img_var / num_batches,
     }
@@ -429,9 +403,8 @@ def main():
     logger.info(f"Device: {args.device}")
     logger.info(f"Cov rank r: {args.cov_rank}")
     logger.info(f"Tau: {args.temperature}")
-    logger.info(f"Lambda (ctr/mu/var/cover/cov/reg): "
-                f"{args.lambda_ctr}/{args.lambda_mu}/{args.lambda_var}/"
-                f"{args.lambda_cover}/{args.lambda_cov}/{args.lambda_reg}")
+    logger.info(f"Loss weights: ctr={args.lambda_ctr} var={args.lambda_var} cov={args.lambda_cov} "
+                f"tau_init={args.tau_init} learnable_tau={args.learnable_tau}")
     logger.info(f"Var loss mode: {args.var_loss_mode}")
     logger.info(f"Staged schedule: {not args.no_staged}")
     logger.info(f"LR scheduler: {args.lr_scheduler} (warmup {args.warmup_epochs}, "
@@ -452,23 +425,25 @@ def main():
     # Create MSDA loss
     criterion = MSDALoss(
         lambda_ctr=args.lambda_ctr,
-        lambda_mu=args.lambda_mu,
         lambda_var=args.lambda_var,
-        lambda_cover=args.lambda_cover,
         lambda_cov=args.lambda_cov,
-        lambda_reg=args.lambda_reg,
-        tau=args.temperature,
-        m_pos=args.m_pos,
-        target_var=args.target_var,
-        use_neg_cover=args.use_neg_cover,
-        m_neg=config.MSDA_M_NEG,
-        use_uncertainty_sim=not args.no_uncertainty_sim,
+        tau_init=args.tau_init,
+        learnable_tau=args.learnable_tau,
         var_loss_mode=args.var_loss_mode,
+        per_dim_normalize=args.per_dim_normalize,
+        use_logdet=args.use_logdet,
     )
-    logger.info("Using MSDA loss")
+    logger.info("Using likelihood-based MSDA loss")
+    criterion = criterion.to(args.device)
 
     # Create optimizer
     optimizer = create_optimizer(model, args)
+    if any(p.requires_grad for p in criterion.parameters()):
+        optimizer.add_param_group({
+            "params": [p for p in criterion.parameters() if p.requires_grad],
+            "lr": args.mlp_lr,
+        })
+        logger.info("Added criterion parameters (tau) to the optimizer")
     base_lrs = [g["lr"] for g in optimizer.param_groups]
 
     # Resume from checkpoint if specified
@@ -548,12 +523,10 @@ def main():
     for epoch in range(start_epoch, args.epochs):
         last_epoch = epoch
 
-        # Apply 3-stage schedule: scale per-loss weights by stage multipliers
+        # Apply staged schedule: scale per-loss weights by stage multipliers
         mult = stage_multipliers(epoch, args.epochs, args.no_staged)
         criterion.lambda_ctr = args.lambda_ctr * mult["ctr"]
-        criterion.lambda_mu = args.lambda_mu * mult["mu"]
         criterion.lambda_var = args.lambda_var * mult["var"]
-        criterion.lambda_cover = args.lambda_cover * mult["cover"]
         criterion.lambda_cov = args.lambda_cov * mult["cov"]
         logger.info(f"Epoch {epoch + 1} stage multipliers: {mult}")
 
@@ -579,7 +552,6 @@ def main():
             f"Train Loss: {train_metrics['loss']:.4f}, "
             f"NCE: {train_metrics['set_nce']:.4f}, "
             f"Var: {train_metrics['var']:.4f}, "
-            f"Cover: {train_metrics['cover']:.4f}, "
             f"Cov: {train_metrics['cov']:.4f}, "
             f"σ²img: {train_metrics['img_var_avg']:.4f} | "
             f"Val Loss: {val_metrics['loss']:.4f}, "

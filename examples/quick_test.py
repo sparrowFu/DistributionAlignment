@@ -90,16 +90,18 @@ def quick_test():
 
     try:
         criterion = MSDALoss(
-            tau=config.MSDA_TAU, m_pos=config.MSDA_M_POS, target_var=config.MSDA_TARGET_VAR
-        )
+            tau_init=config.MSDA_TAU_INIT,
+            learnable_tau=config.MSDA_TAU_LEARNABLE,
+            use_logdet=config.MSDA_USE_LOGDET,
+            per_dim_normalize=config.MSDA_PER_DIM_NORMALIZE,
+        ).to(device)
         loss, d = criterion(
             outputs['img_mu'], outputs['img_logvar'], outputs['img_U'],
             outputs['text_mu'], outputs['text_logvar'],
             outputs['text_mus'], outputs['text_logvars'], outputs['text_Us'],
         )
         print(f"✓ MSDA loss computed: total={d['total']:.4f}")
-        print(f"  set-NCE={d['set_nce']:.4f} var={d['var']:.4f} "
-              f"cover={d['cover']:.4f} cov={d['cov']:.4f} reg={d['reg']:.4f}")
+        print(f"  set-NCE={d['set_nce']:.4f} var={d['var']:.4f} cov={d['cov']:.4f}")
     except Exception as e:
         print(f"✗ Loss computation failed: {e}")
         import traceback
