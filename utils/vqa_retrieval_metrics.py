@@ -36,7 +36,7 @@ def recall_at_k_from_relevance(
     query_mean = F.normalize(query_mean, dim=-1)
     gallery_mean = F.normalize(gallery_mean, dim=-1)
     n = query_mean.shape[0]
-    max_k = max(k_values)
+    max_k = min(max(k_values), gallery_mean.shape[0])   # topk 要求 k <= gallery 大小
     if use_csd:
         if gallery_logvar is None:
             raise ValueError("use_csd=True 需要 gallery_logvar")
@@ -48,12 +48,14 @@ def recall_at_k_from_relevance(
         sim = query_mean[start:end] @ gallery_mean.T  # (c, G)
         if use_csd:
             sim = sim - 0.5 * gallery_unc.unsqueeze(0)
-        ranked = torch.argsort(sim, dim=1, descending=True)[:, :max_k]  # (c, max_k)
+        top_idx = torch.topk(sim, max_k, dim=1).indices  # (c, max_k) 只取前 K,不全排序
+        top_idx = top_idx.cpu()                          # 小批量搬 CPU 做集合判定
         for row in range(end - start):
-            top = ranked[row].tolist()
+            top = top_idx[row].tolist()
             rel = rel_sets[start + row]
             for k in k_values:
-                if any(idx in rel for idx in top[:k]):
+                eff_k = min(k, max_k)                    # gallery 不足 k 时按实际容量算
+                if any(idx in rel for idx in top[:eff_k]):
                     hits[k] += 1
     return {f"recall@{k}": hits[k] / n for k in k_values}
 
@@ -82,7 +84,7 @@ def answer_match_at_k(
     query_mean = F.normalize(query_mean, dim=-1)
     gallery_mean = F.normalize(gallery_mean, dim=-1)
     n = query_mean.shape[0]
-    max_k = max(k_values)
+    max_k = min(max(k_values), gallery_mean.shape[0])
     device = query_mean.device
     gallery_answers = gallery_answers.to(device)
     query_answers = query_answers.to(device)
@@ -101,10 +103,11 @@ def answer_match_at_k(
             sim = sim - 0.5 * gallery_unc.unsqueeze(0)
         rows = rows_arange[:c]
         sim[rows, query_exclude_idx[start:end]] = float("-inf")  # 屏蔽自身
-        ranked = torch.argsort(sim, dim=1, descending=True)[:, :max_k]  # (c, max_k)
-        top_ans = gallery_answers[ranked]                  # (c, max_k)
-        q_ans = query_answers[start:end].unsqueeze(1)      # (c, 1)
-        match = (top_ans == q_ans)                         # (c, max_k)
+        top_idx = torch.topk(sim, max_k, dim=1).indices    # (c, max_k) 只取前 K
+        top_ans = gallery_answers[top_idx]                  # (c, max_k)
+        q_ans = query_answers[start:end].unsqueeze(1)       # (c, 1)
+        match = (top_ans == q_ans)                          # (c, max_k)
         for k in k_values:
-            hits[k] += match[:, :k].any(dim=1).sum().item()
+            eff_k = min(k, max_k)
+            hits[k] += match[:, :eff_k].any(dim=1).sum().item()
     return {f"answer_match@{k}": hits[k] / n for k in k_values}

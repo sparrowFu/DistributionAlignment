@@ -45,9 +45,7 @@ Available tasks:
     eval_clip_zero_shot    Evaluate CLIP Zero-Shot baseline (B1)
 
   Stage 2 (VQA Downstream):
-    train_vqa              Train VQA classification head
-    eval_llm_vqa           Query LLMs on VQA test set (B7/B8)
-    evaluate_llm_vqa       Compute LLM VQA metrics
+    eval_vqa_retrieval     VQA-as-retrieval eval (gemma caption, 5 models)
 
   Experiment Tasks:
     run_ablation           Exp5: Ablation study (--config all|no_consistency|...)
@@ -57,13 +55,15 @@ Available tasks:
     visualize_gap          Exp8: Modality gap visualization
     eval_flickr30k         Exp6: Flickr30K cross-dataset generalization
 
-Supported model types: dist_align, clip_baseline, clip_zero_shot,
-                       prolip, grove
+Supported model types (--model-type): dist_align, clip_baseline, clip_zero_shot,
+                                     prolip, grove
+eval_vqa_retrieval --model: clip_zero_shot, clip_baseline, dist_align,
+                            prolip_zero_shot, prolip, all
 
 Examples:
   python main.py --task train_dist_align
   python main.py --task eval_dist_align
-  python main.py --task train_vqa --model-type dist_align
+  python main.py --task eval_vqa_retrieval --model dist_align
   python main.py --task run_ablation --config all
   python main.py --task eval_sigma_analysis
   python main.py --task eval_flickr30k --model-type dist_align
@@ -81,9 +81,8 @@ Examples:
             "train_prolip", "eval_prolip", "eval_prolip_zero_shot",
             "train_grove", "eval_grove",
             "eval_clip_zero_shot",
-            # Stage 2: VQA downstream
-            "train_vqa",
-            "eval_llm_vqa", "evaluate_llm_vqa",
+            # Stage 2: VQA-as-retrieval downstream (gemma caption)
+            "eval_vqa_retrieval",
             # Experiments
             "eval_calibration",
             "eval_ood",
@@ -103,6 +102,15 @@ Examples:
         choices=["dist_align", "clip_baseline", "clip_zero_shot",
                  "prolip", "grove"],
         help="Base model type for VQA training"
+    )
+
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        choices=["clip_zero_shot", "clip_baseline", "dist_align",
+                 "prolip_zero_shot", "prolip", "all"],
+        help="Model to evaluate for eval_vqa_retrieval ('all' = 全部 5 个)"
     )
 
     parser.add_argument("--captions-path", type=str, default=None,
@@ -130,14 +138,6 @@ Examples:
     parser.add_argument("--num-samples", type=int, default=None)
     parser.add_argument("--output-path", type=str, default=None)
 
-    # LLM VQA arguments
-    parser.add_argument("--models", type=str, nargs="+", default=None)
-    parser.add_argument("--api-config", type=str, default=None)
-    parser.add_argument("--start-idx", type=int, default=None)
-    parser.add_argument("--end-idx", type=int, default=None)
-    parser.add_argument("--delay", type=float, default=None)
-    parser.add_argument("--max-retries", type=int, default=None)
-
     # Experiment-specific arguments
     parser.add_argument("--config", type=str, default=None,
                         help="Configuration name for ablation study")
@@ -155,6 +155,8 @@ def run_python_script(script_path: Path, args: argparse.Namespace) -> int:
 
     if args.model_type:
         cmd.extend(["--model-type", args.model_type])
+    if args.model:
+        cmd.extend(["--model", args.model])
     if args.captions_path:
         cmd.extend(["--captions-path", args.captions_path])
     if args.images_dir:
@@ -187,18 +189,6 @@ def run_python_script(script_path: Path, args: argparse.Namespace) -> int:
         cmd.extend(["--num-samples", str(args.num_samples)])
     if args.output_path:
         cmd.extend(["--output-path", args.output_path])
-    if args.models:
-        cmd.extend(["--models"] + args.models)
-    if args.api_config:
-        cmd.extend(["--api-config", args.api_config])
-    if args.start_idx is not None:
-        cmd.extend(["--start-idx", str(args.start_idx)])
-    if args.end_idx is not None:
-        cmd.extend(["--end-idx", str(args.end_idx)])
-    if args.delay is not None:
-        cmd.extend(["--delay", str(args.delay)])
-    if args.max_retries is not None:
-        cmd.extend(["--max-retries", str(args.max_retries)])
     if hasattr(args, 'config') and args.config:
         cmd.extend(["--config", args.config])
     if hasattr(args, 'resume') and args.resume:
@@ -217,31 +207,29 @@ def run_python_script(script_path: Path, args: argparse.Namespace) -> int:
         return 1
 
 
-# Task to script mapping
+# Task to script mapping. 每行尾部注释是该 task 的样例调用(仅含脚本确实支持的参数)。
 TASK_SCRIPTS = {
     # Stage 1: Alignment training (Ours + B2-B4)
-    "train_clip_baseline": "train_clip_baseline.py",
-    "eval_clip_baseline": "evaluate_clip_baseline.py",
-    "train_dist_align": "train_dist_align.py",
-    "eval_dist_align": "evaluate_dist_align.py",
-    "train_prolip": "train_prolip.py",
-    "eval_prolip": "evaluate_prolip.py",
-    "eval_prolip_zero_shot": "evaluate_prolip_zero_shot.py",
-    "train_grove": "train_grove.py",
-    "eval_grove": "evaluate_grove.py",
+    "train_clip_baseline":   "train_clip_baseline.py",        # python main.py --task train_clip_baseline
+    "eval_clip_baseline":    "evaluate_clip_baseline.py",     # python main.py --task eval_clip_baseline --num-samples 5000
+    "train_dist_align":      "train_dist_align.py",           # python main.py --task train_dist_align
+    "eval_dist_align":       "evaluate_dist_align.py",        # python main.py --task eval_dist_align --num-samples 5000
+    "train_prolip":          "train_prolip.py",               # python main.py --task train_prolip
+    "eval_prolip":           "evaluate_prolip.py",            # python main.py --task eval_prolip --num-samples 5000
+    "eval_prolip_zero_shot": "evaluate_prolip_zero_shot.py",  # python main.py --task eval_prolip_zero_shot --num-samples 5000
+    "train_grove":           "train_grove.py",                # python main.py --task train_grove
+    "eval_grove":            "evaluate_grove.py",             # python main.py --task eval_grove --num-samples 5000
     # Stage 1: Zero-shot
-    "eval_clip_zero_shot": "evaluate_clip_zero_shot.py",
-    # Stage 2: VQA downstream
-    "train_vqa": "train_vqa.py",
-    "eval_llm_vqa": "eval_llm_vqa.py",
-    "evaluate_llm_vqa": "evaluate_llm_vqa.py",
+    "eval_clip_zero_shot":   "evaluate_clip_zero_shot.py",    # python main.py --task eval_clip_zero_shot --num-samples 5000
+    # Stage 2: VQA-as-retrieval downstream (gemma caption)
+    "eval_vqa_retrieval":    "eval_vqa_retrieval.py",         # python main.py --task eval_vqa_retrieval --model dist_align  (或 --model all)
     # Experiments
-    "eval_calibration": "eval_calibration.py",
-    "eval_ood": "eval_ood.py",
-    "run_ablation": "run_ablation.py",
-    "eval_sigma_analysis": "eval_sigma_analysis.py",
-    "visualize_gap": "visualize_modality_gap.py",
-    "eval_flickr30k": "eval_flickr30k.py",
+    "eval_calibration":      "eval_calibration.py",           # python main.py --task eval_calibration
+    "eval_ood":              "eval_ood.py",                   # python main.py --task eval_ood
+    "run_ablation":          "run_ablation.py",               # python main.py --task run_ablation --config all
+    "eval_sigma_analysis":   "eval_sigma_analysis.py",        # python main.py --task eval_sigma_analysis --num-samples 5000
+    "visualize_gap":         "visualize_modality_gap.py",     # python main.py --task visualize_gap --model-type dist_align
+    "eval_flickr30k":        "eval_flickr30k.py",             # python main.py --task eval_flickr30k --model-type dist_align
 }
 
 
