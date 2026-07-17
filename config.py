@@ -220,15 +220,14 @@ DIST_ALIGN_TARGET_VARIANCE = 0.5      # Target variance for regularization (used
 # symmetrically to image and text.
 MSDA_COV_RANK = 4                 # low-rank covariance rank r (0 = diagonal only)
 MSDA_TAU = 0.07                   # temperature for L_set-NCE similarity
-MSDA_LAMBDA_CTR = 1.0             # weight for set-level contrastive loss
-MSDA_LAMBDA_MU = 0.5              # weight for mean-center alignment loss
+MSDA_LAMBDA_CTR = 1.0             # weight for the likelihood contrastive loss L_set
 MSDA_LAMBDA_VAR = 1.0             # weight for variance semantic consistency (core)
-MSDA_LAMBDA_COVER = 0.5           # weight for multi-caption coverage loss
-MSDA_LAMBDA_COV = 0.01            # weight for covariance direction alignment (was 0.1: cov_loss magnitude ~2r=8, so 0.1*3~0.3 dominated NCE and crashed Recall@1 the moment L_cov activated)
-MSDA_LAMBDA_REG = 0.01            # weight for variance regularization
-MSDA_VAR_LOSS_MODE = "rescaled"   # L_var target mode: "rescaled" (mean-match; fix) | "raw" (original)
-MSDA_M_POS = 1.0                  # coverage positive radius (per-dim normalized)
-MSDA_TARGET_VAR = 0.5             # target variance sigma_0^2 for L_reg
+MSDA_LAMBDA_COV = 0.05            # weight for covariance direction alignment (configurable; 0 disables)
+MSDA_TAU_INIT = 1.0               # initial temperature for the likelihood contrastive loss
+MSDA_TAU_LEARNABLE = True         # whether the temperature is a learnable parameter
+MSDA_USE_LOGDET = True            # include the -0.5*log|Sigma| normalization term in the score
+MSDA_PER_DIM_NORMALIZE = True     # divide the Mahalanobis term by D
+MSDA_VAR_LOSS_MODE = "raw"        # L_var target mode: "raw" (sigma^2 tracks true caption spread)
 MSDA_VAR_FLOOR = 1e-4             # numerical floor on sigma^2 (softplus positivity + div-by-zero guard; NOT a semantic floor -- the range is learned via L_var / L_reg)
 MSDA_COV_EPS = 1e-6               # numerical epsilon for Mahalanobis / log
 MSDA_USE_NEG_COVER = False        # optional negative coverage repulsion
