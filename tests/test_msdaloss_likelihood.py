@@ -62,6 +62,24 @@ def test_main_self_test_runs():
     assert res.returncode == 0, res.stderr
 
 
+def test_tau_receives_finite_gradient():
+    out = _inputs()
+    loss = MSDALoss(learnable_tau=True)
+    total, _ = loss(**out)
+    total.backward()
+    assert loss.tau.grad is not None
+    assert torch.isfinite(loss.tau.grad)
+    assert loss.tau.grad.abs() > 0
+
+
+def test_forward_finite_under_tiny_variance():
+    """Even with very small sigma^2 (large logdet offsets), loss stays finite."""
+    out = _inputs()
+    out["img_logvar"] = torch.full_like(out["img_logvar"], -8.0)  # var ~ 3e-4
+    total, _ = MSDALoss()(**out)
+    assert torch.isfinite(total)
+
+
 def main():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

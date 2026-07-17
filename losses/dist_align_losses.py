@@ -351,12 +351,9 @@ class MSDALoss(nn.Module):
     Multi-caption Semantic Distribution Alignment (MSDA) loss.
 
     Total loss:
-        L = lambda_ctr * L_set-NCE
-          + lambda_mu  * L_mu
+        L = lambda_ctr * L_set
           + lambda_var * L_var      (stop-gradient on caption spread; core)
-          + lambda_cover * L_cover
-          + lambda_cov  * L_cov     (active only when cov_rank > 0)
-          + lambda_reg  * L_reg
+          + lambda_cov * L_cov      (active only when cov_rank > 0)
 
     Both image and text are general Gaussians N(mu, Sigma) with
     Sigma = diag(sigma^2) + U U^T. The image variance is supervised to match
@@ -521,8 +518,11 @@ class MSDALoss(nn.Module):
             eps=self.eps, per_dim_normalize=self.per_dim_normalize,
             use_logdet=self.use_logdet, chunk_size=max(B, 1),
         )                                                     # (B, B)
-        tau = self.tau if isinstance(self.tau, torch.Tensor) else torch.tensor(
-            float(self.tau), device=img_mu.device, dtype=img_mu.dtype)
+        if isinstance(self.tau, torch.nn.Parameter):
+            tau = self.tau.clamp(min=1e-3)
+        else:
+            tau = torch.tensor(max(float(self.tau), 1e-3),
+                               device=img_mu.device, dtype=img_mu.dtype)
         logits = S / tau
         labels = torch.arange(B, device=img_mu.device)
         set_nce = 0.5 * (F.cross_entropy(logits, labels) + F.cross_entropy(logits.T, labels))
