@@ -144,6 +144,44 @@ def test_csd_block_uses_csd_not_cosine():
     assert cos != csd, "cosine 与 csd 块必须不同(否则闭包捕获了错误的 use_csd)"
 
 
+def test_recall_loglik_runs_and_bounded():
+    import torch
+    from utils.vqa_retrieval_metrics import recall_at_k_from_relevance
+    torch.manual_seed(0)
+    N_img, N_cap, D, r = 8, 12, 16, 3
+    img_mean = torch.randn(N_img, D)
+    img_var = torch.rand(N_img, D) * 0.05 + 0.01
+    img_U = torch.randn(N_img, D, r) * 0.1
+    cap_mean = torch.randn(N_cap, D)
+    rel = [{i, (i + 1) % N_cap} for i in range(N_img)]
+    out = recall_at_k_from_relevance(
+        img_mean, cap_mean, None, rel, [1, 5],
+        query_var=img_var, query_U=img_U, use_loglik=True)
+    for k in (1, 5):
+        assert 0.0 <= out[f"recall@{k}"] <= 1.0
+
+
+def test_answer_match_loglik_runs():
+    import torch
+    from utils.vqa_retrieval_metrics import answer_match_at_k
+    torch.manual_seed(1)
+    N_img, N_cap, D, r = 5, 10, 16, 3
+    img_mean = torch.randn(N_img, D)
+    img_var = torch.rand(N_img, D) * 0.05 + 0.01
+    img_U = torch.randn(N_img, D, r) * 0.1
+    cap_mean = torch.randn(N_cap, D)
+    entry_img_idx = torch.tensor([0, 0, 1, 1, 2, 2, 3, 3, 4, 4])
+    entry_img_mean = img_mean[entry_img_idx]
+    entry_img_var = img_var[entry_img_idx]
+    entry_img_U = img_U[entry_img_idx]
+    ans = torch.tensor([0, 0, 1, 1, 0, 0, 1, 1, 0, 0])
+    exclude = torch.arange(N_cap)
+    out = answer_match_at_k(
+        entry_img_mean, cap_mean, None, ans, ans, exclude, [1, 5],
+        query_var=entry_img_var, query_U=entry_img_U, use_loglik=True)
+    assert 0.0 <= out["answer_match@1"] <= 1.0
+
+
 if __name__ == "__main__":
     import inspect
     import tempfile

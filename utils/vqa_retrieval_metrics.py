@@ -21,6 +21,13 @@ def recall_at_k_from_relevance(
     k_values: List[int],
     chunk_size: int = 1000,
     use_csd: bool = False,
+    query_var: Optional[torch.Tensor] = None,
+    query_U: Optional[torch.Tensor] = None,
+    gallery_var: Optional[torch.Tensor] = None,
+    gallery_U: Optional[torch.Tensor] = None,
+    use_loglik: bool = False,
+    per_dim_normalize: bool = True,
+    use_logdet: bool = True,
 ) -> Dict[str, float]:
     """每查询给定 relevant gallery 索引集合的 Recall@K。
 
@@ -32,6 +39,10 @@ def recall_at_k_from_relevance(
         k_values: K 列表
         chunk_size: query 轴分块
         use_csd: 是否用 CSD 相似度
+        query_var / query_U: 图像侧(image=query)的方差与低秩因子,仅 use_loglik=True 时使用
+        gallery_var / gallery_U: 图像侧(image=gallery)的方差与低秩因子,仅 use_loglik=True 时使用
+        use_loglik: 用分布对数似然打分(image 侧提供 var/U),覆盖 cosine/csd
+        per_dim_normalize / use_logdet: 透传给 image_text_loglik_matrix
     """
     query_mean = F.normalize(query_mean, dim=-1)
     gallery_mean = F.normalize(gallery_mean, dim=-1)
@@ -45,9 +56,28 @@ def recall_at_k_from_relevance(
     hits = {k: 0 for k in k_values}
     for start in range(0, n, chunk_size):
         end = min(start + chunk_size, n)
-        sim = query_mean[start:end] @ gallery_mean.T  # (c, G)
-        if use_csd:
-            sim = sim - 0.5 * gallery_unc.unsqueeze(0)
+        if use_loglik:
+            from utils.distribution_score import image_text_loglik_matrix
+            if query_var is not None:   # image is the query (distribution center)
+                sim = image_text_loglik_matrix(
+                    query_mean[start:end], query_var[start:end],
+                    query_U[start:end] if query_U is not None else None,
+                    gallery_mean, per_dim_normalize=per_dim_normalize,
+                    use_logdet=use_logdet, chunk_size=end - start,
+                )  # (c, G)
+            elif gallery_var is not None:   # image is the gallery
+                sim = image_text_loglik_matrix(
+                    gallery_mean, gallery_var,
+                    gallery_U, query_mean[start:end],
+                    per_dim_normalize=per_dim_normalize, use_logdet=use_logdet,
+                    chunk_size=256,
+                ).T  # (G, c) -> (c, G)
+            else:
+                raise ValueError("use_loglik=True requires query_var/query_U (image=query) or gallery_var/gallery_U (image=gallery)")
+        else:
+            sim = query_mean[start:end] @ gallery_mean.T  # (c, G)
+            if use_csd:
+                sim = sim - 0.5 * gallery_unc.unsqueeze(0)
         top_idx = torch.topk(sim, max_k, dim=1).indices  # (c, max_k) 只取前 K,不全排序
         top_idx = top_idx.cpu()                          # 小批量搬 CPU 做集合判定
         for row in range(end - start):
@@ -70,6 +100,13 @@ def answer_match_at_k(
     k_values: List[int],
     chunk_size: int = 1000,
     use_csd: bool = False,
+    query_var: Optional[torch.Tensor] = None,
+    query_U: Optional[torch.Tensor] = None,
+    gallery_var: Optional[torch.Tensor] = None,
+    gallery_U: Optional[torch.Tensor] = None,
+    use_loglik: bool = False,
+    per_dim_normalize: bool = True,
+    use_logdet: bool = True,
 ) -> Dict[str, float]:
     """Track B:top-K 召回 caption 的 answer 是否 == 查询 answer(排除自身 entry)。
 
@@ -80,6 +117,10 @@ def answer_match_at_k(
         gallery_answers: (G,) long,每条 gallery 的 answer id
         query_answers: (N,) long,每查询的 answer id
         query_exclude_idx: (N,) long,每查询要屏蔽的自身 gallery 索引
+        query_var / query_U: entry 图像侧(image=query)的方差与低秩因子,仅 use_loglik=True 时使用
+        gallery_var / gallery_U: 图像侧(image=gallery)的方差与低秩因子,仅 use_loglik=True 时使用(对称保留)
+        use_loglik: 用分布对数似然打分(image 侧提供 var/U),覆盖 cosine/csd
+        per_dim_normalize / use_logdet: 透传给 image_text_loglik_matrix
     """
     query_mean = F.normalize(query_mean, dim=-1)
     gallery_mean = F.normalize(gallery_mean, dim=-1)
@@ -98,9 +139,28 @@ def answer_match_at_k(
     for start in range(0, n, chunk_size):
         end = min(start + chunk_size, n)
         c = end - start
-        sim = query_mean[start:end] @ gallery_mean.T  # (c, G)
-        if use_csd:
-            sim = sim - 0.5 * gallery_unc.unsqueeze(0)
+        if use_loglik:
+            from utils.distribution_score import image_text_loglik_matrix
+            if query_var is not None:   # image is the query (distribution center)
+                sim = image_text_loglik_matrix(
+                    query_mean[start:end], query_var[start:end],
+                    query_U[start:end] if query_U is not None else None,
+                    gallery_mean, per_dim_normalize=per_dim_normalize,
+                    use_logdet=use_logdet, chunk_size=end - start,
+                )  # (c, G)
+            elif gallery_var is not None:   # image is the gallery
+                sim = image_text_loglik_matrix(
+                    gallery_mean, gallery_var,
+                    gallery_U, query_mean[start:end],
+                    per_dim_normalize=per_dim_normalize, use_logdet=use_logdet,
+                    chunk_size=256,
+                ).T  # (G, c) -> (c, G)
+            else:
+                raise ValueError("use_loglik=True requires query_var/query_U (image=query) or gallery_var/gallery_U (image=gallery)")
+        else:
+            sim = query_mean[start:end] @ gallery_mean.T  # (c, G)
+            if use_csd:
+                sim = sim - 0.5 * gallery_unc.unsqueeze(0)
         rows = rows_arange[:c]
         sim[rows, query_exclude_idx[start:end]] = float("-inf")  # 屏蔽自身
         top_idx = torch.topk(sim, max_k, dim=1).indices    # (c, max_k) 只取前 K
