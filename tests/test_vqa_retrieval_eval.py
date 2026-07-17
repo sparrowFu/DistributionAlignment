@@ -31,7 +31,7 @@ class FakeAdapter:
 
     def encode_images(self, pixel_values):
         n = pixel_values.shape[0]
-        return torch.arange(n).float().unsqueeze(1).expand(n, self.dim), None
+        return torch.arange(n).float().unsqueeze(1).expand(n, self.dim), None, None
 
     def encode_texts(self, input_ids, attention_mask):
         n = input_ids.shape[0]
@@ -52,7 +52,7 @@ def test_encode_all_dedups_captions(tmp_path):
         Image.new("RGB", (4, 4)).save(imgdir / n)
     caps = ["red bus", "red bus", "green bus"]
     adapter = FakeAdapter()
-    img_mean, img_lv, cap_mean, cap_lv = encode_all(
+    img_mean, img_lv, img_U, cap_mean, cap_lv = encode_all(
         adapter, [imgdir / "a.png", imgdir / "b.png"], caps,
         batch_size=8, device="cpu", logger=_PrintLogger(),
     )
@@ -62,6 +62,7 @@ def test_encode_all_dedups_captions(tmp_path):
     assert torch.equal(cap_mean[0], cap_mean[1])
     assert not torch.equal(cap_mean[0], cap_mean[2])
     assert img_lv is None and cap_lv is None
+    assert img_U is None
 
 
 from eval_vqa_retrieval import compute_all_metrics
@@ -102,7 +103,7 @@ def _tiny_ds_and_feats():
 
 def test_trackA_i2t_and_t2i_overall():
     ds, img_mean, cap_mean = _tiny_ds_and_feats()
-    out = compute_all_metrics(ds, img_mean, None, cap_mean, None, [1], use_csd=False)
+    out = compute_all_metrics(ds, img_mean, None, None, cap_mean, None, [1], use_csd=False)
     # I2T: 图 a GT={0,1} top1 落 0/1; b->2; c->3 => 1.0
     assert out["track_a_same_image"]["i2t"]["cosine"]["overall"]["recall@1"] == 1.0
     # T2I: entry0->a, entry1->a, entry2->b, entry3->c => all hit
@@ -111,7 +112,7 @@ def test_trackA_i2t_and_t2i_overall():
 
 def test_trackB_answer_match_overall():
     ds, img_mean, cap_mean = _tiny_ds_and_feats()
-    out = compute_all_metrics(ds, img_mean, None, cap_mean, None, [1], use_csd=False)
+    out = compute_all_metrics(ds, img_mean, None, None, cap_mean, None, [1], use_csd=False)
     # 每个图只与自身 caption 同方向,排除自身后 top1 落到别的答案 -> 全错 => 0.0
     assert out["track_b_answer_match"]["i2t"]["cosine"]["overall"]["answer_match@1"] == 0.0
 
@@ -136,7 +137,7 @@ def test_csd_block_uses_csd_not_cosine():
     cap_mean = torch.tensor([[1., 0.], [0., 1.]])
     cap_logvar = torch.tensor([[5., 5.], [0., 0.]])   # cap0 高方差
     img_logvar = torch.zeros(2, 2)
-    out = compute_all_metrics(ds, img_mean, img_logvar, cap_mean, cap_logvar, [1], use_csd=True)
+    out = compute_all_metrics(ds, img_mean, img_logvar, None, cap_mean, cap_logvar, [1], use_csd=True)
     cos = out["track_a_same_image"]["i2t"]["cosine"]["overall"]["recall@1"]
     csd = out["track_a_same_image"]["i2t"]["csd"]["overall"]["recall@1"]
     assert cos == 1.0, f"cosine should be 1.0: {cos}"           # cosine: img0->cap0, img1->cap1
