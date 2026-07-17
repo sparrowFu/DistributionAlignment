@@ -76,6 +76,7 @@ def extract_features(
     all_text_mu = []
     all_img_logvar = []
     all_text_logvar = []
+    all_img_U = []
     sample_count = 0
 
     logger.info("Extracting features...")
@@ -113,6 +114,8 @@ def extract_features(
         all_text_mu.append(outputs['text_mu'].cpu())
         all_img_logvar.append(outputs['img_logvar'].cpu())
         all_text_logvar.append(outputs['text_logvar'].cpu())
+        img_U_batch = outputs['img_U']
+        all_img_U.append(img_U_batch.cpu() if img_U_batch is not None else None)
 
         sample_count += batch_size
         if num_samples and sample_count >= num_samples:
@@ -123,16 +126,22 @@ def extract_features(
     text_mu = torch.cat(all_text_mu, dim=0)
     img_logvar = torch.cat(all_img_logvar, dim=0)
     text_logvar = torch.cat(all_text_logvar, dim=0)
+    if any(u is None for u in all_img_U):
+        img_U = None
+    else:
+        img_U = torch.cat(all_img_U, dim=0)
 
     if num_samples:
         img_mu = img_mu[:num_samples]
         text_mu = text_mu[:num_samples]
         img_logvar = img_logvar[:num_samples]
         text_logvar = text_logvar[:num_samples]
+        if img_U is not None:
+            img_U = img_U[:num_samples]
 
     logger.info(f"Features shape: Images {img_mu.shape}, Texts {text_mu.shape}")
 
-    return img_mu, text_mu, img_logvar, text_logvar
+    return img_mu, text_mu, img_logvar, text_logvar, img_U
 
 
 def compute_recall_chunked(
@@ -290,7 +299,7 @@ def main():
     logger.info(f"Dataset loaded: {len(dataset)} samples")
 
     # Extract features (mu and logvar)
-    img_mu, text_mu, img_logvar, text_logvar = extract_features(
+    img_mu, text_mu, img_logvar, text_logvar, img_U = extract_features(
         model, dataloader, args.device, args.num_samples
     )
 
