@@ -45,6 +45,7 @@ Available tasks:
     eval_clip_zero_shot    Evaluate CLIP Zero-Shot baseline (B1)
 
   Stage 2 (VQA Downstream):
+    build_vqa_expansions   Build VQA-as-retrieval caption dataset (local gemma/llama or API)
     eval_vqa_retrieval     VQA-as-retrieval eval (gemma caption, 5 models)
 
   Experiment Tasks:
@@ -63,6 +64,7 @@ eval_vqa_retrieval --model: clip_zero_shot, clip_baseline, dist_align,
 Examples:
   python main.py --task train_dist_align
   python main.py --task eval_dist_align
+  python main.py --task build_vqa_expansions --split test --limit 0 --no-batch
   python main.py --task eval_vqa_retrieval --model dist_align
   python main.py --task run_ablation --config all
   python main.py --task eval_sigma_analysis
@@ -82,6 +84,7 @@ Examples:
             "train_grove", "eval_grove",
             "eval_clip_zero_shot",
             # Stage 2: VQA-as-retrieval downstream (gemma caption)
+            "build_vqa_expansions",
             "eval_vqa_retrieval",
             # Experiments
             "eval_calibration",
@@ -142,6 +145,23 @@ Examples:
     parser.add_argument("--config", type=str, default=None,
                         help="Configuration name for ablation study")
 
+    # Caption-build arguments (build_vqa_expansions)
+    parser.add_argument("--split", type=str, default=None,
+                        choices=["train", "test", "both"],
+                        help="VQA split for build_vqa_expansions")
+    parser.add_argument("--backend", type=str, default=None,
+                        choices=["local", "api"],
+                        help="Caption backend for build_vqa_expansions (local/api)")
+    parser.add_argument("--model-kind", type=str, default=None,
+                        choices=["gemma", "llama"],
+                        help="Local model family for build_vqa_expansions (gemma/llama)")
+    parser.add_argument("--no-batch", action="store_true",
+                        help="build_vqa_expansions: one caption at a time (required for local gemma)")
+    parser.add_argument("--limit", type=int, default=None,
+                        help="build_vqa_expansions: samples to process (0 = all)")
+    parser.add_argument("--no-resume", action="store_true",
+                        help="build_vqa_expansions: start from scratch (overwrite existing outputs)")
+
     # Resume training
     parser.add_argument("--resume", type=str, default=None,
                         help="Path to checkpoint to resume training from")
@@ -191,6 +211,18 @@ def run_python_script(script_path: Path, args: argparse.Namespace) -> int:
         cmd.extend(["--output-path", args.output_path])
     if hasattr(args, 'config') and args.config:
         cmd.extend(["--config", args.config])
+    if hasattr(args, 'split') and args.split:
+        cmd.extend(["--split", args.split])
+    if hasattr(args, 'backend') and args.backend:
+        cmd.extend(["--backend", args.backend])
+    if hasattr(args, 'model_kind') and args.model_kind:
+        cmd.extend(["--model-kind", args.model_kind])
+    if hasattr(args, 'no_batch') and args.no_batch:
+        cmd.append("--no-batch")
+    if hasattr(args, 'limit') and args.limit is not None:
+        cmd.extend(["--limit", str(args.limit)])
+    if hasattr(args, 'no_resume') and args.no_resume:
+        cmd.append("--no-resume")
     if hasattr(args, 'resume') and args.resume:
         cmd.extend(["--resume", args.resume])
 
@@ -222,6 +254,7 @@ TASK_SCRIPTS = {
     # Stage 1: Zero-shot
     "eval_clip_zero_shot":   "evaluate_clip_zero_shot.py",    # python main.py --task eval_clip_zero_shot --num-samples 5000
     # Stage 2: VQA-as-retrieval downstream (gemma caption)
+    "build_vqa_expansions":  "build_vqa_expansions.py",       # python main.py --task build_vqa_expansions --split test --limit 0 --no-batch
     "eval_vqa_retrieval":    "eval_vqa_retrieval.py",         # python main.py --task eval_vqa_retrieval --model dist_align  (或 --model all)
     # Experiments
     "eval_calibration":      "eval_calibration.py",           # python main.py --task eval_calibration
