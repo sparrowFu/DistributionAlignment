@@ -28,6 +28,40 @@ from utils.logger import get_logger
 logger = get_logger("flickr30k_dataset")
 
 
+def _detect_separator(sample_line: str) -> Optional[str]:
+    """Infer the CSV/TSV delimiter from one sample line ('\t' beats ',' beats None)."""
+    if "\t" in sample_line:
+        return "\t"
+    if "," in sample_line:
+        return ","
+    return None
+
+
+def _looks_like_filename(token: str) -> bool:
+    """True if a token looks like an image filename (e.g. ends in .jpg)."""
+    token = token.strip().lower()
+    return any(token.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"))
+
+
+def _pick_column(columns, keywords, default):
+    """Return the column name matching a keyword.
+
+    Exact header match is preferred over substring containment, so e.g. with
+    Flickr30K columns [image_name, comment_number, comment] the caption keyword
+    'comment' matches the 'comment' column, not 'comment_number'.
+    """
+    lowered = [str(c).strip().lower() for c in columns]
+    for kw in keywords:
+        for i, c in enumerate(lowered):
+            if c == kw:
+                return columns[i]
+    for kw in keywords:
+        for i, c in enumerate(lowered):
+            if kw in c:
+                return columns[i]
+    return columns[default]
+
+
 class Flickr30KDataset(Dataset):
     """
     Dataset for Flickr30K image-caption pairs.
@@ -74,11 +108,18 @@ class Flickr30KDataset(Dataset):
         logger.info(f"Flickr30K: {len(self)} images loaded")
 
     def _load_captions(self):
-        """Load captions file and group by image name."""
+        """Load captions and group them by image name.
+
+        Handles the standard Flickr30K CSV (header: image_name,comment_number,
+        comment), a plain image,caption CSV/TSV, or a headerless
+        image<TAB/COMMA>caption file. The delimiter, whether a header row is
+        present, and the image/caption columns are all detected automatically.
+        """
         if not self.captions_path.exists():
             logger.warning(
                 f"Captions file not found: {self.captions_path}\n"
-                f"Expected format: image_name<TAB>caption (one line per caption)"
+                f"Expected Flickr30K CSV (image_name,comment_number,comment) or "
+                f"image,caption / image<TAB>caption."
             )
             self.image_names = []
             self.captions_dict = {}
@@ -86,42 +127,54 @@ class Flickr30KDataset(Dataset):
 
         logger.info(f"Loading Flickr30K captions from: {self.captions_path}")
 
-        captions_dict = {}
-        suffix = self.captions_path.suffix.lower()
+        # Peek at the first non-empty line to detect the delimiter and whether
+        # the file has a header row (a header field is not an image filename).
+        with open(self.captions_path, "r", encoding="utf-8") as f:
+            sample = ""
+            for line in f:
+                if line.strip():
+                    sample = line.rstrip("\n")
+                    break
+        sep = _detect_separator(sample)
+        has_header = sep is not None and not _looks_like_filename(sample.split(sep)[0])
 
-        if suffix in (".txt", ".tsv"):
-            # TSV format: image_name\tcaption
-            with open(self.captions_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    parts = line.split("\t")
-                    if len(parts) >= 2:
-                        img_name = parts[0].strip()
-                        caption = parts[1].strip()
-                        if img_name not in captions_dict:
-                            captions_dict[img_name] = []
-                        captions_dict[img_name].append(caption)
-        elif suffix == ".csv":
-            df = pd.read_csv(self.captions_path)
-            # Assume columns: image, caption (or similar)
-            img_col = df.columns[0]
-            cap_col = df.columns[1]
-            for _, row in df.iterrows():
-                img_name = str(row[img_col]).strip()
-                caption = str(row[cap_col]).strip()
-                if img_name not in captions_dict:
-                    captions_dict[img_name] = []
-                captions_dict[img_name].append(caption)
+        if has_header:
+            df = pd.read_csv(self.captions_path, sep=sep, engine="python")
+            if df.shape[1] < 2:
+                raise ValueError(
+                    f"Could not parse image/caption pairs from {self.captions_path} "
+                    f"(found {df.shape[1]} column(s)).")
+            img_col = _pick_column(
+                df.columns, ("image_name", "image", "filename", "file"),
+                default=df.columns[0])
+            # Caption column: prefer a named caption/comment column, else the
+            # last column (skips a comment_number/index column in the middle).
+            cap_col = _pick_column(
+                df.columns, ("caption", "comment", "text", "sentence"),
+                default=df.columns[-1])
         else:
-            raise ValueError(f"Unsupported captions file format: {suffix}")
+            # Headerless: column 0 is the image, last column is the caption.
+            df = pd.read_csv(self.captions_path, sep=sep, header=None, engine="python")
+            if df.shape[1] < 2:
+                raise ValueError(
+                    f"Could not parse image/caption pairs from {self.captions_path} "
+                    f"(found {df.shape[1]} column(s)).")
+            img_col = df.columns[0]
+            cap_col = df.columns[-1]
 
-        # Filter to valid images only
+        captions_dict = {}
+        for _, row in df.iterrows():
+            img_name = str(row[img_col]).strip()
+            caption = str(row[cap_col]).strip()
+            if not img_name or img_name.lower() in ("nan", "none"):
+                continue
+            captions_dict.setdefault(img_name, []).append(caption)
+
+        # Keep only images with at least one caption.
         self.image_names = []
         self.captions_dict = {}
         for img_name, caps in captions_dict.items():
-            if len(caps) > 0:
+            if caps:
                 self.image_names.append(img_name)
                 self.captions_dict[img_name] = caps
 

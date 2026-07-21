@@ -120,6 +120,10 @@ Examples:
                         help="Path to captions parquet file")
     parser.add_argument("--images-dir", type=str, default=None,
                         help="Path to images directory")
+    parser.add_argument("--dataset", type=str, default=None,
+                        choices=["coco", "flickr"],
+                        help="Training dataset tag embedded in checkpoint filename "
+                             "(coco=MSCOCO, flickr=flickr30k); training scripts default to coco")
 
     # Training arguments
     parser.add_argument("--epochs", type=int, default=None)
@@ -181,6 +185,8 @@ def run_python_script(script_path: Path, args: argparse.Namespace) -> int:
         cmd.extend(["--captions-path", args.captions_path])
     if args.images_dir:
         cmd.extend(["--images-dir", args.images_dir])
+    if args.dataset:
+        cmd.extend(["--dataset", args.dataset])
     if args.epochs is not None:
         cmd.extend(["--epochs", str(args.epochs)])
     if args.batch_size is not None:

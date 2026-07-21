@@ -52,6 +52,10 @@ def parse_args():
                         help="Path to captions parquet file (uses config default if None)")
     parser.add_argument("--images-dir", type=str, default=None,
                         help="Path to images directory (uses config default if None)")
+    parser.add_argument("--dataset", type=str, default="coco",
+                        choices=["coco", "flickr"],
+                        help="Training dataset tag, embedded in the checkpoint filename as "
+                             "{model}_{dataset}_best|last.pt (coco=MSCOCO, flickr=flickr30k)")
 
     # Training arguments
     parser.add_argument("--epochs", type=int, default=config.PROLIP_EPOCHS,
@@ -102,7 +106,7 @@ def parse_args():
                         help="Checkpoint directory (uses config default if None)")
     parser.add_argument("--resume", type=str, default=None,
                         help="Path to checkpoint to resume training from "
-                             "(e.g. checkpoints/prolip_last.pt). "
+                             "(e.g. checkpoints/prolip_coco_last.pt). "
                              "Restores model weights, optimizer state, epoch, and best_val_loss.")
 
     return parser.parse_args()
@@ -346,7 +350,7 @@ def main():
         # Save best checkpoint
         if val_metrics["loss"] < best_val_loss:
             best_val_loss = val_metrics["loss"]
-            best_checkpoint_path = checkpoint_dir / "prolip_best.pt"
+            best_checkpoint_path = checkpoint_dir / f"prolip_{args.dataset}_best.pt"
             model.save(str(best_checkpoint_path))
             logger.info(f"Best model saved (val_loss: {best_val_loss:.4f}) -> {best_checkpoint_path}")
             patience_counter = 0
@@ -360,7 +364,7 @@ def main():
             break
 
     # Save final model with full training state for resumption
-    final_checkpoint_path = checkpoint_dir / "prolip_last.pt"
+    final_checkpoint_path = checkpoint_dir / f"prolip_{args.dataset}_last.pt"
     final_state = {
         "model_state_dict": model.prolip.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),

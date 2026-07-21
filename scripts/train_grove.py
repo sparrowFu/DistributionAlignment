@@ -52,6 +52,10 @@ def parse_args():
     parser.add_argument("--temperature", type=float, default=config.GROVE_TEMPERATURE)
     parser.add_argument("--captions-path", type=str, default=None)
     parser.add_argument("--images-dir", type=str, default=None)
+    parser.add_argument("--dataset", type=str, default="coco",
+                        choices=["coco", "flickr"],
+                        help="Training dataset tag, embedded in the checkpoint filename as "
+                             "{model}_{dataset}_best|last.pt (coco=MSCOCO, flickr=flickr30k)")
     parser.add_argument("--val-split", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=config.SEED)
     parser.add_argument("--device", type=str,
@@ -203,10 +207,11 @@ def main():
 
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
-            model.save(str(config.GROVE_BEST_CKPT))
-            logger.info(f"Best model saved (val_loss: {best_val_loss:.4f})")
+            best_ckpt_path = config.CHECKPOINT_DIR / f"grove_{args.dataset}_best.pt"
+            model.save(str(best_ckpt_path))
+            logger.info(f"Best model saved (val_loss: {best_val_loss:.4f}) -> {best_ckpt_path}")
 
-    last_ckpt_path = str(config.GROVE_BEST_CKPT).replace("_best.pt", "_last.pt")
+    last_ckpt_path = str(config.CHECKPOINT_DIR / f"grove_{args.dataset}_last.pt")
     torch.save({
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),

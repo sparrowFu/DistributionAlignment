@@ -15,15 +15,14 @@ import json
 from pathlib import Path
 
 import torch
-from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
-from data.caption_dataset import ImageCaptionDataset, filter_none_collate
 from models.prolip_model import ProLIPModel
+from utils.eval_common import build_eval_dataloader, resolve_checkpoint
 from utils.logger import get_logger, log_exception
 from utils.retrieval_metrics import compute_retrieval_metrics
 from utils.seed import set_seed
@@ -37,11 +36,17 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate ProLIP (Fine-tuned)")
 
     parser.add_argument("--checkpoint", type=str, default=None,
-                        help="Path to checkpoint (uses best checkpoint if None)")
+                        help="Path to checkpoint. If None, auto-selects "
+                             "prolip_{dataset}_best.pt from --dataset "
+                             "(pass a ..._last.pt path to evaluate the last checkpoint).")
+    parser.add_argument("--dataset", type=str, default="coco",
+                        choices=["coco", "flickr"],
+                        help="Dataset to evaluate on and to auto-select the checkpoint for "
+                             "(coco=MSCOCO, flickr=flickr30k). Default: coco")
     parser.add_argument("--captions-path", type=str, default=None,
-                        help="Path to captions file (uses config default if None)")
+                        help="Path to captions file (coco only; overrides config default if set)")
     parser.add_argument("--images-dir", type=str, default=None,
-                        help="Path to images directory (uses config default if None)")
+                        help="Path to images directory (coco only; overrides config default if set)")
     parser.add_argument("--batch-size", type=int, default=config.EVAL_BATCH_SIZE,
                         help="Evaluation batch size")
     parser.add_argument("--recall-at-k", type=int, nargs="+", default=config.RECALL_AT_K,
@@ -111,36 +116,24 @@ def main():
     args = parse_args()
     set_seed(config.SEED)
 
-    # Load fine-tuned model
-    checkpoint_path = args.checkpoint or str(config.PROLIP_BEST_CKPT)
+    # Load fine-tuned model (auto-select checkpoint by dataset: prolip_{dataset}_best.pt)
+    checkpoint_path = args.checkpoint or str(resolve_checkpoint("prolip", args.dataset))
     logger.info(f"Loading model from {checkpoint_path}")
 
     model = ProLIPModel()
     model.load(checkpoint_path)
     model = model.to(args.device)
 
-    # Load dataset
-    captions_path = args.captions_path or config.CAPTIONS_PATH
-    images_dir = args.images_dir or config.IMAGES_DIR
-
-    dataset = ImageCaptionDataset(
-        captions_path=captions_path,
-        images_dir=images_dir,
-        num_captions=config.NUM_CAPTIONS,
+    # Load dataset (auto-selected by --dataset: coco=MSCOCO, flickr=flickr30k test)
+    dataloader, num_eval_samples = build_eval_dataloader(
+        args.dataset,
+        batch_size=args.batch_size,
+        num_workers=config.NUM_WORKERS,
+        num_samples=args.num_samples,
+        captions_path=args.captions_path,
+        images_dir=args.images_dir,
     )
-
-    num_samples = args.num_samples
-    if num_samples and num_samples < len(dataset):
-        generator = torch.Generator().manual_seed(config.SEED)
-        indices = torch.randperm(len(dataset), generator=generator)[:num_samples].tolist()
-        dataset = Subset(dataset, indices)
-        logger.info(f"Using {num_samples} samples (random subset)")
-
-    dataloader = DataLoader(
-        dataset, batch_size=args.batch_size, shuffle=False,
-        num_workers=config.NUM_WORKERS, collate_fn=filter_none_collate,
-    )
-    logger.info(f"Dataset loaded: {len(dataset)} samples")
+    logger.info(f"Dataset loaded ({args.dataset}): {num_eval_samples} samples")
 
     # Extract features
     img_mu, img_logvar, text_mu, text_logvar = extract_features(
@@ -163,7 +156,8 @@ def main():
     results = {
         "model": "ProLIP ViT-H/14 (fine-tuned)",
         "checkpoint": str(checkpoint_path),
-        "num_samples": args.num_samples,
+        "dataset": args.dataset,
+        "num_samples": num_eval_samples,
         "metrics": metrics,
     }
 

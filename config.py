@@ -84,10 +84,10 @@ EVAL_CLIP_BASELINE_LOG_PATH = LOG_DIR / "evaluate_clip_baseline.log"
 # Checkpoint Paths
 # =============================================================================
 # Best checkpoint (lowest validation loss)
-CLIP_BASELINE_BEST_CKPT = CHECKPOINT_DIR / "clip_baseline_best.pt"
+CLIP_BASELINE_BEST_CKPT = CHECKPOINT_DIR / "clip_baseline_coco_best.pt"
 
 # Last checkpoint (end of training)
-CLIP_BASELINE_LAST_CKPT = CHECKPOINT_DIR / "clip_baseline_last.pt"
+CLIP_BASELINE_LAST_CKPT = CHECKPOINT_DIR / "clip_baseline_coco_last.pt"
 
 
 # =============================================================================
@@ -184,8 +184,8 @@ TRAIN_DIST_ALIGN_LOG_PATH = LOG_DIR / "train_dist_align.log"
 EVAL_DIST_ALIGN_LOG_PATH = LOG_DIR / "evaluate_dist_align.log"
 
 # Checkpoint paths
-DIST_ALIGN_BEST_CKPT = CHECKPOINT_DIR / "dist_align_best.pt"
-DIST_ALIGN_LAST_CKPT = CHECKPOINT_DIR / "dist_align_last.pt"
+DIST_ALIGN_BEST_CKPT = CHECKPOINT_DIR / "dist_align_coco_best.pt"
+DIST_ALIGN_LAST_CKPT = CHECKPOINT_DIR / "dist_align_coco_last.pt"
 
 # Evaluation results path
 DIST_ALIGN_EVAL_RESULTS_PATH = OUTPUT_DIR / "dist_align_eval_results.json"
@@ -363,8 +363,8 @@ PROLIP_TOKENIZER_PATH = PROJECT_ROOT / "PreTrainedModels" / "prolipTokenizer"
 PROLIP_CONTEXT_LENGTH = 77
 
 # ProLIP checkpoint and output paths
-PROLIP_BEST_CKPT = CHECKPOINT_DIR / "prolip_best.pt"
-PROLIP_LAST_CKPT = CHECKPOINT_DIR / "prolip_last.pt"
+PROLIP_BEST_CKPT = CHECKPOINT_DIR / "prolip_coco_best.pt"
+PROLIP_LAST_CKPT = CHECKPOINT_DIR / "prolip_coco_last.pt"
 PROLIP_EVAL_RESULTS_PATH = OUTPUT_DIR / "prolip_eval_results.json"
 PROLIP_ZERO_SHOT_EVAL_RESULTS_PATH = OUTPUT_DIR / "prolip_zero_shot_eval_results.json"
 TRAIN_PROLIP_LOG_PATH = LOG_DIR / "train_prolip.log"
@@ -394,7 +394,7 @@ PROLIP_VIB_BETA = 1.0e-5        # variational information bottleneck KL weight
 # GroVE adds GP posterior on top of frozen CLIP features
 # Reference: kaaikai/grove
 
-GROVE_BEST_CKPT = CHECKPOINT_DIR / "grove_best.pt"
+GROVE_BEST_CKPT = CHECKPOINT_DIR / "grove_coco_best.pt"
 GROVE_EVAL_RESULTS_PATH = OUTPUT_DIR / "grove_eval_results.json"
 TRAIN_GROVE_LOG_PATH = LOG_DIR / "train_grove.log"
 EVAL_GROVE_LOG_PATH = LOG_DIR / "evaluate_grove.log"
@@ -412,7 +412,7 @@ GROVE_TEMPERATURE = 0.07
 # Flickr30K Dataset Configuration
 # =============================================================================
 FLICKR30K_ROOT = PROJECT_ROOT / "TrainDatasets" / "flickr30k"
-FLICKR30K_IMAGES_DIR = FLICKR30K_ROOT / "images"
+FLICKR30K_IMAGES_DIR = FLICKR30K_ROOT / "flickr30k_images"
 FLICKR30K_CAPTIONS_PATH = FLICKR30K_ROOT / "captions.txt"
 FLICKR30K_NUM_CAPTIONS = 5
 
