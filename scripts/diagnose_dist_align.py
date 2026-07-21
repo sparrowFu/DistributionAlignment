@@ -20,8 +20,7 @@ from torch.utils.data import DataLoader, Subset
 import config
 from data.caption_dataset import ImageCaptionDataset, filter_none_collate
 from models.dist_align_model import DistributionAlignmentModel
-from utils.retrieval import compute_recall_chunked, compute_recall_uc_chunked
-from scripts.evaluate_dist_align import compute_recall_loglik_chunked
+from utils.retrieval import compute_recall_chunked, compute_recall_msda_chunked
 
 
 @torch.no_grad()
@@ -121,19 +120,11 @@ def main():
     K = [1, 5, 10]
     print("\n===== RETRIEVAL R@1/5/10 =====")
     r_cos = compute_recall_chunked(img_mu, text_mu, K, normalize=True)
-    print(f"  dist_align COSINE  : {[round(r_cos[k],3) for k in K]}   <- what the training log reports")
-    try:
-        r_uc = compute_recall_uc_chunked(img_mu, img_lv, text_mu, text_lv, K,
-                                         temperature=config.MSDA_TAU)
-        print(f"  dist_align UC-sim   : {[round(r_uc[f'uc_recall@{k}'],3) for k in K]}")
-    except Exception as e:
-        print(f"  dist_align UC-sim   : SKIPPED ({type(e).__name__}: pre-existing device bug in utils/retrieval.py compute_recall_uc_chunked)")
-    r_ll = compute_recall_loglik_chunked(
-        img_mu, img_lv, img_U, text_mu, K,
-        per_dim_normalize=config.MSDA_PER_DIM_NORMALIZE,
-        use_logdet=config.MSDA_USE_LOGDET)
-    print(f"  dist_align LOGLIK   : i2t={[round(r_ll[f'loglik_i2t_recall@{k}'],3) for k in K]}  "
-          f"t2i={[round(r_ll[f'loglik_t2i_recall@{k}'],3) for k in K]}  <- matches training objective")
+    print(f"  dist_align COSINE   : {[round(r_cos[k],3) for k in K]}   <- mean-only retrieval mode")
+    r_msda = compute_recall_msda_chunked(img_mu, img_lv, text_mu, text_lv, K, tau=config.MSDA_TAU)
+    print(f"  dist_align MSDA     : mean={[round(r_msda[f'msda_recall@{k}'],3) for k in K]}  "
+          f"i2t={[round(r_msda[f'msda_recall_i2t@{k}'],3) for k in K]}  "
+          f"t2i={[round(r_msda[f'msda_recall_t2i@{k}'],3) for k in K]}  <- L_set objective")
     r_clip = compute_recall_chunked(img_feat, text_feat, K, normalize=True)
     print(f"  raw CLIP COSINE     : {[round(r_clip[k],3) for k in K]}   <- sanity baseline")
 

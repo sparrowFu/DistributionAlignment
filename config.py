@@ -212,32 +212,43 @@ DIST_ALIGN_TARGET_VARIANCE = 0.5      # Target variance for regularization (used
 
 
 # =============================================================================
-# MSDA: Multi-caption Semantic Distribution Alignment (replaces UC-CL/OT/KL)
+# MSDA: Multi-caption Semantic Distribution Alignment
 # =============================================================================
-# Image and text are both modeled as general Gaussians N(mu, Sigma) with a
-# learned covariance Sigma = diag(sigma^2) + U U^T (U in R^{D x r}). r controls
-# off-diagonal capacity; r=0 falls back to diagonal. The same modeling is applied
-# symmetrically to image and text.
-MSDA_COV_RANK = 4                 # low-rank covariance rank r (0 = diagonal only)
-MSDA_TAU = 0.07                   # temperature for L_set-NCE similarity
-MSDA_LAMBDA_CTR = 1.0             # weight for the likelihood contrastive loss L_set
-MSDA_LAMBDA_VAR = 1.0             # weight for variance semantic consistency (core)
-MSDA_LAMBDA_COV = 0.05            # weight for covariance direction alignment (configurable; 0 disables)
-MSDA_TAU_INIT = 1.0               # initial temperature for the likelihood contrastive loss
-MSDA_TAU_LEARNABLE = True         # whether the temperature is a learnable parameter
-MSDA_USE_LOGDET = True            # include the -0.5*log|Sigma| normalization term in the score
-MSDA_PER_DIM_NORMALIZE = True     # divide the Mahalanobis term by D
-MSDA_VAR_LOSS_MODE = "raw"        # L_var target mode: "raw" (sigma^2 tracks true caption spread)
+# Per the methodology (docs/方法论设计.html / spec 2026-07-20-msda-redesign):
+# image and text are modeled as Gaussians. The image uses a general covariance
+# Sigma_v = diag(sigma_v^2) + U_v U_v^T (U_v in R^{D x r}); text is diagonal-only
+# (v1). The image variance is supervised toward the multi-caption semantic spread,
+# and the image low-rank directions toward the caption deviation directions.
+#
+# Total loss = lambda_ctr*L_set + lambda_mu*L_mu + lambda_var*L_var
+#            + lambda_cover*L_cover + lambda_cov*L_cov + lambda_reg*L_reg
+# where L_set is a bidirectional InfoNCE on the uncertainty-discounted cosine
+# similarity  sim = (mu_v . mu_t) / (tau * sqrt(1+mean sigma_v^2) * sqrt(1+mean sigma_t^2)).
+MSDA_COV_RANK = 4                 # low-rank covariance rank r for the IMAGE side (0 = diagonal only)
+MSDA_TAU = 0.07                   # FIXED temperature in the L_set similarity (not learnable)
+MSDA_LAMBDA_CTR = 1.0             # weight for the set contrastive loss L_set
+MSDA_LAMBDA_MU = 0.5              # weight for the mean-center alignment loss L_mu
+MSDA_LAMBDA_VAR = 1.0             # weight for the variance semantic consistency loss L_var (core)
+MSDA_LAMBDA_COVER = 0.5           # weight for the multi-caption coverage loss L_cover
+MSDA_LAMBDA_COV = 0.2             # weight for the covariance direction alignment loss L_cov (0 disables)
+MSDA_LAMBDA_REG = 0.01            # weight for the variance regularization loss L_reg
+MSDA_M_POS = 1.0                  # L_cover positive coverage margin (per-D normalized Mahalanobis)
+MSDA_M_NEG = 2.0                  # L_cover negative repulsion margin
+MSDA_TARGET_VAR = 1.0             # L_reg variance prior sigma_0^2 (log-variance pulled toward this)
+MSDA_USE_UNCERTAINTY_SIM = True   # L_set/retrieval use the uncertainty-discounted score (False = plain cosine)
 MSDA_VAR_FLOOR = 1e-4             # numerical floor on sigma^2 (softplus positivity + div-by-zero guard; NOT a semantic floor -- the range is learned via L_var / L_reg)
 MSDA_COV_EPS = 1e-6               # numerical epsilon for Mahalanobis / log
-MSDA_USE_NEG_COVER = False        # optional negative coverage repulsion
-MSDA_M_NEG = 2.0                  # negative coverage margin
 MSDA_GRAD_CLIP_NORM = 1.0         # global grad-norm clip (clip_grad_norm_) -- guards against L_cov / cover spikes destabilizing the retrieval means
+# Deprecated likelihood-rewrite knobs (kept ONLY for deferred loglik evals in
+# eval_flickr30k.py / eval_vqa_retrieval.py, which still use distribution_score).
+# The MSDA training/loss path no longer reads these.
+MSDA_USE_LOGDET = True            # deprecated: loglik-eval only
+MSDA_PER_DIM_NORMALIZE = True     # deprecated: loglik-eval only
 
 # 3-stage training schedule (fraction of total epochs each stage spans)
-MSDA_STAGE_WARMUP_FRAC = 0.2      # L_set-NCE + L_mu
+MSDA_STAGE_WARMUP_FRAC = 0.2      # L_set + L_mu (+ L_reg always on)
 MSDA_STAGE_MAIN_FRAC = 0.6        # + L_var + L_cover
-MSDA_STAGE_FULL_FRAC = 0.2        # + L_cov
+MSDA_STAGE_FULL_FRAC = 0.2        # + L_cov (ramped 0 -> 1)
 
 
 # =============================================================================

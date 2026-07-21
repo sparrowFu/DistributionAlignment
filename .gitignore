@@ -19,6 +19,7 @@ outputs/
 
 # Logs
 logs/
+*.log
 
 # Checkpoints
 checkpoints/

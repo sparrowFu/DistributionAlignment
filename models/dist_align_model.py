@@ -165,26 +165,23 @@ class DistributionAlignmentModel(nn.Module):
         return u
 
     def _build_cov_heads(self) -> None:
-        """(Re)create the low-rank covariance factor heads for ``self.cov_rank``.
+        """(Re)create the low-rank covariance factor head for ``self.cov_rank``.
 
-        Small (non-zero) init keeps Sigma near-diagonal at the start while still
-        letting the L_cov subspace-alignment gradient bootstrap U (zero init
-        would make that loss have zero gradient w.r.t. U). Called from
-        ``__init__`` and from ``load()`` (to match a checkpoint's cov_rank).
+        Per the methodology, covariance is image-side only (text is diagonal in
+        v1), so only ``img_cov_head`` is built. Small (non-zero) init keeps
+        Sigma near-diagonal at the start while still letting the L_cov
+        subspace-alignment gradient bootstrap U (zero init would make that loss
+        have zero gradient w.r.t. U). Called from ``__init__`` and from
+        ``load()`` (to match a checkpoint's cov_rank).
         """
-        # Drop any existing heads so a cov_rank change during load() is clean.
+        # Drop any existing head so a cov_rank change during load() is clean.
         if hasattr(self, "img_cov_head"):
             del self.img_cov_head
-        if hasattr(self, "text_cov_head"):
-            del self.text_cov_head
 
         if self.cov_rank > 0:
             self.img_cov_head = nn.Linear(self.hidden_dim, self.hidden_dim * self.cov_rank)
-            self.text_cov_head = nn.Linear(self.hidden_dim, self.hidden_dim * self.cov_rank)
             nn.init.normal_(self.img_cov_head.weight, std=1e-2)
             nn.init.zeros_(self.img_cov_head.bias)
-            nn.init.normal_(self.text_cov_head.weight, std=1e-2)
-            nn.init.zeros_(self.text_cov_head.bias)
 
     def _floor_logvar(self, raw_logvar: torch.Tensor) -> torch.Tensor:
         """Map a raw head output to log-variance with a small numerical floor.
@@ -331,7 +328,7 @@ class DistributionAlignmentModel(nn.Module):
                 - text_mus: per-caption means (B, K, D)
                 - text_logvars: per-caption log variances (B, K, D)
                 - img_U: image covariance factor (B, D, r) or None
-                - text_Us: per-caption covariance factors (B, K, D, r) or None
+                - text_Us: always None (text is diagonal-only in v1)
         """
         # CLIP encoding (keep features for contrastive loss)
         img_features = self.clip_model.get_image_features(pixel_values)
@@ -356,18 +353,17 @@ class DistributionAlignmentModel(nn.Module):
         img_logvar = self._floor_logvar(self.img_logvar_head(img_features))  # (B, hidden_dim)
         img_U = self._cov_factor(self.img_cov_head, img_features) if self.cov_rank > 0 else None
 
-        # Text distributions (K captions): mu, sigma^2, U
-        text_mus, text_logvars, text_Us = [], [], []
+        # Text distributions (K captions): mu, sigma^2. Text is diagonal-only
+        # (methodology v1: covariance is image-side), so there is no text_U.
+        text_mus, text_logvars = [], []
         for k in range(K):
             fk = text_features[:, k, :]
             text_mus.append(self.text_mu_head(fk))
             text_logvars.append(self._floor_logvar(self.text_logvar_head(fk)))
-            if self.cov_rank > 0:
-                text_Us.append(self._cov_factor(self.text_cov_head, fk))
 
         text_mus = torch.stack(text_mus, dim=1)  # (B, K, hidden_dim)
         text_logvars = torch.stack(text_logvars, dim=1)  # (B, K, hidden_dim)
-        text_Us = torch.stack(text_Us, dim=1) if self.cov_rank > 0 else None  # (B, K, D, r)
+        text_Us = None  # text is diagonal-only
 
         # Merge into caption-set distribution (moment matching, full-cov diagonal)
         text_mu, text_logvar = self.merge_distributions(
@@ -578,10 +574,11 @@ if __name__ == "__main__":
         shape = value.shape if value is not None else None
         print(f"  {key}: {shape}")
 
-    # Verify covariance factor shapes (default model uses cov_rank > 0)
+    # Verify covariance factor shapes (default model uses cov_rank > 0).
+    # Text is diagonal-only (methodology v1), so text_Us is always None.
     assert outputs['img_U'] is not None, "img_U should exist for cov_rank>0"
     assert outputs['img_U'].shape == (batch_size, 768, config.MSDA_COV_RANK)
-    assert outputs['text_Us'].shape == (batch_size, num_captions, 768, config.MSDA_COV_RANK)
+    assert outputs['text_Us'] is None, "text_Us should be None (text diagonal-only)"
     assert outputs['text_logvars'].shape == (batch_size, num_captions, 768)
     print("\nCovariance factor shapes verified.")
 

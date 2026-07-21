@@ -84,29 +84,30 @@ def compute_recall_bidirectional(
 
 
 @torch.no_grad()
-def compute_recall_uc_chunked(
+def compute_recall_msda_chunked(
     img_mu: torch.Tensor,
     img_logvar: torch.Tensor,
     text_mu: torch.Tensor,
     text_logvar: torch.Tensor,
     k_values: List[int],
-    temperature: float = 0.07,
+    tau: float = 0.07,
     chunk_size: int = 1000,
 ) -> Dict[str, float]:
     """
-    Bidirectional Recall@K using uncertainty-calibrated similarity.
+    Bidirectional Recall@K under the MSDA uncertainty-discounted cosine score,
+    i.e. the same score used by the L_set contrastive loss (train and eval agree):
 
         sim(x, y) = (mu_x . mu_y) / (tau * sqrt(1 + mean(sigma_x^2)) * sqrt(1 + mean(sigma_y^2)))
 
-    Returns keys: ``uc_recall_i2t@{k}``, ``uc_recall_t2i@{k}``, ``uc_recall@{k}`` (mean).
-    """
-    img_var_avg = torch.exp(img_logvar).mean(dim=-1)    # (N,)
-    text_var_avg = torch.exp(text_logvar).mean(dim=-1)  # (N,)
-    img_scale = torch.sqrt(1.0 + img_var_avg)
-    text_scale = torch.sqrt(1.0 + text_var_avg)
+    Means are L2-normalized internally; mean(sigma^2) averages over D.
 
+    Returns keys: ``msda_recall_i2t@{k}``, ``msda_recall_t2i@{k}``,
+    ``msda_recall@{k}`` (mean of the two directions).
+    """
     img_mu_n = F.normalize(img_mu, dim=-1)
     text_mu_n = F.normalize(text_mu, dim=-1)
+    img_scale = torch.sqrt(1.0 + torch.exp(img_logvar).mean(dim=-1))    # (N,)
+    text_scale = torch.sqrt(1.0 + torch.exp(text_logvar).mean(dim=-1))  # (N,)
     n = img_mu.shape[0]
 
     def _direction(query_mu, gallery_mu, query_scale, gallery_scale, desc):
@@ -115,21 +116,21 @@ def compute_recall_uc_chunked(
             end = min(start + chunk_size, n)
             sim = torch.matmul(query_mu[start:end], gallery_mu.T)
             scale = query_scale[start:end].unsqueeze(1) * gallery_scale.unsqueeze(0)
-            sim = sim / (temperature * scale)
+            sim = sim / (tau * scale)
             ranked = torch.argsort(sim, dim=1, descending=True)
-            gt = torch.arange(start, end).unsqueeze(1)
+            gt = torch.arange(start, end, device=query_mu.device).unsqueeze(1)
             for k in k_values:
                 hits[k] += (ranked[:, :k] == gt).any(dim=1).sum().item()
         return {k: hits[k] / n for k in k_values}
 
-    i2t = _direction(img_mu_n, text_mu_n, img_scale, text_scale, "UC I2T chunks")
-    t2i = _direction(text_mu_n, img_mu_n, text_scale, img_scale, "UC T2I chunks")
+    i2t = _direction(img_mu_n, text_mu_n, img_scale, text_scale, "MSDA I2T chunks")
+    t2i = _direction(text_mu_n, img_mu_n, text_scale, img_scale, "MSDA T2I chunks")
 
     out: Dict[str, float] = {}
     for k in k_values:
-        out[f"uc_recall_i2t@{k}"] = i2t[k]
-        out[f"uc_recall_t2i@{k}"] = t2i[k]
-        out[f"uc_recall@{k}"] = (i2t[k] + t2i[k]) / 2
+        out[f"msda_recall_i2t@{k}"] = i2t[k]
+        out[f"msda_recall_t2i@{k}"] = t2i[k]
+        out[f"msda_recall@{k}"] = (i2t[k] + t2i[k]) / 2
     return out
 
 

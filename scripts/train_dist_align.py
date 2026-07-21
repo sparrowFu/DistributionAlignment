@@ -2,14 +2,22 @@
 GaussianImageDistribution - MSDA Distribution Alignment Training Script
 
 Trains the MSDA (Multi-caption Semantic Distribution Alignment) model, which
-models image and text embeddings as general Gaussians N(mu, Sigma) with a
-learned (non-diagonal) covariance, supervised so that the image variance
-matches the multi-caption semantic spread.
+models image and text embeddings as Gaussians. The image uses a general
+covariance Sigma_v = diag(sigma_v^2) + U_v U_v^T; text is diagonal-only (v1).
+The image variance is supervised toward the multi-caption semantic spread, and
+the image low-rank directions toward the caption deviation directions.
+
+Total loss = lambda_ctr*L_set + lambda_mu*L_mu + lambda_var*L_var
+           + lambda_cover*L_cover + lambda_cov*L_cov + lambda_reg*L_reg
 
 A staged schedule activates loss components progressively:
-    Warm-up: L_set only
-    Main:    + L_var
+    Warm-up: L_set + L_mu (+ L_reg always on)
+    Main:    + L_var + L_cover
     Full:    linearly ramp L_cov 0 -> 1
+
+Checkpoint selection is by the MSDA uncertainty-discounted cosine Recall@1
+(the same score L_set optimizes), so the trained objective, the selection
+metric and the reported metric all agree.
 
 Usage:
     python scripts/train_dist_align.py
@@ -36,7 +44,10 @@ from losses.dist_align_losses import MSDALoss
 from utils.logger import get_logger, log_exception
 from utils.lr_scheduler import apply_lr_for_epoch
 from utils.seed import set_seed
-from utils.retrieval import compute_recall_bidirectional
+from utils.retrieval import (
+    compute_recall_bidirectional,
+    compute_recall_msda_chunked,
+)
 
 
 # Setup logger
@@ -77,25 +88,32 @@ def parse_args():
                         help="Linear warmup epochs for the cosine schedule (0 disables warmup)")
     parser.add_argument("--min-lr-ratio", type=float, default=config.LR_MIN_LR_RATIO,
                         help="Cosine floor as a fraction of the base LR")
-    parser.add_argument("--temperature", type=float, default=config.MSDA_TAU,
-                        help="Temperature tau for L_set-NCE similarity (legacy cosine-NCE temp)")
 
-    # MSDA loss arguments
+    # MSDA loss arguments (six terms)
     parser.add_argument("--lambda-ctr", type=float, default=config.MSDA_LAMBDA_CTR)
+    parser.add_argument("--lambda-mu", type=float, default=config.MSDA_LAMBDA_MU)
     parser.add_argument("--lambda-var", type=float, default=config.MSDA_LAMBDA_VAR)
+    parser.add_argument("--lambda-cover", type=float, default=config.MSDA_LAMBDA_COVER)
     parser.add_argument("--lambda-cov", type=float, default=config.MSDA_LAMBDA_COV)
-    parser.add_argument("--tau-init", type=float, default=config.MSDA_TAU_INIT)
-    parser.add_argument("--learnable-tau", action="store_true", default=config.MSDA_TAU_LEARNABLE)
-    parser.add_argument("--no-learnable-tau", dest="learnable_tau", action="store_false")
-    parser.add_argument("--var-loss-mode", type=str, default=config.MSDA_VAR_LOSS_MODE, choices=["raw", "rescaled"])
-    parser.add_argument("--per-dim-normalize", action="store_true", default=config.MSDA_PER_DIM_NORMALIZE)
-    parser.add_argument("--no-per-dim-normalize", dest="per_dim_normalize", action="store_false")
-    parser.add_argument("--use-logdet", action="store_true", default=config.MSDA_USE_LOGDET)
-    parser.add_argument("--no-use-logdet", dest="use_logdet", action="store_false")
+    parser.add_argument("--lambda-reg", type=float, default=config.MSDA_LAMBDA_REG)
+    parser.add_argument("--tau", type=float, default=config.MSDA_TAU,
+                        help="Fixed temperature in the L_set similarity (not learnable)")
+    parser.add_argument("--m-pos", type=float, default=config.MSDA_M_POS,
+                        help="L_cover positive coverage margin (per-D normalized Mahalanobis)")
+    parser.add_argument("--target-var", type=float, default=config.MSDA_TARGET_VAR,
+                        help="L_reg variance prior sigma_0^2")
+    parser.add_argument("--m-neg", type=float, default=config.MSDA_M_NEG,
+                        help="L_cover negative repulsion margin")
+    parser.add_argument("--use-uncertainty-sim", action="store_true",
+                        default=config.MSDA_USE_UNCERTAINTY_SIM,
+                        help="L_set uses the uncertainty-discounted score (default)")
+    parser.add_argument("--no-uncertainty-sim", dest="use_uncertainty_sim",
+                        action="store_false",
+                        help="L_set uses plain cosine (ablation)")
 
     # MSDA model arguments
     parser.add_argument("--cov-rank", type=int, default=config.MSDA_COV_RANK,
-                        help="Low-rank covariance rank r (0 = diagonal only)")
+                        help="Low-rank covariance rank r for the image side (0 = diagonal only)")
     parser.add_argument("--freeze-clip", action="store_true", default=config.DIST_ALIGN_FREEZE_CLIP,
                         help="Freeze CLIP parameters")
     parser.add_argument("--no-freeze-clip", action="store_false", dest="freeze_clip",
@@ -126,7 +144,7 @@ def parse_args():
     parser.add_argument("--select-by", type=str, default="recall",
                         choices=["recall", "loss"],
                         help="Best-checkpoint selection metric: 'recall' "
-                             "(bidirectional R@1, higher better) or 'loss' "
+                             "(MSDA R@1, higher better) or 'loss' "
                              "(val loss, lower better). Default: recall")
 
     # Output arguments
@@ -137,7 +155,7 @@ def parse_args():
     parser.add_argument("--resume", type=str, default=None,
                         help="Path to checkpoint to resume training from "
                              "(e.g. checkpoints/dist_align_last.pt). "
-                             "Restores model weights, optimizer state, epoch, and best_val_loss.")
+                             "Restores model weights, optimizer state, epoch, and best_recall.")
 
     return parser.parse_args()
 
@@ -145,18 +163,19 @@ def parse_args():
 def stage_multipliers(epoch: int, total: int, no_staged: bool) -> Dict[str, float]:
     """Per-loss multipliers for the staged MSDA schedule.
 
-    Warm-up: L_set only. Main: + L_var. Full: linearly ramp L_cov 0 -> 1
-    (the cov head is untrained before this; a hard step would dominate and
-    destabilize the retrieval means).
+    Warm-up: L_set + L_mu (+ L_reg always on). Main: + L_var + L_cover.
+    Full: linearly ramp L_cov 0 -> 1 (the cov head is untrained before this;
+    a hard step would dominate and destabilize the retrieval means).
+    L_reg is always on (pure stabilizer).
     """
-    base = {"ctr": 1.0, "var": 1.0, "cov": 1.0}
+    base = {"ctr": 1.0, "mu": 1.0, "var": 1.0, "cover": 1.0, "cov": 1.0, "reg": 1.0}
     if no_staged or total <= 0:
         return base
     warmup_end = max(1, int(round(total * config.MSDA_STAGE_WARMUP_FRAC)))
     main_end = max(warmup_end + 1,
                    int(round(total * (config.MSDA_STAGE_WARMUP_FRAC + config.MSDA_STAGE_MAIN_FRAC))))
     if epoch < warmup_end:
-        base.update(var=0.0, cov=0.0)
+        base.update(var=0.0, cover=0.0, cov=0.0)
     elif epoch < main_end:
         base.update(cov=0.0)
     else:
@@ -176,10 +195,9 @@ def create_optimizer(model, args):
     )
     if getattr(model, "cov_rank", 0) > 0:
         head_params += list(model.img_cov_head.parameters())
-        head_params += list(model.text_cov_head.parameters())
 
     if args.freeze_clip:
-        # Only train distribution + covariance heads
+        # Only train distribution + image covariance heads
         optimizer = optim.Adam(head_params, lr=args.mlp_lr, weight_decay=args.weight_decay)
     else:
         # CLIP and heads with different learning rates
@@ -204,11 +222,8 @@ def train_epoch(
     if not model.freeze_clip:
         model.clip_model.train()
 
-    total_loss = 0.0
-    total_nce = 0.0
-    total_var = 0.0
-    total_cov = 0.0
-    total_img_var = 0.0
+    totals = {k: 0.0 for k in
+              ("loss", "set_nce", "mu", "var", "cover", "cov", "reg", "img_var_avg")}
     processed_batches = 0
 
     pbar = tqdm(dataloader, desc=f"Epoch {epoch + 1}")
@@ -242,30 +257,30 @@ def train_epoch(
         loss, loss_dict = criterion(
             outputs['img_mu'], outputs['img_logvar'], outputs['img_U'],
             outputs['text_mu'], outputs['text_logvar'],
-            outputs['text_mus'], outputs['text_logvars'], outputs['text_Us'],
+            outputs['text_mus'], outputs['text_logvars'], outputs.get('text_Us'),
         )
 
         # Backward pass
         optimizer.zero_grad()
         loss.backward()
         # Clip global grad norm to protect against L_cov / cover spikes that can
-        # destabilize the retrieval means (P0 stability fix).
+        # destabilize the retrieval means.
         torch.nn.utils.clip_grad_norm_(model.parameters(), config.MSDA_GRAD_CLIP_NORM)
         optimizer.step()
 
         # Accumulate losses
-        total_loss += loss_dict['total']
-        total_nce += loss_dict['set_nce']
-        total_var += loss_dict['var']
-        total_cov += loss_dict['cov']
-        total_img_var += loss_dict['img_var_avg']
+        for k in totals:
+            kk = "loss" if k == "loss" else k
+            src = "total" if k == "loss" else k
+            totals[k] += loss_dict[src]
 
         # Update progress bar
         pbar.set_postfix({
             'loss': f"{loss_dict['total']:.4f}",
             'NCE': f"{loss_dict['set_nce']:.4f}",
-            'var': f"{loss_dict['var']:.4f}",
-            'cov': f"{loss_dict['cov']:.4f}",
+            'mu': f"{loss_dict['mu']:.3f}",
+            'var': f"{loss_dict['var']:.3f}",
+            'cov': f"{loss_dict['cov']:.3f}",
             'σ²i': f"{loss_dict['img_var_avg']:.3f}",
         })
 
@@ -274,22 +289,13 @@ def train_epoch(
             logger.debug(
                 f"Epoch {epoch + 1}, Batch {batch_idx + 1}/{len(dataloader)}, "
                 f"Loss: {loss_dict['total']:.4f}, "
-                f"NCE: {loss_dict['set_nce']:.4f}, "
-                f"Var: {loss_dict['var']:.4f}, "
-                f"Cov: {loss_dict['cov']:.4f}"
+                f"NCE: {loss_dict['set_nce']:.4f}, mu: {loss_dict['mu']:.4f}, "
+                f"var: {loss_dict['var']:.4f}, cover: {loss_dict['cover']:.4f}, "
+                f"cov: {loss_dict['cov']:.4f}, reg: {loss_dict['reg']:.4f}"
             )
 
-    # Compute averages
     num_batches = max(processed_batches, 1)
-    metrics = {
-        'loss': total_loss / num_batches,
-        'set_nce': total_nce / num_batches,
-        'var': total_var / num_batches,
-        'cov': total_cov / num_batches,
-        'img_var_avg': total_img_var / num_batches,
-    }
-
-    return metrics
+    return {k: v / num_batches for k, v in totals.items()}
 
 
 @torch.no_grad()
@@ -304,14 +310,11 @@ def evaluate(
     """Evaluate the model."""
     model.eval()
 
-    total_loss = 0.0
-    total_nce = 0.0
-    total_var = 0.0
-    total_cov = 0.0
-    total_img_var = 0.0
+    totals = {k: 0.0 for k in
+              ("loss", "set_nce", "mu", "var", "cover", "cov", "reg", "img_var_avg")}
     processed_batches = 0
-    all_img_mu = [] if compute_recall else None
-    all_text_mu = [] if compute_recall else None
+    feats = {k: [] for k in ("img_mu", "text_mu", "img_logvar", "text_logvar")} \
+        if compute_recall else None
 
     pbar = tqdm(dataloader, desc="Evaluating")
 
@@ -320,14 +323,10 @@ def evaluate(
             continue
         processed_batches += 1
 
-        # Get data - PIL images and text lists
         pil_images = batch["image"]
         caption_lists = batch["captions"]
 
-        # Process images with CLIP processor
         pixel_values = model.process_images(pil_images).to(device)
-
-        # Process text captions
         batch_size = len(pil_images)
         num_captions = len(caption_lists[0])
         all_captions = []
@@ -337,48 +336,44 @@ def evaluate(
         input_ids = text_inputs["input_ids"].view(batch_size, num_captions, -1).to(device)
         attention_mask = text_inputs["attention_mask"].view(batch_size, num_captions, -1).to(device)
 
-        # Forward pass
         outputs = model(pixel_values, input_ids, attention_mask)
 
-        # Compute MSDA loss
         loss, loss_dict = criterion(
             outputs['img_mu'], outputs['img_logvar'], outputs['img_U'],
             outputs['text_mu'], outputs['text_logvar'],
-            outputs['text_mus'], outputs['text_logvars'], outputs['text_Us'],
+            outputs['text_mus'], outputs['text_logvars'], outputs.get('text_Us'),
         )
 
-        total_loss += loss_dict['total']
-        total_nce += loss_dict['set_nce']
-        total_var += loss_dict['var']
-        total_cov += loss_dict['cov']
-        total_img_var += loss_dict['img_var_avg']
+        for k in totals:
+            totals[k] += loss_dict["total" if k == "loss" else k]
 
-        if all_img_mu is not None:
-            all_img_mu.append(outputs['img_mu'].cpu())
-            all_text_mu.append(outputs['text_mu'].cpu())
+        if feats is not None:
+            feats["img_mu"].append(outputs['img_mu'].cpu())
+            feats["text_mu"].append(outputs['text_mu'].cpu())
+            feats["img_logvar"].append(outputs['img_logvar'].cpu())
+            feats["text_logvar"].append(outputs['text_logvar'].cpu())
 
         pbar.set_postfix({'loss': f"{loss_dict['total']:.4f}"})
 
-    # Compute averages
     num_batches = max(processed_batches, 1)
-    metrics = {
-        'loss': total_loss / num_batches,
-        'set_nce': total_nce / num_batches,
-        'var': total_var / num_batches,
-        'cov': total_cov / num_batches,
-        'img_var_avg': total_img_var / num_batches,
-    }
+    metrics = {k: v / num_batches for k, v in totals.items()}
 
     # Retrieval Recall@K (image<->text, diagonal pairing). The val loader uses
-    # shuffle=False, so concatenated img_mu[i] stays aligned with its own caption-set
-    # text_mu[i] -> the diagonal is the positive pair. Used for best selection.
-    if compute_recall and recall_k_values and all_img_mu:
-        img_mu_all = torch.cat(all_img_mu, dim=0).to(device)
-        text_mu_all = torch.cat(all_text_mu, dim=0).to(device)
-        recall = compute_recall_bidirectional(
-            img_mu_all, text_mu_all, recall_k_values, chunk_size=1000, normalize=True
-        )
-        metrics.update(recall)
+    # shuffle=False, so concatenated img_mu[i] stays aligned with its own
+    # caption-set text_mu[i] -> the diagonal is the positive pair.
+    # Primary score: MSDA uncertainty-discounted cosine (= what L_set optimizes).
+    # Secondary: plain cosine-on-means (methodology's mean-only retrieval mode).
+    if compute_recall and recall_k_values and feats and feats["img_mu"]:
+        img_mu = torch.cat(feats["img_mu"], dim=0).to(device)
+        text_mu = torch.cat(feats["text_mu"], dim=0).to(device)
+        img_lv = torch.cat(feats["img_logvar"], dim=0).to(device)
+        text_lv = torch.cat(feats["text_logvar"], dim=0).to(device)
+        msda = compute_recall_msda_chunked(
+            img_mu, img_lv, text_mu, text_lv, recall_k_values, tau=criterion.tau)
+        metrics.update(msda)
+        cos = compute_recall_bidirectional(img_mu, text_mu, recall_k_values, normalize=True)
+        for k in recall_k_values:
+            metrics[f"cos_recall@{k}"] = (cos[f"recall_i2t@{k}"] + cos[f"recall_t2i@{k}"]) / 2
 
     return metrics
 
@@ -401,11 +396,12 @@ def main():
     logger.info(f"MLP LR: {args.mlp_lr}")
     logger.info(f"Freeze CLIP: {args.freeze_clip}")
     logger.info(f"Device: {args.device}")
-    logger.info(f"Cov rank r: {args.cov_rank}")
-    logger.info(f"Tau: {args.temperature}")
-    logger.info(f"Loss weights: ctr={args.lambda_ctr} var={args.lambda_var} cov={args.lambda_cov} "
-                f"tau_init={args.tau_init} learnable_tau={args.learnable_tau}")
-    logger.info(f"Var loss mode: {args.var_loss_mode}")
+    logger.info(f"Cov rank r (image side): {args.cov_rank}")
+    logger.info(f"Tau (fixed): {args.tau}")
+    logger.info(f"Loss weights: ctr={args.lambda_ctr} mu={args.lambda_mu} var={args.lambda_var} "
+                f"cover={args.lambda_cover} cov={args.lambda_cov} reg={args.lambda_reg}")
+    logger.info(f"Cover m_pos={args.m_pos} m_neg={args.m_neg}; reg target_var={args.target_var}; "
+                f"uncertainty_sim={args.use_uncertainty_sim}")
     logger.info(f"Staged schedule: {not args.no_staged}")
     logger.info(f"LR scheduler: {args.lr_scheduler} (warmup {args.warmup_epochs}, "
                 f"min_lr_ratio {args.min_lr_ratio})")
@@ -422,28 +418,25 @@ def main():
     model = model.to(args.device)
     logger.info(f"Model created with {model.num_trainable_parameters():,} trainable parameters")
 
-    # Create MSDA loss
+    # Create MSDA loss (no learnable parameters; tau is a fixed scalar)
     criterion = MSDALoss(
         lambda_ctr=args.lambda_ctr,
+        lambda_mu=args.lambda_mu,
         lambda_var=args.lambda_var,
+        lambda_cover=args.lambda_cover,
         lambda_cov=args.lambda_cov,
-        tau_init=args.tau_init,
-        learnable_tau=args.learnable_tau,
-        var_loss_mode=args.var_loss_mode,
-        per_dim_normalize=args.per_dim_normalize,
-        use_logdet=args.use_logdet,
+        lambda_reg=args.lambda_reg,
+        tau=args.tau,
+        m_pos=args.m_pos,
+        target_var=args.target_var,
+        m_neg=args.m_neg,
+        use_uncertainty_sim=args.use_uncertainty_sim,
     )
-    logger.info("Using likelihood-based MSDA loss")
+    logger.info("Using MSDA loss (uncertainty-discounted cosine L_set)")
     criterion = criterion.to(args.device)
 
     # Create optimizer
     optimizer = create_optimizer(model, args)
-    if any(p.requires_grad for p in criterion.parameters()):
-        optimizer.add_param_group({
-            "params": [p for p in criterion.parameters() if p.requires_grad],
-            "lr": args.mlp_lr,
-        })
-        logger.info("Added criterion parameters (tau) to the optimizer")
     base_lrs = [g["lr"] for g in optimizer.param_groups]
 
     # Resume from checkpoint if specified
@@ -526,8 +519,11 @@ def main():
         # Apply staged schedule: scale per-loss weights by stage multipliers
         mult = stage_multipliers(epoch, args.epochs, args.no_staged)
         criterion.lambda_ctr = args.lambda_ctr * mult["ctr"]
+        criterion.lambda_mu = args.lambda_mu * mult["mu"]
         criterion.lambda_var = args.lambda_var * mult["var"]
+        criterion.lambda_cover = args.lambda_cover * mult["cover"]
         criterion.lambda_cov = args.lambda_cov * mult["cov"]
+        criterion.lambda_reg = args.lambda_reg * mult["reg"]
         logger.info(f"Epoch {epoch + 1} stage multipliers: {mult}")
 
         # Apply LR schedule for this epoch (no-op when scheduler == "none")
@@ -551,20 +547,25 @@ def main():
             f"Epoch {epoch + 1}/{args.epochs} - "
             f"Train Loss: {train_metrics['loss']:.4f}, "
             f"NCE: {train_metrics['set_nce']:.4f}, "
+            f"mu: {train_metrics['mu']:.4f}, "
             f"Var: {train_metrics['var']:.4f}, "
+            f"Cover: {train_metrics['cover']:.4f}, "
             f"Cov: {train_metrics['cov']:.4f}, "
+            f"Reg: {train_metrics['reg']:.4f}, "
             f"σ²img: {train_metrics['img_var_avg']:.4f} | "
             f"Val Loss: {val_metrics['loss']:.4f}, "
             f"Val NCE: {val_metrics['set_nce']:.4f}, "
             f"σ²img: {val_metrics['img_var_avg']:.4f}, "
-            f"R@1/5/10: {val_metrics.get('recall@1', 0):.3f}/"
-            f"{val_metrics.get('recall@5', 0):.3f}/{val_metrics.get('recall@10', 0):.3f}"
+            f"MSDA R@1/5/10: {val_metrics.get('msda_recall@1', 0):.3f}/"
+            f"{val_metrics.get('msda_recall@5', 0):.3f}/{val_metrics.get('msda_recall@10', 0):.3f}, "
+            f"Cos R@1/5/10: {val_metrics.get('cos_recall@1', 0):.3f}/"
+            f"{val_metrics.get('cos_recall@5', 0):.3f}/{val_metrics.get('cos_recall@10', 0):.3f}"
         )
 
-        # Save best checkpoint by the selected metric (recall@1 higher-better,
+        # Save best checkpoint by the selected metric (MSDA R@1 higher-better,
         # or val loss lower-better).
-        if args.select_by == "recall" and "recall@1" in val_metrics:
-            current_score = val_metrics["recall@1"]
+        if args.select_by == "recall" and "msda_recall@1" in val_metrics:
+            current_score = val_metrics["msda_recall@1"]
             improved = current_score > best_recall
             if improved:
                 best_recall = current_score
@@ -577,7 +578,7 @@ def main():
         if improved:
             best_checkpoint_path = checkpoint_dir / "dist_align_best.pt"
             model.save(str(best_checkpoint_path))
-            score_str = (f"recall@1: {best_recall:.4f}" if args.select_by == "recall"
+            score_str = (f"msda_recall@1: {best_recall:.4f}" if args.select_by == "recall"
                          else f"val_loss: {best_val_loss:.4f}")
             logger.info(f"Best model saved ({score_str}) -> {best_checkpoint_path}")
             patience_counter = 0
@@ -604,7 +605,7 @@ def main():
     }
     torch.save(final_state, str(final_checkpoint_path))
     logger.info(f"Final model saved to {final_checkpoint_path}")
-    logger.info(f"Best val loss: {best_val_loss:.4f} | Best recall@1: {best_recall:.4f} "
+    logger.info(f"Best val loss: {best_val_loss:.4f} | Best MSDA recall@1: {best_recall:.4f} "
                 f"(selected by: {args.select_by})")
     logger.info("Training completed!")
 

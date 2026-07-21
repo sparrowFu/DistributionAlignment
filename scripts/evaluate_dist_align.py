@@ -2,10 +2,12 @@
 GaussianImageDistribution - MSDA Distribution Alignment Evaluation Script
 
 Evaluates the MSDA (Multi-caption Semantic Distribution Alignment) model using
-image-text retrieval. The forward output keys (img_mu / text_mu / img_logvar /
-text_logvar) are unchanged, so retrieval logic is identical to before; the
-optional uncertainty-calibrated similarity corresponds to MSDA's
-uncertainty-discounted similarity.
+image-text retrieval under two scorers:
+
+  - MSDA score (primary): the uncertainty-discounted cosine
+        sim = (mu_v . mu_t) / (tau * sqrt(1+mean sigma_v^2) * sqrt(1+mean sigma_t^2))
+    i.e. the same score the L_set contrastive loss optimizes.
+  - Cosine-on-means (secondary): the methodology's "mean-only retrieval" mode.
 
 Usage:
     python scripts/evaluate_dist_align.py
@@ -27,6 +29,10 @@ import config
 from data.caption_dataset import ImageCaptionDataset, filter_none_collate
 from models.dist_align_model import DistributionAlignmentModel
 from utils.logger import get_logger, log_exception
+from utils.retrieval import (
+    compute_recall_bidirectional,
+    compute_recall_msda_chunked,
+)
 from utils.seed import set_seed
 
 
@@ -53,13 +59,8 @@ def parse_args():
                         help="Output JSON path (uses config default if None)")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
                         help="Device to use")
-    parser.add_argument("--use-uncertainty-sim", action="store_true",
-                        default=True,
-                        help="Also compute Recall@K with MSDA uncertainty-discounted similarity")
     parser.add_argument("--tau", type=float, default=config.MSDA_TAU,
-                        help="Temperature for uncertainty-discounted similarity")
-    parser.add_argument("--no-loglik", action="store_true",
-                        help="Skip the distribution-likelihood recall")
+                        help="Temperature for the MSDA uncertainty-discounted similarity")
 
     return parser.parse_args()
 
@@ -78,7 +79,6 @@ def extract_features(
     all_text_mu = []
     all_img_logvar = []
     all_text_logvar = []
-    all_img_U = []
     sample_count = 0
 
     logger.info("Extracting features...")
@@ -116,8 +116,6 @@ def extract_features(
         all_text_mu.append(outputs['text_mu'].cpu())
         all_img_logvar.append(outputs['img_logvar'].cpu())
         all_text_logvar.append(outputs['text_logvar'].cpu())
-        img_U_batch = outputs['img_U']
-        all_img_U.append(img_U_batch.cpu() if img_U_batch is not None else None)
 
         sample_count += batch_size
         if num_samples and sample_count >= num_samples:
@@ -128,180 +126,16 @@ def extract_features(
     text_mu = torch.cat(all_text_mu, dim=0)
     img_logvar = torch.cat(all_img_logvar, dim=0)
     text_logvar = torch.cat(all_text_logvar, dim=0)
-    if any(u is None for u in all_img_U):
-        img_U = None
-    else:
-        img_U = torch.cat(all_img_U, dim=0)
 
     if num_samples:
         img_mu = img_mu[:num_samples]
         text_mu = text_mu[:num_samples]
         img_logvar = img_logvar[:num_samples]
         text_logvar = text_logvar[:num_samples]
-        if img_U is not None:
-            img_U = img_U[:num_samples]
 
     logger.info(f"Features shape: Images {img_mu.shape}, Texts {text_mu.shape}")
 
-    return img_mu, text_mu, img_logvar, text_logvar, img_U
-
-
-def compute_recall_chunked(
-    img_features: torch.Tensor,
-    text_features: torch.Tensor,
-    k_values: list,
-    chunk_size: int = 1000
-) -> dict:
-    """Compute Recall@K in chunks to avoid OOM on large matrices."""
-    import torch.nn.functional as F
-
-    n = img_features.shape[0]
-    max_k = max(k_values)
-
-    # L2 normalize features for cosine similarity
-    img_features = F.normalize(img_features, dim=-1)
-    text_features = F.normalize(text_features, dim=-1)
-
-    # Track hits for each k
-    hits = {k: 0 for k in k_values}
-
-    logger.info(f"Computing Recall@K with chunk_size={chunk_size}...")
-
-    for start in tqdm(range(0, n, chunk_size), desc="Recall chunks"):
-        end = min(start + chunk_size, n)
-
-        # Compute partial similarity matrix: [chunk, n]
-        sim_chunk = torch.matmul(img_features[start:end], text_features.T)
-
-        # Get rankings
-        ranked_indices = torch.argsort(sim_chunk, dim=1, descending=True)
-
-        for k in k_values:
-            top_k = ranked_indices[:, :k]
-            gt = torch.arange(start, end).unsqueeze(1)
-            is_in_top_k = (top_k == gt).any(dim=1)
-            hits[k] += is_in_top_k.sum().item()
-
-    recall_metrics = {}
-    for k in k_values:
-        recall_metrics[f'recall@{k}'] = hits[k] / n
-        logger.info(f"Recall@{k}: {recall_metrics[f'recall@{k}']:.4f}")
-
-    return recall_metrics
-
-
-def compute_recall_uc_chunked(
-    img_mu: torch.Tensor,
-    img_logvar: torch.Tensor,
-    text_mu: torch.Tensor,
-    text_logvar: torch.Tensor,
-    k_values: list,
-    temperature: float = 0.07,
-    chunk_size: int = 1000
-) -> dict:
-    """
-    Compute Recall@K using uncertainty-calibrated similarity.
-
-    sim(x,y) = μ_x · μ_y / (τ · √(1 + mean(σ_x²)) · √(1 + mean(σ_y²)))
-    """
-    import torch.nn.functional as F
-
-    n = img_mu.shape[0]
-    max_k = max(k_values)
-
-    # Precompute per-sample scaling factors (mean, not sum, for dimension-independence)
-    img_var_avg = torch.exp(img_logvar).mean(dim=-1)  # (n,)
-    text_var_avg = torch.exp(text_logvar).mean(dim=-1)  # (n,)
-    img_scale = torch.sqrt(1.0 + img_var_avg)  # (n,)
-    text_scale = torch.sqrt(1.0 + text_var_avg)  # (n,)
-
-    # Normalize means
-    img_mu_norm = F.normalize(img_mu, dim=-1)
-    text_mu_norm = F.normalize(text_mu, dim=-1)
-
-    # Track hits for each k
-    hits = {k: 0 for k in k_values}
-
-    logger.info(f"Computing Recall@K (UC similarity, τ={temperature}) with chunk_size={chunk_size}...")
-
-    for start in tqdm(range(0, n, chunk_size), desc="UC Recall chunks"):
-        end = min(start + chunk_size, n)
-
-        # Mean similarity: [chunk, n]
-        sim_chunk = torch.matmul(img_mu_norm[start:end], text_mu_norm.T)
-
-        # Apply uncertainty calibration
-        scale_matrix = img_scale[start:end].unsqueeze(1) * text_scale.unsqueeze(0)
-        sim_chunk = sim_chunk / (temperature * scale_matrix)
-
-        # Get rankings
-        ranked_indices = torch.argsort(sim_chunk, dim=1, descending=True)
-
-        for k in k_values:
-            top_k = ranked_indices[:, :k]
-            gt = torch.arange(start, end).unsqueeze(1)
-            is_in_top_k = (top_k == gt).any(dim=1)
-            hits[k] += is_in_top_k.sum().item()
-
-    recall_metrics = {}
-    for k in k_values:
-        recall_metrics[f'uc_recall@{k}'] = hits[k] / n
-        logger.info(f"UC-Recall@{k}: {recall_metrics[f'uc_recall@{k}']:.4f}")
-
-    return recall_metrics
-
-
-def compute_recall_loglik_chunked(
-    img_mu, img_logvar, img_U, text_mu, k_values,
-    per_dim_normalize=True, use_logdet=True, chunk_size=256,
-):
-    """Recall@K under the distribution-likelihood score.
-
-    S[n, m] = log N(text_m ; img_n, Sigma_n) computed in chunks. i2t ranks rows
-    (image query -> texts); t2i ranks columns (text query -> images). Ground
-    truth is the diagonal (image i matches text i).
-    """
-    import torch.nn.functional as F
-    from utils.distribution_score import image_text_loglik_matrix
-
-    n = img_mu.shape[0]
-    img_mu_n = F.normalize(img_mu, dim=-1)
-    text_mu_n = F.normalize(text_mu, dim=-1)
-    img_var = torch.exp(img_logvar)
-    device = img_mu.device
-
-    i2t_hits = {k: 0 for k in k_values}
-    t2i_hits = {k: 0 for k in k_values}
-    for start in tqdm(range(0, n, chunk_size), desc="loglik recall chunks"):
-        end = min(start + chunk_size, n)
-        img_U_chunk = img_U[start:end] if img_U is not None else None
-        S = image_text_loglik_matrix(
-            img_mu_n[start:end], img_var[start:end], img_U_chunk, text_mu_n,
-            per_dim_normalize=per_dim_normalize, use_logdet=use_logdet,
-            chunk_size=end - start,
-        )  # (C, n)
-        ranked_i2t = torch.argsort(S, dim=1, descending=True)
-        gt = torch.arange(start, end, device=device).unsqueeze(1)
-        for k in k_values:
-            i2t_hits[k] += (ranked_i2t[:, :k] == gt).any(dim=1).sum().item()
-    for start in tqdm(range(0, n, chunk_size), desc="loglik t2i chunks"):
-        end = min(start + chunk_size, n)
-        # score these text queries against all images (image is the distribution center)
-        img_U_full = img_U if img_U is not None else None
-        S = image_text_loglik_matrix(
-            img_mu_n, img_var, img_U_full, text_mu_n[start:end],
-            per_dim_normalize=per_dim_normalize, use_logdet=use_logdet,
-            chunk_size=256,
-        )  # (n, C): rows=images, cols=texts[start:end]
-        ranked_t2i = torch.argsort(S, dim=0, descending=True)  # (n, C)
-        gt = torch.arange(start, end, device=device).unsqueeze(0)  # (1, C)
-        for k in k_values:
-            t2i_hits[k] += (ranked_t2i[:k] == gt).any(dim=0).sum().item()
-
-    return {
-        **{f"loglik_i2t_recall@{k}": i2t_hits[k] / n for k in k_values},
-        **{f"loglik_t2i_recall@{k}": t2i_hits[k] / n for k in k_values},
-    }
+    return img_mu, text_mu, img_logvar, text_logvar
 
 
 def main():
@@ -354,37 +188,45 @@ def main():
     logger.info(f"Dataset loaded: {len(dataset)} samples")
 
     # Extract features (mu and logvar)
-    img_mu, text_mu, img_logvar, text_logvar, img_U = extract_features(
+    img_mu, text_mu, img_logvar, text_logvar = extract_features(
         model, dataloader, args.device, args.num_samples
     )
 
-    # Compute Recall@K using standard cosine similarity on mu
-    recall_metrics = compute_recall_chunked(
-        img_mu, text_mu, args.recall_at_k, chunk_size=1000
-    )
+    img_mu_d = img_mu.to(args.device)
+    text_mu_d = text_mu.to(args.device)
+    img_lv_d = img_logvar.to(args.device)
+    text_lv_d = text_logvar.to(args.device)
 
-    # Optionally also compute Recall@K using uncertainty-discounted similarity
-    if args.use_uncertainty_sim:
-        uc_recall_metrics = compute_recall_uc_chunked(
-            img_mu, img_logvar, text_mu, text_logvar,
-            args.recall_at_k, temperature=args.tau, chunk_size=1000
-        )
-        recall_metrics.update(uc_recall_metrics)
+    # Primary: MSDA uncertainty-discounted cosine (= L_set score)
+    msda_metrics = compute_recall_msda_chunked(
+        img_mu_d, img_lv_d, text_mu_d, text_lv_d, args.recall_at_k, tau=args.tau)
+    logger.info("MSDA-score Recall@K (primary):")
+    for k in args.recall_at_k:
+        logger.info(f"  R@{k}: i2t={msda_metrics[f'msda_recall_i2t@{k}']:.4f} "
+                    f"t2i={msda_metrics[f'msda_recall_t2i@{k}']:.4f} "
+                    f"mean={msda_metrics[f'msda_recall@{k}']:.4f}")
 
-    if not args.no_loglik:
-        loglik_metrics = compute_recall_loglik_chunked(
-            img_mu.to(args.device), img_logvar.to(args.device), img_U.to(args.device) if img_U is not None else None,
-            text_mu.to(args.device), args.recall_at_k,
-            per_dim_normalize=config.MSDA_PER_DIM_NORMALIZE,
-            use_logdet=config.MSDA_USE_LOGDET,
-        )
-        recall_metrics.update(loglik_metrics)
+    # Secondary: cosine-on-means (methodology's mean-only retrieval mode)
+    cos = compute_recall_bidirectional(img_mu_d, text_mu_d, args.recall_at_k, normalize=True)
+    cos_metrics = {}
+    for k in args.recall_at_k:
+        cos_metrics[f"cos_recall_i2t@{k}"] = cos[f"recall_i2t@{k}"]
+        cos_metrics[f"cos_recall_t2i@{k}"] = cos[f"recall_t2i@{k}"]
+        cos_metrics[f"cos_recall@{k}"] = (cos[f"recall_i2t@{k}"] + cos[f"recall_t2i@{k}"]) / 2
+    logger.info("Cosine-on-means Recall@K (mean-only mode):")
+    for k in args.recall_at_k:
+        logger.info(f"  R@{k}: i2t={cos_metrics[f'cos_recall_i2t@{k}']:.4f} "
+                    f"t2i={cos_metrics[f'cos_recall_t2i@{k}']:.4f} "
+                    f"mean={cos_metrics[f'cos_recall@{k}']:.4f}")
+
+    recall_metrics = {**msda_metrics, **cos_metrics}
 
     # Save results
     output_path = args.output_path or str(config.DIST_ALIGN_EVAL_RESULTS_PATH)
     results = {
         'checkpoint': str(checkpoint_path),
         'num_samples': len(dataset) if not args.num_samples else args.num_samples,
+        'tau': args.tau,
         'metrics': recall_metrics
     }
 
