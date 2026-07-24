@@ -79,6 +79,9 @@ TRAIN_CLIP_BASELINE_LOG_PATH = LOG_DIR / "train_clip_baseline.log"
 # Evaluation log for CLIP baseline
 EVAL_CLIP_BASELINE_LOG_PATH = LOG_DIR / "evaluate_clip_baseline.log"
 
+# Evaluation log for CLIP zero-shot
+EVAL_CLIP_ZERO_SHOT_LOG_PATH = LOG_DIR / "evaluate_clip_zero_shot.log"
+
 
 # =============================================================================
 # Checkpoint Paths
@@ -95,6 +98,9 @@ CLIP_BASELINE_LAST_CKPT = CHECKPOINT_DIR / "clip_baseline_coco_last.pt"
 # =============================================================================
 # JSON file for evaluation results
 CLIP_BASELINE_EVAL_RESULTS_PATH = OUTPUT_DIR / "clip_baseline_eval_results.json"
+
+# JSON file for CLIP zero-shot evaluation results
+CLIP_ZERO_SHOT_EVAL_RESULTS_PATH = OUTPUT_DIR / "clip_zero_shot_eval_results.json"
 
 
 # =============================================================================
@@ -196,19 +202,11 @@ DIST_ALIGN_BATCH_SIZE = 32
 DIST_ALIGN_CLIP_LR = 1e-6  # Learning rate for CLIP (if fine-tuning)
 DIST_ALIGN_MLP_LR = 5e-5   # Learning rate for MLP distribution heads (trained from scratch; balanced for convergence vs overfitting)
 DIST_ALIGN_WEIGHT_DECAY = 1e-4
-DIST_ALIGN_TEMPERATURE = 0.07
 DIST_ALIGN_FREEZE_CLIP = True  # Whether to freeze CLIP parameters
-
-# Loss function weights
-DIST_ALIGN_LAMBDA_CONTRASTIVE = 1.0  # Weight for contrastive loss
-DIST_ALIGN_LAMBDA_KL = 10.0          # Weight for KL divergence loss (legacy; unused by MSDA; ProLIP sets lambda_kl=0.0)
-DIST_ALIGN_LAMBDA_VAR = 0.1           # Weight for variance regularization (used by ProLIP baseline)
 
 # Distribution configuration
 DIST_ALIGN_DROPOUT_RATE = 0.1         # Dropout rate for MLP heads
 DIST_ALIGN_DISTRIBUTION_MERGING = "moment_matching"  # Method: "moment_matching", "poe", "simple"
-DIST_ALIGN_KL_TYPE = "symmetric"      # KL divergence type: "symmetric", "forward", "reverse", "wasserstein"
-DIST_ALIGN_TARGET_VARIANCE = 0.5      # Target variance for regularization (used by ProLIP baseline)
 
 
 # =============================================================================
@@ -252,68 +250,26 @@ MSDA_STAGE_FULL_FRAC = 0.2        # + L_cov (ramped 0 -> 1)
 
 
 # =============================================================================
-# VQA Dataset Paths
+# VQA-as-Retrieval Dataset Paths
 # =============================================================================
+# Anchor path for the MSCOCO VQA splits. build_vqa_expansions.py derives each
+# split's files (questions / img_filenames / types / answers, plus the _filtered
+# test variants) from this directory via its _SPLIT_FILES table, and
+# eval_vqa_retrieval.py reads the generated caption expansions -- so only the
+# anchor and the shared image directory are needed here.
 VQA_TRAIN_QUESTIONS = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "train" / "questions.txt"
-VQA_TRAIN_IMG_FILENAMES = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "train" / "img_filenames.txt"
-VQA_TRAIN_TYPES = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "train" / "types.txt"
-VQA_TRAIN_ANSWERS = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "train" / "answers.txt"
-
-VQA_TEST_QUESTIONS = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "test" / "questions_filtered.txt"
-VQA_TEST_IMG_FILENAMES = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "test" / "img_filenames_filtered.txt"
-VQA_TEST_TYPES = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "test" / "types_filtered.txt"
-VQA_TEST_ANSWERS = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "test" / "answers_filtered.txt"
 
 # VQA images share the same directory as MSCOCO captions
 VQA_IMAGES_DIR = IMAGES_DIR
 
-# =============================================================================
-# VQA Training Hyperparameters
-# =============================================================================
-VQA_EPOCHS = 10
-VQA_BATCH_SIZE = 64
-VQA_LR = 5e-5
-VQA_WEIGHT_DECAY = 1e-4
-VQA_HIDDEN_DIM = 512
-VQA_DROPOUT = 0.1
-VQA_NUM_WORKERS = 0 if IS_WINDOWS else 8
-VQA_VAL_SPLIT = 0.1
-VQA_EARLY_STOP_PATIENCE = 3
-
-# Distribution-Aware VQA settings (dist_align only)
-# Number of Monte Carlo samples during evaluation (0 = disabled, use deterministic mu)
-# When enabled, samples z = mu + eps*sigma multiple times and averages predictions
-VQA_DIST_NUM_MC_SAMPLES = 0
 
 # =============================================================================
-# VQA Checkpoint Paths
-# =============================================================================
-VQA_DIST_ALIGN_CKPT = CHECKPOINT_DIR / "vqa_dist_align_best.pt"
-VQA_CLIP_BASELINE_CKPT = CHECKPOINT_DIR / "vqa_clip_baseline_best.pt"
-VQA_LOG_PATH = LOG_DIR / "train_vqa.log"
-
-
-# =============================================================================
-# LLM VQA Evaluation Configuration
+# Caption-Generation Configuration (build_vqa_expansions.py)
 # =============================================================================
 # API configuration file path (stores API keys, never commit this file)
 API_CONFIG_PATH = PROJECT_ROOT / "api_config.json"
 
-# LLM VQA evaluation log
-EVAL_LLM_VQA_LOG_PATH = LOG_DIR / "eval_llm_vqa.log"
-EVALUATE_LLM_VQA_LOG_PATH = LOG_DIR / "evaluate_llm_vqa.log"
-
-# LLM VQA results output (per model)
-LLM_VQA_RESULT_PATHS = {
-    "qwen3.5-4b": OUTPUT_DIR / "llm_vqa_qwen3.5-4b_results.json",
-}
-
-# Models to evaluate
-LLM_MODELS = {
-    "Qwen/Qwen3.5-4B": "qwen3.5-4b",
-}
-
-# API call settings
+# API call settings (used by the --backend api caption path)
 LLM_API_DELAY = 0.5          # Delay between API calls (seconds)
 LLM_API_MAX_RETRIES = 5      # Maximum retries for failed API calls
 LLM_API_RETRY_WAIT = 5       # Base wait time for retries (seconds)
@@ -389,45 +345,12 @@ PROLIP_VIB_BETA = 1.0e-5        # variational information bottleneck KL weight
 
 
 # =============================================================================
-# Baseline B4: GroVE Configuration
-# =============================================================================
-# GroVE adds GP posterior on top of frozen CLIP features
-# Reference: kaaikai/grove
-
-GROVE_BEST_CKPT = CHECKPOINT_DIR / "grove_coco_best.pt"
-GROVE_EVAL_RESULTS_PATH = OUTPUT_DIR / "grove_eval_results.json"
-TRAIN_GROVE_LOG_PATH = LOG_DIR / "train_grove.log"
-EVAL_GROVE_LOG_PATH = LOG_DIR / "evaluate_grove.log"
-
-# GroVE hyperparameters
-GROVE_NUM_INDUCING = 128          # Number of inducing points for GP
-GROVE_LR = 1e-3
-GROVE_EPOCHS = 10
-GROVE_BATCH_SIZE = 32
-GROVE_WEIGHT_DECAY = 1e-4
-GROVE_TEMPERATURE = 0.07
-
-
-# =============================================================================
 # Flickr30K Dataset Configuration
 # =============================================================================
 FLICKR30K_ROOT = PROJECT_ROOT / "TrainDatasets" / "flickr30k"
 FLICKR30K_IMAGES_DIR = FLICKR30K_ROOT / "flickr30k_images"
 FLICKR30K_CAPTIONS_PATH = FLICKR30K_ROOT / "captions.txt"
 FLICKR30K_NUM_CAPTIONS = 5
-
-
-# =============================================================================
-# Experiment 3: Uncertainty Calibration Configuration
-# =============================================================================
-CALIBRATION_RESULTS_DIR = OUTPUT_DIR / "calibration"
-CALIBRATION_NUM_BINS = 15         # Number of bins for ECE computation
-CALIBRATION_LOG_PATH = LOG_DIR / "calibration.log"
-
-# Experiment 3 output paths
-CALIBRATION_DIST_ALIGN_PATH = CALIBRATION_RESULTS_DIR / "dist_align_calibration.json"
-CALIBRATION_PROLIP_PATH = CALIBRATION_RESULTS_DIR / "prolip_calibration.json"
-CALIBRATION_GROVE_PATH = CALIBRATION_RESULTS_DIR / "grove_calibration.json"
 
 
 # =============================================================================
@@ -539,13 +462,6 @@ SIGMA_ANALYSIS_LOG_PATH = LOG_DIR / "sigma_analysis.log"
 # =============================================================================
 VIS_GAP_RESULTS_DIR = OUTPUT_DIR / "modality_gap"
 VIS_GAP_LOG_PATH = LOG_DIR / "visualize_gap.log"
-
-
-# =============================================================================
-# VQA Checkpoint Paths for Baselines
-# =============================================================================
-VQA_PROLIP_CKPT = CHECKPOINT_DIR / "vqa_prolip_best.pt"
-VQA_GROVE_CKPT = CHECKPOINT_DIR / "vqa_grove_best.pt"
 
 
 # =============================================================================

@@ -17,25 +17,9 @@ Verifies:
 - Forward pass with dummy tensors
 - Loss computation and gradient flow
 
-### `test_dist_align.py` — Full Pipeline Test
-
-Complete training and evaluation pipeline demonstration:
-
-```bash
-python examples/test_dist_align.py
-```
-
-Tests:
-1. Model creation
-2. Loss function computation (contrastive + KL + variance reg)
-3. Training step with backprop
-4. Full training epoch
-5. Evaluation with Recall@K
-6. Checkpoint save/load
-
 ## Configuration
 
-Both scripts use minimal resources:
+The script uses minimal resources:
 - **Samples**: 20 (mock data if real dataset unavailable)
 - **Batch size**: 4
 - **Epochs**: 2
@@ -51,32 +35,30 @@ Ensure CLIP ViT-Large-Patch14 is at `PreTrainedModels/clip-vit-large-patch14/`.
 
 ```bash
 set CUDA_VISIBLE_DEVICES=
-python examples/test_dist_align.py
+python examples/quick_test.py
 ```
 
 ## Full Training
 
-After examples pass, start production training:
+After the example passes, start production training via `main.py` (see the project
+[README.md](../README.md) for the full task list):
 
 ```bash
-# Stage 1: Train all models
+# Stage 1: Train + evaluate alignment models
 python main.py --task train_dist_align
 python main.py --task train_clip_baseline
 python main.py --task train_prolip
-python main.py --task train_grove
 
-# Stage 1: Evaluate
 python main.py --task eval_dist_align
 python main.py --task eval_clip_baseline
 python main.py --task eval_clip_zero_shot
 python main.py --task eval_prolip
-python main.py --task eval_grove
 
-# Stage 2: VQA
-python main.py --task train_vqa --model-type dist_align
+# Stage 2: VQA-as-retrieval
+python main.py --task build_vqa_expansions --split test --limit 0 --no-batch
+python main.py --task eval_vqa_retrieval --model dist_align
 
 # Experiments
-python main.py --task eval_calibration
 python main.py --task eval_ood
 python main.py --task run_ablation --config all
 python main.py --task eval_flickr30k --model-type dist_align

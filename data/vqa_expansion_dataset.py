@@ -5,7 +5,7 @@ entries(112,857)+ 唯一图(66,362)+ GT 映射。
 每条 jsonl:
   {"imagefilename","imagepath","type","question","answer","caption"}
 
-风格对齐 data/vqa_dataset.py;只存元数据,不在 __init__ 打开图片(编码时按需打开)。
+只存元数据,不在 __init__ 打开图片(编码时按需打开)。
 """
 
 import json

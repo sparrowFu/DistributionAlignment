@@ -40,7 +40,6 @@ from data.caption_dataset import ImageCaptionDataset, filter_none_collate
 from models.clip_baseline import CLIPFineTuneBaseline
 from models.dist_align_model import DistributionAlignmentModel
 from models.prolip_model import ProLIPModel
-from models.grove_model import GroVEModel
 from utils.logger import get_logger, log_exception
 from utils.seed import set_seed
 
@@ -156,27 +155,6 @@ def extract_prolip(model, dataloader, device, num_samples):
 
 
 @torch.no_grad()
-def extract_grove(model, dataloader, device, num_samples):
-    """GroVE: GP posterior mu."""
-    model.eval()
-    all_img, all_text, all_img_lv, all_text_lv = [], [], [], []
-    for pv, ids, mask in _iterate_batches(dataloader, model, device, num_samples):
-        ids_3d = ids.unsqueeze(1)
-        mask_3d = mask.unsqueeze(1)
-        outputs = model(pv, ids_3d, mask_3d)
-        img_mu = F.normalize(outputs["img_mu"], dim=-1)
-        text_mu = F.normalize(outputs["text_mu"], dim=-1)
-        all_img.append(img_mu.cpu())
-        all_text.append(text_mu.cpu())
-        all_img_lv.append(outputs["img_logvar"].cpu())
-        all_text_lv.append(outputs["text_logvar"].cpu())
-    img_np, text_np = _finalize(all_img, all_text, num_samples)
-    img_lv = torch.cat(all_img_lv, dim=0)[:num_samples].numpy()
-    text_lv = torch.cat(all_text_lv, dim=0)[:num_samples].numpy()
-    return {"img": img_np, "text": text_np, "img_logvar": img_lv, "text_logvar": text_lv}
-
-
-@torch.no_grad()
 def extract_dist_align(model, dataloader, device, num_samples):
     """Distribution Alignment: img_mu and text_mu, then normalize."""
     model.eval()
@@ -217,14 +195,6 @@ METHOD_CONFIGS = {
         "model_fn": lambda: ProLIPModel(freeze=True),
         "checkpoint": str(config.PROLIP_BEST_CKPT),
         "extract_fn": extract_prolip,
-    },
-    "GroVE": {
-        "model_fn": lambda: GroVEModel(
-            num_inducing=config.GROVE_NUM_INDUCING,
-            freeze_clip=True,
-        ),
-        "checkpoint": str(config.GROVE_BEST_CKPT),
-        "extract_fn": extract_grove,
     },
     "Ours": {
         "model_fn": lambda: DistributionAlignmentModel(
@@ -607,7 +577,6 @@ MODEL_TYPE_ALIASES = {
     "clip_zero": "CLIP Zero-Shot",
     "clip_baseline": "CLIP Fine-tune",
     "prolip": "ProLIP",
-    "grove": "GroVE",
 }
 
 

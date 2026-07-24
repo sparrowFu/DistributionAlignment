@@ -7,11 +7,11 @@ Loads checkpoints/dist_align_best.pt and measures, on a fixed val subset:
   - feature norms + sigma^2 (collapse / scale checks)
 
 Run:
-  python scripts/diagnose_dist_align.py --num-samples 2000
+  python scripts/diagnostics/diagnose_dist_align.py --num-samples 2000
 """
 import argparse, sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import torch
 import torch.nn.functional as F

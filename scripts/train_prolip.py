@@ -14,7 +14,7 @@ Usage:
 import argparse
 import random
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Tuple
 
 import torch
 import torch.optim as optim
@@ -26,9 +26,10 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
-from data.caption_dataset import ImageCaptionDataset, filter_none_collate
+from data.caption_dataset import filter_none_collate
 from models.prolip_model import ProLIPModel
 from prolip.loss import ProLIPLoss
+from utils.dataset_factory import build_train_dataset, VALID_DATASETS
 from utils.logger import get_logger, log_exception
 from utils.lr_scheduler import apply_lr_for_epoch
 from utils.seed import set_seed
@@ -53,9 +54,9 @@ def parse_args():
     parser.add_argument("--images-dir", type=str, default=None,
                         help="Path to images directory (uses config default if None)")
     parser.add_argument("--dataset", type=str, default="coco",
-                        choices=["coco", "flickr"],
-                        help="Training dataset tag, embedded in the checkpoint filename as "
-                             "{model}_{dataset}_best|last.pt (coco=MSCOCO, flickr=flickr30k)")
+                        choices=list(VALID_DATASETS),
+                        help="Training dataset: selects both the training data and the "
+                             "checkpoint-name tag (coco=MSCOCO, flickr=flickr30k)")
 
     # Training arguments
     parser.add_argument("--epochs", type=int, default=config.PROLIP_EPOCHS,
@@ -112,7 +113,12 @@ def parse_args():
     return parser.parse_args()
 
 
-def _forward_loss(model, criterion, pixel_values, input_ids):
+def _forward_loss(
+    model: ProLIPModel,
+    criterion: ProLIPLoss,
+    pixel_values: torch.Tensor,
+    input_ids: torch.Tensor,
+) -> Tuple[torch.Tensor, Dict[str, float]]:
     """Run the model and compute the ProLIP inclusion loss + mean-retrieval accuracy."""
     outputs = model(pixel_values, input_ids)
 
@@ -131,7 +137,14 @@ def _forward_loss(model, criterion, pixel_values, input_ids):
     return loss, {"loss": loss.item(), "acc": acc.item()}
 
 
-def train_epoch(model, dataloader, optimizer, criterion, device, epoch):
+def train_epoch(
+    model: ProLIPModel,
+    dataloader: DataLoader,
+    optimizer: optim.Optimizer,
+    criterion: ProLIPLoss,
+    device: torch.device,
+    epoch: int,
+) -> Dict[str, float]:
     """Train for one epoch."""
     model.train()
 
@@ -181,7 +194,12 @@ def train_epoch(model, dataloader, optimizer, criterion, device, epoch):
 
 
 @torch.no_grad()
-def evaluate(model, dataloader, criterion, device):
+def evaluate(
+    model: ProLIPModel,
+    dataloader: DataLoader,
+    criterion: ProLIPLoss,
+    device: torch.device,
+) -> Dict[str, float]:
     """Evaluate the model."""
     model.eval()
 
@@ -260,17 +278,12 @@ def main():
     )
     base_lrs = [g["lr"] for g in optimizer.param_groups]
 
-    # Load dataset
-    captions_path = args.captions_path or config.CAPTIONS_PATH
-    images_dir = args.images_dir or config.IMAGES_DIR
-
-    logger.info(f"Loading dataset from {captions_path}")
-    logger.info(f"Images directory: {images_dir}")
-
-    full_dataset = ImageCaptionDataset(
-        captions_path=captions_path,
-        images_dir=images_dir,
-        num_captions=config.NUM_CAPTIONS,
+    # Load dataset (selected by --dataset; coco=MSCOCO, flickr=flickr30k train split)
+    logger.info(f"Loading training dataset (--dataset {args.dataset})")
+    full_dataset = build_train_dataset(
+        dataset=args.dataset,
+        captions_path=args.captions_path,
+        images_dir=args.images_dir,
     )
 
     # Split into train and validation sets

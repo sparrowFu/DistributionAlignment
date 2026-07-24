@@ -10,7 +10,7 @@ metrics in the same way, including BOTH retrieval directions:
 Previously each eval script carried its own (I2T-only) copy of this logic.
 """
 
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 import torch
 import torch.nn.functional as F
@@ -132,56 +132,3 @@ def compute_recall_msda_chunked(
         out[f"msda_recall_t2i@{k}"] = t2i[k]
         out[f"msda_recall@{k}"] = (i2t[k] + t2i[k]) / 2
     return out
-
-
-@torch.no_grad()
-def extract_distribution_features(
-    model,
-    dataloader,
-    device,
-    num_samples: int = None,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """
-    Extract distribution parameters (mu, logvar) from any model whose
-    ``forward(pixel_values, input_ids, attention_mask)`` returns a dict with
-    ``img_mu / text_mu / img_logvar / text_logvar`` (dist_align, ProLIP, GroVE).
-
-    Returns:
-        (img_mu, text_mu, img_logvar, text_logvar), each (N, D)
-    """
-    model.eval()
-
-    img_mu_list, text_mu_list, img_lv_list, text_lv_list = [], [], [], []
-    sample_count = 0
-
-    for batch in tqdm(dataloader, desc="Extracting features", leave=False):
-        if batch is None:
-            continue
-
-        pil_images = batch["image"]
-        caption_lists = batch["captions"]
-        B = len(pil_images)
-        K = len(caption_lists[0])
-
-        pixel_values = model.process_images(pil_images).to(device)
-        all_captions = [c for cl in caption_lists for c in cl]
-        text_inputs = model.process_text(all_captions)
-        input_ids = text_inputs["input_ids"].view(B, K, -1).to(device)
-        attn_mask = text_inputs["attention_mask"].view(B, K, -1).to(device)
-
-        out = model(pixel_values, input_ids, attn_mask)
-        img_mu_list.append(out["img_mu"].cpu())
-        text_mu_list.append(out["text_mu"].cpu())
-        img_lv_list.append(out["img_logvar"].cpu())
-        text_lv_list.append(out["text_logvar"].cpu())
-
-        sample_count += B
-        if num_samples and sample_count >= num_samples:
-            break
-
-    def _cat(xs):
-        t = torch.cat(xs, dim=0)
-        return t[:num_samples] if num_samples else t
-
-    return (_cat(img_mu_list), _cat(text_mu_list),
-            _cat(img_lv_list), _cat(text_lv_list))

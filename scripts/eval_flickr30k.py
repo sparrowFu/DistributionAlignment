@@ -12,11 +12,9 @@ Usage:
 import argparse
 import json
 from pathlib import Path
-from typing import Dict, Optional
 
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 import sys
@@ -27,7 +25,6 @@ from data.flickr30k_dataset import get_flickr30k_test_loader
 from models.clip_baseline import CLIPFineTuneBaseline
 from models.dist_align_model import DistributionAlignmentModel
 from models.prolip_model import ProLIPModel
-from models.grove_model import GroVEModel
 from utils.logger import get_logger, log_exception
 from utils.seed import set_seed
 
@@ -59,15 +56,6 @@ MODEL_CONFIGS = {
         "model_fn": lambda: ProLIPModel(freeze=True),
         "default_ckpt": config.PROLIP_BEST_CKPT,
         "output_path": config.OUTPUT_DIR / "flickr30k_prolip_results.json",
-        "has_distribution": True,
-    },
-    "grove": {
-        "model_fn": lambda: GroVEModel(
-            num_inducing=config.GROVE_NUM_INDUCING,
-            freeze_clip=True,
-        ),
-        "default_ckpt": config.GROVE_BEST_CKPT,
-        "output_path": config.OUTPUT_DIR / "flickr30k_grove_results.json",
         "has_distribution": True,
     },
     "clip_zero_shot": {
@@ -183,7 +171,7 @@ def extract_features_clip(model, dataloader, device, num_samples=None):
 
 @torch.no_grad()
 def extract_features_distribution(model, dataloader, device, num_samples=None):
-    """Extract features for distribution-based models (dist_align, prolip, grove)."""
+    """Extract features for distribution-based models (dist_align, prolip)."""
     model.eval()
     all_img_mu, all_text_mu = [], []
     all_img_logvar, all_text_logvar = [], []

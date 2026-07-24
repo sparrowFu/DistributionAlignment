@@ -11,7 +11,6 @@ Usage:
 """
 
 import argparse
-import json
 from pathlib import Path
 
 import torch
@@ -22,7 +21,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
 from models.prolip_model import ProLIPModel
-from utils.eval_common import build_eval_dataloader, resolve_checkpoint
+from utils.eval_common import build_eval_dataloader, resolve_checkpoint, VALID_DATASETS
+from utils.eval_results import append_eval_results, groups_to_flat, print_recall_groups
 from utils.logger import get_logger, log_exception
 from utils.retrieval_metrics import compute_retrieval_metrics
 from utils.seed import set_seed
@@ -40,7 +40,7 @@ def parse_args():
                              "prolip_{dataset}_best.pt from --dataset "
                              "(pass a ..._last.pt path to evaluate the last checkpoint).")
     parser.add_argument("--dataset", type=str, default="coco",
-                        choices=["coco", "flickr"],
+                        choices=list(VALID_DATASETS),
                         help="Dataset to evaluate on and to auto-select the checkpoint for "
                              "(coco=MSCOCO, flickr=flickr30k). Default: coco")
     parser.add_argument("--captions-path", type=str, default=None,
@@ -146,25 +146,29 @@ def main():
         args.recall_at_k, chunk_size=1000,
     )
 
-    for direction, by_metric in metrics.items():
-        for metric_name, recalls in by_metric.items():
-            for k, v in recalls.items():
-                logger.info(f"{direction}/{metric_name}/{k}: {v:.4f}")
+    # Group into cosine / csd families (each with i2t, t2i, mean) for unified
+    # printing and a flat metrics dict.
+    groups = []
+    for metric_name, label in [("cosine", "Cosine Recall@K"), ("csd", "CSD Recall@K")]:
+        per_k = {}
+        for k in args.recall_at_k:
+            i2t = metrics["i2t"][metric_name][f"recall@{k}"]
+            t2i = metrics["t2i"][metric_name][f"recall@{k}"]
+            per_k[k] = {"i2t": i2t, "t2i": t2i, "mean": (i2t + t2i) / 2}
+        groups.append({"family": f"{metric_name}_recall", "label": label, "per_k": per_k})
 
-    # Save results
+    print_recall_groups(groups, logger)
+
+    # Append results (never overwrite prior runs); time is stamped after dataset.
     output_path = args.output_path or str(config.PROLIP_EVAL_RESULTS_PATH)
-    results = {
+    append_eval_results(output_path, {
         "model": "ProLIP ViT-H/14 (fine-tuned)",
         "checkpoint": str(checkpoint_path),
         "dataset": args.dataset,
         "num_samples": num_eval_samples,
-        "metrics": metrics,
-    }
+        "metrics": groups_to_flat(groups),
+    }, logger)
 
-    with open(output_path, "w") as f:
-        json.dump(results, f, indent=2)
-
-    logger.info(f"Results saved to {output_path}")
     logger.info("Evaluation completed!")
 
 

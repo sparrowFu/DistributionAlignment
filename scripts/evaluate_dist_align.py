@@ -15,7 +15,6 @@ Usage:
 """
 
 import argparse
-import json
 from pathlib import Path
 
 import torch
@@ -27,7 +26,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
 from models.dist_align_model import DistributionAlignmentModel
-from utils.eval_common import build_eval_dataloader, resolve_checkpoint
+from utils.eval_common import build_eval_dataloader, resolve_checkpoint, VALID_DATASETS
+from utils.eval_results import append_eval_results, groups_to_flat, print_recall_groups
 from utils.logger import get_logger, log_exception
 from utils.retrieval import (
     compute_recall_bidirectional,
@@ -48,7 +48,7 @@ def parse_args():
                              "dist_align_{dataset}_best.pt from --dataset "
                              "(pass a ..._last.pt path to evaluate the last checkpoint).")
     parser.add_argument("--dataset", type=str, default="coco",
-                        choices=["coco", "flickr"],
+                        choices=list(VALID_DATASETS),
                         help="Dataset to evaluate on and to auto-select the checkpoint for "
                              "(coco=MSCOCO, flickr=flickr30k). Default: coco")
     parser.add_argument("--captions-path", type=str, default=None,
@@ -188,41 +188,50 @@ def main():
     # Primary: MSDA uncertainty-discounted cosine (= L_set score)
     msda_metrics = compute_recall_msda_chunked(
         img_mu_d, img_lv_d, text_mu_d, text_lv_d, args.recall_at_k, tau=args.tau)
-    logger.info("MSDA-score Recall@K (primary):")
-    for k in args.recall_at_k:
-        logger.info(f"  R@{k}: i2t={msda_metrics[f'msda_recall_i2t@{k}']:.4f} "
-                    f"t2i={msda_metrics[f'msda_recall_t2i@{k}']:.4f} "
-                    f"mean={msda_metrics[f'msda_recall@{k}']:.4f}")
 
     # Secondary: cosine-on-means (methodology's mean-only retrieval mode)
     cos = compute_recall_bidirectional(img_mu_d, text_mu_d, args.recall_at_k, normalize=True)
-    cos_metrics = {}
-    for k in args.recall_at_k:
-        cos_metrics[f"cos_recall_i2t@{k}"] = cos[f"recall_i2t@{k}"]
-        cos_metrics[f"cos_recall_t2i@{k}"] = cos[f"recall_t2i@{k}"]
-        cos_metrics[f"cos_recall@{k}"] = (cos[f"recall_i2t@{k}"] + cos[f"recall_t2i@{k}"]) / 2
-    logger.info("Cosine-on-means Recall@K (mean-only mode):")
-    for k in args.recall_at_k:
-        logger.info(f"  R@{k}: i2t={cos_metrics[f'cos_recall_i2t@{k}']:.4f} "
-                    f"t2i={cos_metrics[f'cos_recall_t2i@{k}']:.4f} "
-                    f"mean={cos_metrics[f'cos_recall@{k}']:.4f}")
 
-    recall_metrics = {**msda_metrics, **cos_metrics}
+    groups = [
+        {
+            "family": "msda_recall",
+            "label": "MSDA-score Recall@K (primary)",
+            "per_k": {
+                k: {
+                    "i2t": msda_metrics[f"msda_recall_i2t@{k}"],
+                    "t2i": msda_metrics[f"msda_recall_t2i@{k}"],
+                    "mean": msda_metrics[f"msda_recall@{k}"],
+                }
+                for k in args.recall_at_k
+            },
+        },
+        {
+            "family": "cos_recall",
+            "label": "Cosine-on-means Recall@K (mean-only mode)",
+            "per_k": {
+                k: {
+                    "i2t": cos[f"recall_i2t@{k}"],
+                    "t2i": cos[f"recall_t2i@{k}"],
+                    "mean": cos[f"recall@{k}"],
+                }
+                for k in args.recall_at_k
+            },
+        },
+    ]
 
-    # Save results
+    print_recall_groups(groups, logger)
+    recall_metrics = groups_to_flat(groups)
+
+    # Append results (never overwrite prior runs); time is stamped after dataset.
     output_path = args.output_path or str(config.DIST_ALIGN_EVAL_RESULTS_PATH)
-    results = {
+    append_eval_results(output_path, {
         'checkpoint': str(checkpoint_path),
         'dataset': args.dataset,
         'num_samples': num_eval_samples,
         'tau': args.tau,
-        'metrics': recall_metrics
-    }
+        'metrics': recall_metrics,
+    }, logger)
 
-    with open(output_path, 'w') as f:
-        json.dump(results, f, indent=2)
-
-    logger.info(f"Results saved to {output_path}")
     logger.info("Evaluation completed!")
 
 

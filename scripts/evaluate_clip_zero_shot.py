@@ -11,11 +11,9 @@ Usage:
 """
 
 import argparse
-import json
 from pathlib import Path
 
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -24,12 +22,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
 from models.clip_baseline import CLIPFineTuneBaseline
-from utils.eval_common import build_eval_dataloader
+from utils.eval_common import build_eval_dataloader, VALID_DATASETS
+from utils.eval_results import append_eval_results, groups_to_flat, print_recall_groups
 from utils.logger import get_logger, log_exception
+from utils.retrieval import compute_recall_bidirectional
 from utils.seed import set_seed
 
 
-logger = get_logger("eval_clip_zero_shot", config.LOG_DIR / "evaluate_clip_zero_shot.log")
+logger = get_logger("eval_clip_zero_shot", config.EVAL_CLIP_ZERO_SHOT_LOG_PATH)
 
 
 def parse_args():
@@ -37,7 +37,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate CLIP Zero-Shot Baseline")
 
     parser.add_argument("--dataset", type=str, default="coco",
-                        choices=["coco", "flickr"],
+                        choices=list(VALID_DATASETS),
                         help="Dataset to evaluate on (coco=MSCOCO, flickr=flickr30k). Zero-shot "
                              "uses no checkpoint, so --dataset only selects the eval data. "
                              "Default: coco")
@@ -115,36 +115,6 @@ def extract_features(
     return img_features, text_features
 
 
-def compute_recall_chunked(
-    img_features: torch.Tensor,
-    text_features: torch.Tensor,
-    k_values: list,
-    chunk_size: int = 1000,
-) -> dict:
-    """Compute Recall@K in chunks to avoid OOM."""
-    n = img_features.shape[0]
-    hits = {k: 0 for k in k_values}
-
-    logger.info(f"Computing Recall@K with chunk_size={chunk_size}...")
-    for start in tqdm(range(0, n, chunk_size), desc="Recall chunks"):
-        end = min(start + chunk_size, n)
-        sim_chunk = torch.matmul(img_features[start:end], text_features.T)
-        ranked_indices = torch.argsort(sim_chunk, dim=1, descending=True)
-
-        for k in k_values:
-            top_k = ranked_indices[:, :k]
-            gt = torch.arange(start, end).unsqueeze(1)
-            is_in_top_k = (top_k == gt).any(dim=1)
-            hits[k] += is_in_top_k.sum().item()
-
-    recall_metrics = {}
-    for k in k_values:
-        recall_metrics[f"recall@{k}"] = hits[k] / n
-        logger.info(f"Recall@{k}: {recall_metrics[f'recall@{k}']:.4f}")
-
-    return recall_metrics
-
-
 def main():
     """Main evaluation function."""
     args = parse_args()
@@ -175,24 +145,32 @@ def main():
         model, dataloader, args.device, args.num_samples,
     )
 
-    # Compute Recall@K
-    recall_metrics = compute_recall_chunked(
-        img_features, text_features, args.recall_at_k, chunk_size=1000,
-    )
+    # Compute bidirectional Recall@K (image->text and text->image, cosine)
+    bidir = compute_recall_bidirectional(
+        img_features, text_features, args.recall_at_k, chunk_size=1000, normalize=True)
+    groups = [{
+        "family": "recall",
+        "label": "Recall@K",
+        "per_k": {
+            k: {
+                "i2t": bidir[f"recall_i2t@{k}"],
+                "t2i": bidir[f"recall_t2i@{k}"],
+                "mean": bidir[f"recall@{k}"],
+            }
+            for k in args.recall_at_k
+        },
+    }]
+    print_recall_groups(groups, logger)
 
-    # Save results
-    output_path = args.output_path or str(config.OUTPUT_DIR / "clip_zero_shot_eval_results.json")
-    results = {
+    # Append results (never overwrite prior runs); time is stamped after dataset.
+    output_path = args.output_path or str(config.CLIP_ZERO_SHOT_EVAL_RESULTS_PATH)
+    append_eval_results(output_path, {
         "model": "CLIP ViT-L/14 (zero-shot, frozen)",
         "dataset": args.dataset,
         "num_samples": num_eval_samples,
-        "metrics": recall_metrics,
-    }
+        "metrics": groups_to_flat(groups),
+    }, logger)
 
-    with open(output_path, "w") as f:
-        json.dump(results, f, indent=2)
-
-    logger.info(f"Results saved to {output_path}")
     logger.info("Evaluation completed!")
 
 

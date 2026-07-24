@@ -25,8 +25,8 @@ COMPUTES
     - prints a Case A/B verdict + root cause + fix direction
 
 USAGE
-    python scripts/eval_sigma_diagnostic.py
-    python scripts/eval_sigma_diagnostic.py --num-samples 5000
+    python scripts/diagnostics/eval_sigma_diagnostic.py
+    python scripts/diagnostics/eval_sigma_diagnostic.py --num-samples 5000
 """
 
 import argparse
@@ -35,12 +35,11 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import config
 from data.caption_dataset import ImageCaptionDataset, filter_none_collate

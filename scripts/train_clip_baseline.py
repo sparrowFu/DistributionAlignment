@@ -24,8 +24,9 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
-from data.caption_dataset import ImageCaptionDataset, filter_none_collate
+from data.caption_dataset import filter_none_collate
 from models.clip_baseline import CLIPFineTuneBaseline
+from utils.dataset_factory import build_train_dataset, VALID_DATASETS
 from losses.clip_losses import clip_contrastive_loss
 from utils.logger import get_logger, log_exception
 from utils.lr_scheduler import apply_lr_for_epoch
@@ -51,9 +52,9 @@ def parse_args():
     parser.add_argument("--images-dir", type=str, default=None,
                         help="Path to images directory (uses config default if None)")
     parser.add_argument("--dataset", type=str, default="coco",
-                        choices=["coco", "flickr"],
-                        help="Training dataset tag, embedded in the checkpoint filename as "
-                             "{model}_{dataset}_best|last.pt (coco=MSCOCO, flickr=flickr30k)")
+                        choices=list(VALID_DATASETS),
+                        help="Training dataset: selects both the training data and the "
+                             "checkpoint-name tag (coco=MSCOCO, flickr=flickr30k)")
 
     # Training arguments
     parser.add_argument("--epochs", type=int, default=config.CLIP_BASELINE_EPOCHS,
@@ -294,17 +295,12 @@ def main():
     )
     base_lrs = [g["lr"] for g in optimizer.param_groups]
 
-    # Load dataset
-    captions_path = args.captions_path or config.CAPTIONS_PATH
-    images_dir = args.images_dir or config.IMAGES_DIR
-
-    logger.info(f"Loading dataset from {captions_path}")
-    logger.info(f"Images directory: {images_dir}")
-
-    full_dataset = ImageCaptionDataset(
-        captions_path=captions_path,
-        images_dir=images_dir,
-        num_captions=config.NUM_CAPTIONS
+    # Load dataset (selected by --dataset; coco=MSCOCO, flickr=flickr30k train split)
+    logger.info(f"Loading training dataset (--dataset {args.dataset})")
+    full_dataset = build_train_dataset(
+        dataset=args.dataset,
+        captions_path=args.captions_path,
+        images_dir=args.images_dir,
     )
 
     # Split into train and validation sets

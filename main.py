@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 import config
+from utils.dataset_registry import VALID_DATASETS
 from utils.logger import get_logger, log_exception
 from utils.seed import set_seed
 from utils.cpu_affinity import apply_cpu_affinity
@@ -40,8 +41,6 @@ Available tasks:
     train_prolip           Train ProLIP baseline model (B3)
     eval_prolip            Evaluate ProLIP baseline model (B3)
     eval_prolip_zero_shot  Evaluate ProLIP Zero-Shot baseline (B3)
-    train_grove            Train GroVE baseline model (B4)
-    eval_grove             Evaluate GroVE baseline model (B4)
     eval_clip_zero_shot    Evaluate CLIP Zero-Shot baseline (B1)
 
   Stage 2 (VQA Downstream):
@@ -50,14 +49,13 @@ Available tasks:
 
   Experiment Tasks:
     run_ablation           Exp5: Ablation study (--config all|no_consistency|...)
-    eval_calibration       Exp3: Uncertainty calibration (ECE/NLL/Brier/AUROC)
     eval_ood               Exp4: OOD detection (sigma-based anomaly scoring)
     eval_sigma_analysis    Exp7: sigma semantic analysis
     visualize_gap          Exp8: Modality gap visualization
     eval_flickr30k         Exp6: Flickr30K cross-dataset generalization
 
 Supported model types (--model-type): dist_align, clip_baseline, clip_zero_shot,
-                                     prolip, grove
+                                     prolip
 eval_vqa_retrieval --model: clip_zero_shot, clip_baseline, dist_align,
                             prolip_zero_shot, prolip, all
 
@@ -81,13 +79,11 @@ Examples:
             "train_clip_baseline", "eval_clip_baseline",
             "train_dist_align", "eval_dist_align",
             "train_prolip", "eval_prolip", "eval_prolip_zero_shot",
-            "train_grove", "eval_grove",
             "eval_clip_zero_shot",
             # Stage 2: VQA-as-retrieval downstream (gemma caption)
             "build_vqa_expansions",
             "eval_vqa_retrieval",
             # Experiments
-            "eval_calibration",
             "eval_ood",
             "run_ablation",
             "eval_sigma_analysis",
@@ -103,7 +99,7 @@ Examples:
         type=str,
         default=None,
         choices=["dist_align", "clip_baseline", "clip_zero_shot",
-                 "prolip", "grove"],
+                 "prolip"],
         help="Base model type for VQA training"
     )
 
@@ -121,9 +117,9 @@ Examples:
     parser.add_argument("--images-dir", type=str, default=None,
                         help="Path to images directory")
     parser.add_argument("--dataset", type=str, default=None,
-                        choices=["coco", "flickr"],
-                        help="Training dataset tag embedded in checkpoint filename "
-                             "(coco=MSCOCO, flickr=flickr30k); training scripts default to coco")
+                        choices=list(VALID_DATASETS),
+                        help="Dataset: selects the train/eval data source and the "
+                             "checkpoint-name tag (coco=MSCOCO, flickr=flickr30k)")
 
     # Training arguments
     parser.add_argument("--epochs", type=int, default=None)
@@ -255,15 +251,12 @@ TASK_SCRIPTS = {
     "train_prolip":          "train_prolip.py",               # python main.py --task train_prolip
     "eval_prolip":           "evaluate_prolip.py",            # python main.py --task eval_prolip --num-samples 5000
     "eval_prolip_zero_shot": "evaluate_prolip_zero_shot.py",  # python main.py --task eval_prolip_zero_shot --num-samples 5000
-    "train_grove":           "train_grove.py",                # python main.py --task train_grove
-    "eval_grove":            "evaluate_grove.py",             # python main.py --task eval_grove --num-samples 5000
     # Stage 1: Zero-shot
     "eval_clip_zero_shot":   "evaluate_clip_zero_shot.py",    # python main.py --task eval_clip_zero_shot --num-samples 5000
     # Stage 2: VQA-as-retrieval downstream (gemma caption)
     "build_vqa_expansions":  "build_vqa_expansions.py",       # python main.py --task build_vqa_expansions --split test --limit 0 --no-batch
     "eval_vqa_retrieval":    "eval_vqa_retrieval.py",         # python main.py --task eval_vqa_retrieval --model dist_align  (或 --model all)
     # Experiments
-    "eval_calibration":      "eval_calibration.py",           # python main.py --task eval_calibration
     "eval_ood":              "eval_ood.py",                   # python main.py --task eval_ood
     "run_ablation":          "run_ablation.py",               # python main.py --task run_ablation --config all
     "eval_sigma_analysis":   "eval_sigma_analysis.py",        # python main.py --task eval_sigma_analysis --num-samples 5000

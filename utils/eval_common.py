@@ -23,11 +23,7 @@ import torch
 from torch.utils.data import DataLoader, Subset
 
 import config
-
-
-# Supported dataset tags (the suffix embedded in checkpoint filenames and the
-# value of --dataset on the eval scripts).
-VALID_DATASETS = ("coco", "flickr")
+from utils.dataset_registry import VALID_DATASETS, get_dataset_spec  # noqa: F401 (re-export)
 
 
 def resolve_checkpoint(model_name: str, dataset: str, which: str = "best") -> Path:
@@ -38,8 +34,8 @@ def resolve_checkpoint(model_name: str, dataset: str, which: str = "best") -> Pa
     ``checkpoints/prolip_coco_best.pt``.
 
     Args:
-        model_name: model prefix ("dist_align", "clip_baseline", "prolip", "grove").
-        dataset: dataset tag ("coco" or "flickr").
+        model_name: model prefix ("dist_align", "clip_baseline", "prolip").
+        dataset: dataset tag (see :data:`utils.dataset_registry.VALID_DATASETS`).
         which: "best" (default) or "last".
     """
     if dataset not in VALID_DATASETS:
@@ -62,22 +58,27 @@ def build_eval_dataloader(
 ) -> Tuple[DataLoader, int]:
     """Build the evaluation DataLoader for the given dataset tag.
 
-    - ``coco`` -> MSCOCO via ``ImageCaptionDataset`` (config captions/images
-      paths, or the optional ``captions_path``/``images_dir`` overrides), with
-      an optional deterministic random ``num_samples`` subset.
-    - ``flickr`` -> Flickr30K test split via ``get_flickr30k_test_loader``
+    Dispatches on the dataset's ``eval_kind`` (see :mod:`utils.dataset_registry`),
+    so the set of supported datasets is defined entirely by the registry:
+
+    - ``image_caption`` -> MSCOCO via ``ImageCaptionDataset`` (config captions/
+      images paths, or the optional ``captions_path``/``images_dir`` overrides),
+      with an optional deterministic random ``num_samples`` subset.
+    - ``flickr_test`` -> Flickr30K test split via ``get_flickr30k_test_loader``
       (full test set; no subsetting).
 
     Returns ``(dataloader, num_eval_samples)`` where ``num_eval_samples`` is the
     number of images in the (possibly subsetted) dataset actually iterated.
     """
-    if dataset == "coco":
+    spec = get_dataset_spec(dataset)
+
+    if spec.eval_kind == "image_caption":
         from data.caption_dataset import ImageCaptionDataset, filter_none_collate
 
         ds = ImageCaptionDataset(
             captions_path=captions_path or config.CAPTIONS_PATH,
             images_dir=images_dir or config.IMAGES_DIR,
-            num_captions=num_captions or config.NUM_CAPTIONS,
+            num_captions=num_captions or spec.num_captions,
         )
 
         if num_samples and num_samples < len(ds):
@@ -92,13 +93,13 @@ def build_eval_dataloader(
         )
         return dl, len(ds)
 
-    if dataset == "flickr":
+    if spec.eval_kind == "flickr_test":
         from data.flickr30k_dataset import get_flickr30k_test_loader
 
         flickr = get_flickr30k_test_loader(
             batch_size=batch_size,
             num_workers=num_workers,
-            num_captions=num_captions or config.FLICKR30K_NUM_CAPTIONS,
+            num_captions=num_captions or spec.num_captions,
         )
         if flickr is None:
             raise RuntimeError(
@@ -107,4 +108,5 @@ def build_eval_dataloader(
         return flickr["dataloader"], len(flickr["dataset"])
 
     raise ValueError(
-        f"Unknown dataset tag {dataset!r}. Expected one of {VALID_DATASETS}.")
+        f"No eval loader registered for kind {spec.eval_kind!r} "
+        f"(dataset {dataset!r}). Add a branch in build_eval_dataloader.")
