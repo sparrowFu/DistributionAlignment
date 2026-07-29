@@ -132,3 +132,77 @@ def compute_recall_msda_chunked(
         out[f"msda_recall_t2i@{k}"] = t2i[k]
         out[f"msda_recall@{k}"] = (i2t[k] + t2i[k]) / 2
     return out
+
+
+@torch.no_grad()
+def compute_i2t_caption_pair_counts(
+    img_mu: torch.Tensor,
+    img_logvar: torch.Tensor,
+    text_mus: torch.Tensor,
+    text_logvars: torch.Tensor,
+    k_values: List[int],
+    tau: float = 0.07,
+    chunk_size: int = 1000,
+) -> Dict[str, float]:
+    """
+    Image->text retrieval against a per-caption gallery: for each image, count
+    how many of its K captions land in the top-K retrieved, averaged over images.
+
+    Unlike :func:`compute_recall_msda_chunked` (1:1 against the single merged
+    text mean), the gallery here is ALL N*K per-caption means, and image i has K
+    positives -- its own captions at the flattened (image-major) indices
+    ``[i*K, i*K+K)``. The reported value is the mean per-image hit count
+    (range ``0..K``), under both the cosine and the MSDA uncertainty-discounted
+    scores.
+
+    Args:
+        img_mu:        (N, D) image means
+        img_logvar:    (N, D) image log-variances (MSDA scorer only)
+        text_mus:      (N, K, D) per-caption means
+        text_logvars:  (N, K, D) per-caption log-variances (MSDA scorer only)
+        k_values:      top-K cutoffs for the hit count (e.g. [5, 10])
+        tau:           MSDA score temperature
+        chunk_size:    query (image) chunk size to bound the sim-matrix memory
+
+    Returns:
+        ``{cos_pair_count@{k}, msda_pair_count@{k}}`` for each k in ``k_values``.
+    """
+    N, K, _ = text_mus.shape
+    gallery_mu = text_mus.reshape(N * K, -1)             # (N*K, D)
+    gallery_logvar = text_logvars.reshape(N * K, -1)     # (N*K, D)
+
+    img_mu_n = F.normalize(img_mu, dim=-1)               # (N, D)
+    gallery_mu_n = F.normalize(gallery_mu, dim=-1)       # (N*K, D)
+    img_scale = torch.sqrt(1.0 + torch.exp(img_logvar).mean(dim=-1))          # (N,)
+    gallery_scale = torch.sqrt(1.0 + torch.exp(gallery_logvar).mean(dim=-1))  # (N*K,)
+
+    def _count(scorer, desc):
+        hits = {k: 0 for k in k_values}
+        for start in tqdm(range(0, N, chunk_size), desc=desc, leave=False):
+            end = min(start + chunk_size, N)
+            sim = scorer(img_mu_n[start:end], gallery_mu_n,
+                         img_scale[start:end], gallery_scale)   # (chunk, N*K)
+            ranked = torch.argsort(sim, dim=1, descending=True)
+            rows = torch.arange(start, end, device=sim.device).unsqueeze(1)   # (chunk, 1) global img idx
+            pos_lo = rows * K
+            pos_hi = pos_lo + K
+            for k in k_values:
+                in_range = (ranked[:, :k] >= pos_lo) & (ranked[:, :k] < pos_hi)
+                hits[k] += in_range.sum().item()
+        return {k: hits[k] / N for k in k_values}
+
+    def _cos(q, g, _qs, _gs):
+        return torch.matmul(q, g.T)
+
+    def _msda(q, g, qs, gs):
+        sim = torch.matmul(q, g.T)
+        return sim / (tau * qs.unsqueeze(1) * gs.unsqueeze(0))
+
+    cos = _count(_cos, "I2T pair-count (cos)")
+    msda = _count(_msda, "I2T pair-count (msda)")
+
+    out: Dict[str, float] = {}
+    for k in k_values:
+        out[f"cos_pair_count@{k}"] = cos[k]
+        out[f"msda_pair_count@{k}"] = msda[k]
+    return out

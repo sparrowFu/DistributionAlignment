@@ -30,6 +30,7 @@ from utils.eval_common import build_eval_dataloader, resolve_checkpoint, VALID_D
 from utils.eval_results import append_eval_results, groups_to_flat, print_recall_groups
 from utils.logger import get_logger, log_exception
 from utils.retrieval import (
+    compute_i2t_caption_pair_counts,
     compute_recall_bidirectional,
     compute_recall_msda_chunked,
 )
@@ -85,6 +86,8 @@ def extract_features(
     all_text_mu = []
     all_img_logvar = []
     all_text_logvar = []
+    all_text_mus = []        # per-caption means (B, K, D) -- I2T pair-count metric
+    all_text_logvars = []    # per-caption log-variances (B, K, D)
     sample_count = 0
 
     logger.info("Extracting features...")
@@ -122,6 +125,8 @@ def extract_features(
         all_text_mu.append(outputs['text_mu'].cpu())
         all_img_logvar.append(outputs['img_logvar'].cpu())
         all_text_logvar.append(outputs['text_logvar'].cpu())
+        all_text_mus.append(outputs['text_mus'].cpu())
+        all_text_logvars.append(outputs['text_logvars'].cpu())
 
         sample_count += batch_size
         if num_samples and sample_count >= num_samples:
@@ -132,16 +137,20 @@ def extract_features(
     text_mu = torch.cat(all_text_mu, dim=0)
     img_logvar = torch.cat(all_img_logvar, dim=0)
     text_logvar = torch.cat(all_text_logvar, dim=0)
+    text_mus = torch.cat(all_text_mus, dim=0)          # (N, K, D)
+    text_logvars = torch.cat(all_text_logvars, dim=0)  # (N, K, D)
 
     if num_samples:
         img_mu = img_mu[:num_samples]
         text_mu = text_mu[:num_samples]
         img_logvar = img_logvar[:num_samples]
         text_logvar = text_logvar[:num_samples]
+        text_mus = text_mus[:num_samples]
+        text_logvars = text_logvars[:num_samples]
 
     logger.info(f"Features shape: Images {img_mu.shape}, Texts {text_mu.shape}")
 
-    return img_mu, text_mu, img_logvar, text_logvar
+    return img_mu, text_mu, img_logvar, text_logvar, text_mus, text_logvars
 
 
 def main():
@@ -175,8 +184,9 @@ def main():
     )
     logger.info(f"Dataset loaded ({args.dataset}): {num_eval_samples} samples")
 
-    # Extract features (mu and logvar)
-    img_mu, text_mu, img_logvar, text_logvar = extract_features(
+    # Extract features (mu and logvar); text_mus/text_logvars are the per-caption
+    # outputs used by the I2T pair-count metric.
+    img_mu, text_mu, img_logvar, text_logvar, text_mus, text_logvars = extract_features(
         model, dataloader, args.device, args.num_samples
     )
 
@@ -184,6 +194,8 @@ def main():
     text_mu_d = text_mu.to(args.device)
     img_lv_d = img_logvar.to(args.device)
     text_lv_d = text_logvar.to(args.device)
+    text_mus_d = text_mus.to(args.device)
+    text_logvars_d = text_logvars.to(args.device)
 
     # Primary: MSDA uncertainty-discounted cosine (= L_set score)
     msda_metrics = compute_recall_msda_chunked(
@@ -230,6 +242,36 @@ def main():
         'num_samples': num_eval_samples,
         'tau': args.tau,
         'metrics': recall_metrics,
+    }, logger)
+
+    # --- Extra metric: I2T per-caption pair-count (separate result file) -------
+    # Image->text retrieval over the full per-caption gallery (all N*K captions);
+    # for each image, the mean # of its K captions found in top-5 / top-10, under
+    # both the cosine and MSDA scores. Saved to its own file, never mixed into the
+    # main recall results above.
+    pair_counts = compute_i2t_caption_pair_counts(
+        img_mu_d, img_lv_d, text_mus_d, text_logvars_d,
+        k_values=[5, 10], tau=args.tau,
+    )
+    logger.info(
+        "I2T caption pair-count (mean # of an image's %d captions in top-K): %s",
+        text_mus.shape[1],
+        ", ".join(f"{name}={val:.3f}" for name, val in pair_counts.items()),
+    )
+
+    if args.output_path is None:
+        pair_output = str(config.DIST_ALIGN_I2T_PAIR_COUNTS_PATH)
+    else:
+        _p = Path(args.output_path)
+        pair_output = str(_p.with_name(f"{_p.stem}_i2t_pair_counts{_p.suffix}"))
+    append_eval_results(pair_output, {
+        'checkpoint': str(checkpoint_path),
+        'dataset': args.dataset,
+        'num_samples': num_eval_samples,
+        'tau': args.tau,
+        'metric': 'i2t_caption_pair_counts',
+        'K_per_image': int(text_mus.shape[1]),
+        'metrics': pair_counts,
     }, logger)
 
     logger.info("Evaluation completed!")

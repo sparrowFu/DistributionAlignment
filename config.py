@@ -196,6 +196,9 @@ DIST_ALIGN_LAST_CKPT = CHECKPOINT_DIR / "dist_align_coco_last.pt"
 # Evaluation results path
 DIST_ALIGN_EVAL_RESULTS_PATH = OUTPUT_DIR / "dist_align_eval_results.json"
 
+# I2T per-caption pair-count metric (separate file; see compute_i2t_caption_pair_counts)
+DIST_ALIGN_I2T_PAIR_COUNTS_PATH = OUTPUT_DIR / "dist_align_i2t_pair_counts.json"
+
 # Training hyperparameters
 DIST_ALIGN_EPOCHS = 10
 DIST_ALIGN_BATCH_SIZE = 32
