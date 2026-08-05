@@ -2,12 +2,18 @@
 GaussianImageDistribution - MSDA Distribution Alignment Evaluation Script
 
 Evaluates the MSDA (Multi-caption Semantic Distribution Alignment) model using
-image-text retrieval under two scorers:
+image-text retrieval. The PRIMARY protocol is standard multi-caption retrieval
+(N images vs N*K captions; I2T any-of-K-hit, T2I per-caption single-positive),
+reported under two scorers:
 
-  - MSDA score (primary): the uncertainty-discounted cosine
+  - MSDA score (primary scorer): the uncertainty-discounted cosine
         sim = (mu_v . mu_t) / (tau * sqrt(1+mean sigma_v^2) * sqrt(1+mean sigma_t^2))
     i.e. the same score the L_set contrastive loss optimizes.
-  - Cosine-on-means (secondary): the methodology's "mean-only retrieval" mode.
+  - Cosine-on-means: plain cosine (for baseline comparison).
+
+The set-level Recall on the merged text mean (N vs N) is kept as an AUXILIARY
+diagnostic (it measures whether the moment-matched caption-set distribution is
+well-centered, and is NOT comparable to published MS-COCO/Flickr baselines).
 
 Usage:
     python scripts/evaluate_dist_align.py
@@ -31,6 +37,7 @@ from utils.eval_results import append_eval_results, groups_to_flat, print_recall
 from utils.logger import get_logger, log_exception
 from utils.retrieval import (
     compute_i2t_caption_pair_counts,
+    compute_multicaption_recall,
     compute_recall_bidirectional,
     compute_recall_msda_chunked,
 )
@@ -197,17 +204,50 @@ def main():
     text_mus_d = text_mus.to(args.device)
     text_logvars_d = text_logvars.to(args.device)
 
-    # Primary: MSDA uncertainty-discounted cosine (= L_set score)
+    # Primary: standard multi-caption bidirectional Recall (N images vs N*K
+    # captions) -- the canonical MS-COCO/Flickr protocol and the methodology's
+    # intended one-image-many-captions evaluation. Reported under both the MSDA
+    # uncertainty-discounted score (= L_set score) and plain cosine.
+    mc = compute_multicaption_recall(
+        img_mu_d, img_lv_d, text_mus_d, text_logvars_d,
+        args.recall_at_k, tau=args.tau,
+    )
+
+    # Auxiliary: set-level Recall on the merged text mean (N vs N). This measures
+    # whether the moment-matched caption-set distribution is well-centered; it is
+    # NOT standard benchmark retrieval and is kept for diagnostics only.
     msda_metrics = compute_recall_msda_chunked(
         img_mu_d, img_lv_d, text_mu_d, text_lv_d, args.recall_at_k, tau=args.tau)
-
-    # Secondary: cosine-on-means (methodology's mean-only retrieval mode)
     cos = compute_recall_bidirectional(img_mu_d, text_mu_d, args.recall_at_k, normalize=True)
 
     groups = [
         {
+            "family": "mc_recall",
+            "label": "Multi-caption Recall@K (MSDA score, primary; N vs N*K)",
+            "per_k": {
+                k: {
+                    "i2t": mc[f"mc_recall_i2t@{k}"],
+                    "t2i": mc[f"mc_recall_t2i@{k}"],
+                    "mean": mc[f"mc_recall@{k}"],
+                }
+                for k in args.recall_at_k
+            },
+        },
+        {
+            "family": "mc_cos_recall",
+            "label": "Multi-caption Recall@K (cosine; N vs N*K)",
+            "per_k": {
+                k: {
+                    "i2t": mc[f"mc_cos_recall_i2t@{k}"],
+                    "t2i": mc[f"mc_cos_recall_t2i@{k}"],
+                    "mean": mc[f"mc_cos_recall@{k}"],
+                }
+                for k in args.recall_at_k
+            },
+        },
+        {
             "family": "msda_recall",
-            "label": "MSDA-score Recall@K (primary)",
+            "label": "Set-level Recall@K (MSDA score, merged text -- auxiliary)",
             "per_k": {
                 k: {
                     "i2t": msda_metrics[f"msda_recall_i2t@{k}"],
@@ -219,7 +259,7 @@ def main():
         },
         {
             "family": "cos_recall",
-            "label": "Cosine-on-means Recall@K (mean-only mode)",
+            "label": "Set-level Recall@K (cosine, merged text -- auxiliary)",
             "per_k": {
                 k: {
                     "i2t": cos[f"recall_i2t@{k}"],

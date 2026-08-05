@@ -71,29 +71,112 @@ def create_optimizer(
     )
 
 
-def stage_multipliers(epoch: int, total: int, no_staged: bool) -> Dict[str, float]:
-    """Per-loss multipliers for the staged MSDA schedule.
+def _stage_bounds(total: int):
+    """5-stage epoch boundaries: (warmup_end, var_bootstrap_end, pos_coverage_end, full_start).
 
-    Warm-up: L_set + L_mu (+ L_reg always on). Main: + L_var + L_cover.
-    Full: linearly ramp L_cov 0 -> 1 (the cov head is untrained before this;
-    a hard step would dominate and destabilize the retrieval means).
-    L_reg is always on (pure stabilizer).
+    Warmup = WARMUP_FRAC; Full = FULL_FRAC; the middle is split into thirds for
+    Var-Bootstrap / Pos-Coverage / Neg-Repulsion.
     """
-    base = {"ctr": 1.0, "mu": 1.0, "var": 1.0, "cover": 1.0, "cov": 1.0, "reg": 1.0}
-    if no_staged or total <= 0:
-        return base
     warmup_end = max(1, int(round(total * config.MSDA_STAGE_WARMUP_FRAC)))
-    main_end = max(warmup_end + 1,
-                   int(round(total * (config.MSDA_STAGE_WARMUP_FRAC + config.MSDA_STAGE_MAIN_FRAC))))
-    if epoch < warmup_end:
-        base.update(var=0.0, cover=0.0, cov=0.0)
-    elif epoch < main_end:
-        base.update(cov=0.0)
+    full_start = max(warmup_end + 3,
+                     total - max(1, int(round(total * config.MSDA_STAGE_FULL_FRAC))))
+    middle = max(3, full_start - warmup_end)
+    third = max(1, middle // 3)
+    return warmup_end, warmup_end + third, warmup_end + 2 * third, full_start
+
+
+def stage_multipliers(epoch: int, total: int, no_staged: bool) -> Dict[str, float]:
+    """Per-loss multipliers for the 5-stage MSDA schedule.
+
+    Stages (by epoch fraction):
+      Mean-Warmup   : L_set + L_mu + L_reg                 (var/cover/cov off)
+      Var-Bootstrap : + L_var (ramped per-step via var_ramp)
+      Pos-Coverage  : + L_cover_pos
+      Neg-Repulsion : + L_cover_neg
+      Full          : + L_cov (per-epoch ramp 0 -> 1)
+
+    var & uncertainty_grad_alpha are RAMPED PER OPTIMIZER STEP in train_epoch
+    (var_ramp / alpha_schedule); the per-epoch "var" here just marks the stage
+    (0 in warmup, 1 once Var-Bootstrap begins). cover_pos/cover_neg/cov are gated
+    per-epoch. L_reg is always on.
+    """
+    base = {"ctr": 1.0, "mu": 1.0, "reg": 1.0,
+            "var": 1.0, "cover_pos": 1.0, "cover_neg": 1.0, "cov": 1.0}
+    if no_staged or total <= 0:
+        base["stage"] = "full"
+        return base
+    we, vb, pe, fs = _stage_bounds(total)
+    if epoch < we:
+        base.update(var=0.0, cover_pos=0.0, cover_neg=0.0, cov=0.0); base["stage"] = "warmup"
+    elif epoch < vb:
+        base.update(cover_pos=0.0, cover_neg=0.0, cov=0.0); base["stage"] = "var_bootstrap"
+    elif epoch < pe:
+        base.update(cover_neg=0.0, cov=0.0); base["stage"] = "pos_coverage"
+    elif epoch < fs:
+        base.update(cov=0.0); base["stage"] = "neg_repulsion"
     else:
-        full_len = max(1, total - main_end)
-        j = epoch - main_end
-        base["cov"] = min(1.0, (j + 1) / full_len)
+        full_len = max(1, total - fs)
+        base["cov"] = min(1.0, (epoch - fs + 1) / full_len); base["stage"] = "full"
     return base
+
+
+def var_ramp(epoch: int, step: int, steps_per_epoch: int, total: int) -> float:
+    """L_var multiplier ramped per optimizer step.
+
+    0 in Warmup; 0.05 -> 1.0 linearly across Var-Bootstrap; 1.0 afterwards. The
+    gradual ramp avoids the hard 0->1 step that collapsed sigma^2 at the Main
+    boundary (sigma^2 sat above the immature caption spread, so a full-strength
+    L_var yanked it to the floor).
+    """
+    we, vb, _pe, _fs = _stage_bounds(total)
+    if epoch < we:
+        return 0.0
+    if epoch < vb:
+        span = max(1, (vb - we) * steps_per_epoch)
+        progress = (epoch - we) * steps_per_epoch + step
+        return 0.05 + (1.0 - 0.05) * min(1.0, progress / span)
+    return 1.0
+
+
+def alpha_schedule(epoch: int, step: int, steps_per_epoch: int, total: int) -> float:
+    """uncertainty_grad_alpha schedule (straight-through L_set -> sigma^2 grad scale).
+
+    0 in Warmup (block L_set from pulling sigma^2 down); 0 -> 1 across
+    Var-Bootstrap (tied to var_ramp); 1.0 afterwards.
+    """
+    we, vb, _pe, _fs = _stage_bounds(total)
+    if epoch < we:
+        return 0.0
+    if epoch < vb:
+        span = max(1, (vb - we) * steps_per_epoch)
+        progress = (epoch - we) * steps_per_epoch + step
+        return min(1.0, progress / span)
+    return 1.0
+
+
+_HEAD_NAMES = ("img_mu_head", "img_logvar_head", "img_cov_head",
+               "text_mu_head", "text_logvar_head")
+
+
+def head_grad_norms(model) -> Dict[str, float]:
+    """Per-head total grad norm (sqrt of sum of squared param-grad norms).
+
+    Call BEFORE ``clip_grad_norm_`` to see which head dominates the gradient at
+    stage transitions. Heads that don't exist (e.g. ``img_cov_head`` when
+    cov_rank=0) are skipped. Returns ``{<head>_grad_norm: float}``.
+    """
+    out: Dict[str, float] = {}
+    for name in _HEAD_NAMES:
+        head = getattr(model, name, None)
+        if head is None:
+            continue
+        sq = None
+        for p in head.parameters():
+            if p.grad is not None:
+                ps = p.grad.detach().pow(2).sum()
+                sq = ps if sq is None else sq + ps
+        out[f"{name}_grad_norm"] = float(torch.sqrt(sq)) if sq is not None else 0.0
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -108,14 +191,43 @@ def train_epoch(
     device: torch.device,
     epoch: int,
     desc_prefix: str = "",
+    total_epochs: int = 1,
+    base_lambda_var: Optional[float] = None,
 ) -> Dict[str, float]:
-    """Train for one epoch."""
+    """Train for one epoch.
+
+    L_var and uncertainty_grad_alpha are ramped PER OPTIMIZER STEP (var_ramp /
+    alpha_schedule) to avoid the hard Main-boundary step that collapsed sigma^2.
+    Also monitors a variance floor-collapse ratio.
+    """
     model.train()
     if not model.freeze_clip:
         model.clip_model.train()
 
-    totals = {k: 0.0 for k in
-              ("loss", "set_nce", "mu", "var", "cover", "cov", "reg", "img_var_avg")}
+    if base_lambda_var is None:
+        base_lambda_var = criterion.lambda_var
+    steps_per_epoch = len(dataloader)
+    var_near = config.MSDA_VAR_FLOOR * config.MSDA_VAR_FLOOR_NEAR_MULT
+    floor_thresh = config.MSDA_VAR_FLOOR * 2.0
+
+    totals = {k: 0.0 for k in (
+        "loss", "set_nce", "mu", "var", "cover_pos", "cover_neg", "cov", "reg", "img_var_avg",
+        # weighted contributions (P1 #9)
+        "weighted_set_nce", "weighted_mu", "weighted_var", "weighted_cover_pos",
+        "weighted_cover_neg", "weighted_cov", "weighted_reg",
+        # variance statistics (P1 #10)
+        "img_var_min", "img_var_median", "img_var_mean", "img_var_max",
+        "text_var_mean", "caption_spread_mean", "caption_spread_median", "caption_spread_max",
+        # low-rank covariance statistics (P1 #11)
+        "u_energy", "diag_var_energy", "u_over_diag",
+    )}
+    grad_accum = {k: 0.0 for k in (
+        "img_mu_head_grad_norm", "img_logvar_head_grad_norm", "img_cov_head_grad_norm",
+        "text_mu_head_grad_norm", "text_logvar_head_grad_norm",
+        "global_grad_norm_before_clip", "global_grad_norm_after_clip",
+    )}
+    floor_ratio_sum = 0.0
+    floor_severe = 0
     processed_batches = 0
 
     desc = f"{desc_prefix}Epoch {epoch + 1}" if desc_prefix else f"Epoch {epoch + 1}"
@@ -143,6 +255,12 @@ def train_epoch(
         input_ids = text_inputs["input_ids"].view(batch_size, num_captions, -1).to(device)
         attention_mask = text_inputs["attention_mask"].view(batch_size, num_captions, -1).to(device)
 
+        # Per-step L_var ramp + uncertainty_grad_alpha (anti-collapse scheduling)
+        criterion.lambda_var = base_lambda_var * var_ramp(
+            epoch, batch_idx, steps_per_epoch, total_epochs)
+        criterion.uncertainty_grad_alpha = alpha_schedule(
+            epoch, batch_idx, steps_per_epoch, total_epochs)
+
         # Forward pass
         outputs = model(pixel_values, input_ids, attention_mask)
 
@@ -156,16 +274,34 @@ def train_epoch(
         # Backward pass
         optimizer.zero_grad()
         loss.backward()
-        # Clip global grad norm to protect against L_cov / cover spikes that can
-        # destabilize the retrieval means.
-        torch.nn.utils.clip_grad_norm_(model.parameters(), config.MSDA_GRAD_CLIP_NORM)
+        # Per-head grad norms BEFORE clip (who dominates at stage transitions?)
+        head_norms = head_grad_norms(model)
+        # Clip global grad norm (returns the pre-clip total norm over ALL params);
+        # protects against L_cov / cover spikes destabilizing the retrieval means.
+        total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.MSDA_GRAD_CLIP_NORM)
         optimizer.step()
+        grad_before = float(total_norm)
+        grad_after = min(grad_before, config.MSDA_GRAD_CLIP_NORM)
 
         # Accumulate losses
         for k in totals:
-            kk = "loss" if k == "loss" else k
             src = "total" if k == "loss" else k
             totals[k] += loss_dict[src]
+
+        # Variance floor-collapse monitor (do NOT raise the floor -- it masks collapse)
+        with torch.no_grad():
+            img_var = torch.exp(outputs['img_logvar'])
+            floor_ratio = (img_var < var_near).float().mean().item()
+            floor_ratio_sum += floor_ratio
+            if floor_ratio > config.MSDA_VAR_FLOOR_RATIO_WARN and loss_dict['img_var_avg'] < floor_thresh:
+                floor_severe += 1
+
+        # Accumulate per-head grad norms + global before/after clip (P1 #12)
+        for k in ("img_mu_head_grad_norm", "img_logvar_head_grad_norm",
+                  "img_cov_head_grad_norm", "text_mu_head_grad_norm", "text_logvar_head_grad_norm"):
+            grad_accum[k] += head_norms.get(k, 0.0)
+        grad_accum["global_grad_norm_before_clip"] += grad_before
+        grad_accum["global_grad_norm_after_clip"] += grad_after
 
         # Update progress bar
         pbar.set_postfix({
@@ -175,10 +311,15 @@ def train_epoch(
             'var': f"{loss_dict['var']:.3f}",
             'cov': f"{loss_dict['cov']:.3f}",
             'σ²i': f"{loss_dict['img_var_avg']:.3f}",
+            'flr': f"{floor_ratio:.2f}",
         })
 
     num_batches = max(processed_batches, 1)
-    return {k: v / num_batches for k, v in totals.items()}
+    metrics = {k: v / num_batches for k, v in totals.items()}
+    metrics.update({k: v / num_batches for k, v in grad_accum.items()})
+    metrics["floor_ratio"] = floor_ratio_sum / num_batches
+    metrics["floor_severe"] = floor_severe
+    return metrics
 
 
 @torch.no_grad()
@@ -194,7 +335,7 @@ def evaluate(
     model.eval()
 
     totals = {k: 0.0 for k in
-              ("loss", "set_nce", "mu", "var", "cover", "cov", "reg", "img_var_avg")}
+              ("loss", "set_nce", "mu", "var", "cover_pos", "cover_neg", "cov", "reg", "img_var_avg")}
     processed_batches = 0
     feats = {k: [] for k in ("img_mu", "text_mu", "img_logvar", "text_logvar")} \
         if compute_recall else None
@@ -294,7 +435,8 @@ class DistAlignTrainConfig:
     lambda_ctr: float = field(default_factory=lambda: config.MSDA_LAMBDA_CTR)
     lambda_mu: float = field(default_factory=lambda: config.MSDA_LAMBDA_MU)
     lambda_var: float = field(default_factory=lambda: config.MSDA_LAMBDA_VAR)
-    lambda_cover: float = field(default_factory=lambda: config.MSDA_LAMBDA_COVER)
+    lambda_cover_pos: float = field(default_factory=lambda: config.MSDA_LAMBDA_COVER_POS)
+    lambda_cover_neg: float = field(default_factory=lambda: config.MSDA_LAMBDA_COVER_NEG)
     lambda_cov: float = field(default_factory=lambda: config.MSDA_LAMBDA_COV)
     lambda_reg: float = field(default_factory=lambda: config.MSDA_LAMBDA_REG)
     tau: float = field(default_factory=lambda: config.MSDA_TAU)
@@ -386,7 +528,7 @@ def run_dist_align_training(cfg: DistAlignTrainConfig, log) -> Dict:
     log.info(f"{prefix}CLIP LR: {cfg.clip_lr} | MLP LR: {cfg.mlp_lr} | Freeze CLIP: {cfg.freeze_clip}")
     log.info(f"{prefix}Cov rank r: {cfg.cov_rank} | Tau (fixed): {cfg.tau} | Staged: {not cfg.no_staged}")
     log.info(f"{prefix}Loss weights: ctr={cfg.lambda_ctr} mu={cfg.lambda_mu} var={cfg.lambda_var} "
-             f"cover={cfg.lambda_cover} cov={cfg.lambda_cov} reg={cfg.lambda_reg}")
+             f"cover_pos={cfg.lambda_cover_pos} cover_neg={cfg.lambda_cover_neg} cov={cfg.lambda_cov} reg={cfg.lambda_reg}")
     log.info(f"{prefix}Select by: {cfg.select_by} | Device: {cfg.device}")
     log.info("=" * 60)
 
@@ -406,7 +548,8 @@ def run_dist_align_training(cfg: DistAlignTrainConfig, log) -> Dict:
         lambda_ctr=cfg.lambda_ctr,
         lambda_mu=cfg.lambda_mu,
         lambda_var=cfg.lambda_var,
-        lambda_cover=cfg.lambda_cover,
+        lambda_cover_pos=cfg.lambda_cover_pos,
+        lambda_cover_neg=cfg.lambda_cover_neg,
         lambda_cov=cfg.lambda_cov,
         lambda_reg=cfg.lambda_reg,
         tau=cfg.tau,
@@ -466,11 +609,12 @@ def run_dist_align_training(cfg: DistAlignTrainConfig, log) -> Dict:
             mult = stage_multipliers(epoch, cfg.epochs, cfg.no_staged)
             criterion.lambda_ctr = cfg.lambda_ctr * mult["ctr"]
             criterion.lambda_mu = cfg.lambda_mu * mult["mu"]
-            criterion.lambda_var = cfg.lambda_var * mult["var"]
-            criterion.lambda_cover = cfg.lambda_cover * mult["cover"]
+            # var & uncertainty_grad_alpha are ramped PER STEP in train_epoch (var_ramp / alpha_schedule)
+            criterion.lambda_cover_pos = cfg.lambda_cover_pos * mult["cover_pos"]
+            criterion.lambda_cover_neg = cfg.lambda_cover_neg * mult["cover_neg"]
             criterion.lambda_cov = cfg.lambda_cov * mult["cov"]
             criterion.lambda_reg = cfg.lambda_reg * mult["reg"]
-            log.info(f"{prefix}Epoch {epoch + 1} stage multipliers: {mult}")
+            log.info(f"{prefix}Epoch {epoch + 1} stage={mult.get('stage')} multipliers: {mult}")
 
             apply_lr_for_epoch(optimizer, base_lrs, epoch, cfg.epochs,
                                cfg.warmup_epochs, cfg.min_lr_ratio,
@@ -478,7 +622,7 @@ def run_dist_align_training(cfg: DistAlignTrainConfig, log) -> Dict:
 
             train_metrics = train_epoch(
                 model, train_loader, criterion, optimizer, cfg.device, epoch,
-                desc_prefix=cfg.tag,
+                desc_prefix=cfg.tag, total_epochs=cfg.epochs, base_lambda_var=cfg.lambda_var,
             )
             val_metrics = evaluate(
                 model, val_loader, criterion, cfg.device,
@@ -490,14 +634,44 @@ def run_dist_align_training(cfg: DistAlignTrainConfig, log) -> Dict:
                 f"{prefix}Epoch {epoch + 1}/{cfg.epochs} - "
                 f"Train Loss: {train_metrics['loss']:.4f}, NCE: {train_metrics['set_nce']:.4f}, "
                 f"mu: {train_metrics['mu']:.4f}, Var: {train_metrics['var']:.4f}, "
-                f"Cover: {train_metrics['cover']:.4f}, Cov: {train_metrics['cov']:.4f}, "
-                f"Reg: {train_metrics['reg']:.4f}, σ²img: {train_metrics['img_var_avg']:.4f} | "
+                f"Cover+: {train_metrics['cover_pos']:.4f}, Cover-: {train_metrics['cover_neg']:.4f}, "
+                f"Cov: {train_metrics['cov']:.4f}, "
+                f"Reg: {train_metrics['reg']:.4f}, σ²img: {train_metrics['img_var_avg']:.4f}, "
+                f"FloorR: {train_metrics.get('floor_ratio', 0):.3f} | "
                 f"Val Loss: {val_metrics['loss']:.4f}, NCE: {val_metrics['set_nce']:.4f}, "
                 f"σ²img: {val_metrics['img_var_avg']:.4f}, "
                 f"MSDA R@1/5/10: {val_metrics.get('msda_recall@1', 0):.3f}/"
                 f"{val_metrics.get('msda_recall@5', 0):.3f}/{val_metrics.get('msda_recall@10', 0):.3f}, "
                 f"Cos R@1/5/10: {val_metrics.get('cos_recall@1', 0):.3f}/"
                 f"{val_metrics.get('cos_recall@5', 0):.3f}/{val_metrics.get('cos_recall@10', 0):.3f}"
+            )
+
+            if train_metrics.get("floor_severe", 0) > 0:
+                log.warning(
+                    f"{prefix}SEVERE: variance floor collapse at epoch {epoch + 1} "
+                    f"(stage={mult.get('stage')}): {train_metrics['floor_severe']} batches had "
+                    f">{config.MSDA_VAR_FLOOR_RATIO_WARN:.0%} of dims near the floor "
+                    f"(σ²img={train_metrics['img_var_avg']:.4f}, mean FloorR={train_metrics['floor_ratio']:.3f}). "
+                    f"Do NOT raise MSDA_VAR_FLOOR -- it masks the collapse; check the loss schedule."
+                )
+
+            # Per-epoch diagnostics (P1): weighted contributions, variance/cov stats, per-head grad norms
+            log.info(
+                f"{prefix}  diag: weighted[NCE={train_metrics['weighted_set_nce']:.3f} "
+                f"mu={train_metrics['weighted_mu']:.3f} var={train_metrics['weighted_var']:.3f} "
+                f"c+={train_metrics['weighted_cover_pos']:.3f} c-={train_metrics['weighted_cover_neg']:.3f} "
+                f"cov={train_metrics['weighted_cov']:.3f} reg={train_metrics['weighted_reg']:.3f}] | "
+                f"σ²[min/med/mean/max]={train_metrics['img_var_min']:.4f}/{train_metrics['img_var_median']:.4f}/"
+                f"{train_metrics['img_var_mean']:.4f}/{train_metrics['img_var_max']:.4f} | "
+                f"s²[mean/med/max]={train_metrics['caption_spread_mean']:.4f}/"
+                f"{train_metrics['caption_spread_median']:.4f}/{train_metrics['caption_spread_max']:.4f} "
+                f"txtσ²={train_metrics['text_var_mean']:.4f} | U/diag={train_metrics['u_over_diag']:.2f} | "
+                f"grad[μv={train_metrics['img_mu_head_grad_norm']:.3f} "
+                f"σ²v={train_metrics['img_logvar_head_grad_norm']:.3f} "
+                f"Uv={train_metrics.get('img_cov_head_grad_norm', 0):.3f} "
+                f"μt={train_metrics['text_mu_head_grad_norm']:.3f} "
+                f"σ²t={train_metrics['text_logvar_head_grad_norm']:.3f}] "
+                f"gnorm[{train_metrics['global_grad_norm_before_clip']:.2f}->{train_metrics['global_grad_norm_after_clip']:.2f}]"
             )
 
             # Best-checkpoint selection

@@ -187,13 +187,14 @@ All hyperparameters live in `config.py`.
 | `MSDA_LAMBDA_CTR` | 1.0 | set-level contrastive loss (main driver) |
 | `MSDA_LAMBDA_MU` | 0.5 | mean-center alignment |
 | `MSDA_LAMBDA_VAR` | 1.0 | variance semantic consistency (core: `σ²≈Var(captions)`) |
-| `MSDA_LAMBDA_COVER` | 0.5 | multi-caption coverage |
-| `MSDA_LAMBDA_COV` | 0.01 | covariance direction alignment (down-tuned from 0.1; see methods.md §6) |
+| `MSDA_LAMBDA_COVER_POS` | 0.5 | L_cover positive coverage (methodology canonical) |
+| `MSDA_LAMBDA_COVER_NEG` | 0.0 | L_cover optional negative repulsion (off by default; sweep once stable) |
+| `MSDA_LAMBDA_COV` | 0.01 | covariance direction alignment (STABILITY-RUN value; official target 0.2 — see methods.md §6.5) |
 | `MSDA_LAMBDA_REG` | 0.01 | variance regularization |
 | `MSDA_GRAD_CLIP_NORM` | 1.0 | global grad-norm clip (stability guard) |
-| `MSDA_STAGE_WARMUP/MAIN/FULL_FRAC` | 0.2 / 0.6 / 0.2 | 3-stage schedule fractions |
+| `MSDA_STAGE_WARMUP/FULL_FRAC` | 0.2 / 0.2 | 5-stage schedule: Warmup → Var-Bootstrap → Pos-Coverage → Neg-Repulsion → Full (middle split into thirds) |
 
-The 6-term loss is `L = λ_ctr·L_set-NCE + λ_mu·L_mu + λ_var·L_var + λ_cover·L_cover + λ_cov·L_cov + λ_reg·L_reg`. See [methods.md](methods.md) for the full formulation and the staged activation schedule.
+The loss is `L = λ_ctr·L_set-NCE + λ_mu·L_mu + λ_var·L_var + λ_cover_pos·L_cover_pos + λ_cover_neg·L_cover_neg + λ_cov·L_cov + λ_reg·L_reg`. See [methods.md](methods.md) for the full formulation and the 5-stage activation schedule (§6.5).
 
 ### Training defaults
 

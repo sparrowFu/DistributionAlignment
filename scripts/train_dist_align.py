@@ -84,7 +84,9 @@ def parse_args():
     parser.add_argument("--lambda-ctr", type=float, default=config.MSDA_LAMBDA_CTR)
     parser.add_argument("--lambda-mu", type=float, default=config.MSDA_LAMBDA_MU)
     parser.add_argument("--lambda-var", type=float, default=config.MSDA_LAMBDA_VAR)
-    parser.add_argument("--lambda-cover", type=float, default=config.MSDA_LAMBDA_COVER)
+    parser.add_argument("--lambda-cover-pos", type=float, default=config.MSDA_LAMBDA_COVER_POS)
+    parser.add_argument("--lambda-cover-neg", type=float, default=config.MSDA_LAMBDA_COVER_NEG,
+                        help="weight of L_cover's optional negative-repulsion (0 = pos-only)")
     parser.add_argument("--lambda-cov", type=float, default=config.MSDA_LAMBDA_COV)
     parser.add_argument("--lambda-reg", type=float, default=config.MSDA_LAMBDA_REG)
     parser.add_argument("--tau", type=float, default=config.MSDA_TAU,
@@ -173,7 +175,8 @@ def main():
         lambda_ctr=args.lambda_ctr,
         lambda_mu=args.lambda_mu,
         lambda_var=args.lambda_var,
-        lambda_cover=args.lambda_cover,
+        lambda_cover_pos=args.lambda_cover_pos,
+        lambda_cover_neg=args.lambda_cover_neg,
         lambda_cov=args.lambda_cov,
         lambda_reg=args.lambda_reg,
         tau=args.tau,

@@ -230,14 +230,17 @@ MSDA_TAU = 0.07                   # FIXED temperature in the L_set similarity (n
 MSDA_LAMBDA_CTR = 1.0             # weight for the set contrastive loss L_set
 MSDA_LAMBDA_MU = 0.5              # weight for the mean-center alignment loss L_mu
 MSDA_LAMBDA_VAR = 1.0             # weight for the variance semantic consistency loss L_var (core)
-MSDA_LAMBDA_COVER = 0.5           # weight for the multi-caption coverage loss L_cover
-MSDA_LAMBDA_COV = 0.2             # weight for the covariance direction alignment loss L_cov (0 disables)
+MSDA_LAMBDA_COVER_POS = 0.5       # weight for L_cover positive coverage (methodology 5.4 canonical)
+MSDA_LAMBDA_COVER_NEG = 0.0       # weight for L_cover OPTIONAL negative repulsion (5.4 "可以再加"; 0 = off; sweep 0.05/0.1/0.25/0.5 once stable)
+MSDA_LAMBDA_COV = 0.01            # weight for L_cov -- STABILITY-RUN value (Full-cov crash risk); official target 0.2 once Full stage verified stable
 MSDA_LAMBDA_REG = 0.01            # weight for the variance regularization loss L_reg
 MSDA_M_POS = 1.0                  # L_cover positive coverage margin (per-D normalized Mahalanobis)
 MSDA_M_NEG = 2.0                  # L_cover negative repulsion margin
-MSDA_TARGET_VAR = 1.0             # L_reg variance prior sigma_0^2 (log-variance pulled toward this)
+MSDA_TARGET_VAR = 0.04            # L_reg variance prior sigma_0^2 -- = measured MSCOCO caption spread (was 1.0, ~26x too large; sigma diagnostic Case A)
 MSDA_USE_UNCERTAINTY_SIM = True   # L_set/retrieval use the uncertainty-discounted score (False = plain cosine)
 MSDA_VAR_FLOOR = 1e-4             # numerical floor on sigma^2 (softplus positivity + div-by-zero guard; NOT a semantic floor -- the range is learned via L_var / L_reg)
+MSDA_VAR_FLOOR_NEAR_MULT = 10     # variance floor-collapse monitor: a dim is "near floor" if sigma^2 < MSDA_VAR_FLOOR_NEAR_MULT * MSDA_VAR_FLOOR
+MSDA_VAR_FLOOR_RATIO_WARN = 0.5   # warn when >this fraction of dims are near-floor AND mean sigma^2 < 2*MSDA_VAR_FLOOR
 MSDA_COV_EPS = 1e-6               # numerical epsilon for Mahalanobis / log
 MSDA_GRAD_CLIP_NORM = 1.0         # global grad-norm clip (clip_grad_norm_) -- guards against L_cov / cover spikes destabilizing the retrieval means
 # Deprecated likelihood-rewrite knobs (kept ONLY for deferred loglik evals in
@@ -377,21 +380,21 @@ ABLATION_LOG_PATH = LOG_DIR / "ablation.log"
 ABLATION_CONFIGS = {
     "full_model": {
         "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
-        "lambda_cover": 0.5, "lambda_cov": 0.01, "lambda_reg": 0.01,
+        "lambda_cover": 0.5, "lambda_cov": 0.2, "lambda_reg": 0.01,
         "cov_rank": MSDA_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
         "description": "Full MSDA (set-NCE + mu + var + cover + cov + reg)",
     },
     "no_var": {
         "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 0.0,
-        "lambda_cover": 0.5, "lambda_cov": 0.01, "lambda_reg": 0.01,
+        "lambda_cover": 0.5, "lambda_cov": 0.2, "lambda_reg": 0.01,
         "cov_rank": MSDA_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
         "description": "w/o L_var (variance semantic consistency)",
     },
     "no_cover": {
         "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
-        "lambda_cover": 0.0, "lambda_cov": 0.01, "lambda_reg": 0.01,
+        "lambda_cover": 0.0, "lambda_cov": 0.2, "lambda_reg": 0.01,
         "cov_rank": MSDA_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
         "description": "w/o L_cover (multi-caption coverage)",
@@ -405,7 +408,7 @@ ABLATION_CONFIGS = {
     },
     "no_mu": {
         "lambda_ctr": 1.0, "lambda_mu": 0.0, "lambda_var": 1.0,
-        "lambda_cover": 0.5, "lambda_cov": 0.01, "lambda_reg": 0.01,
+        "lambda_cover": 0.5, "lambda_cov": 0.2, "lambda_reg": 0.01,
         "cov_rank": MSDA_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
         "description": "w/o L_mu (mean-center alignment)",
@@ -419,7 +422,7 @@ ABLATION_CONFIGS = {
     },
     "no_uncertainty_sim": {
         "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
-        "lambda_cover": 0.5, "lambda_cov": 0.01, "lambda_reg": 0.01,
+        "lambda_cover": 0.5, "lambda_cov": 0.2, "lambda_reg": 0.01,
         "cov_rank": MSDA_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": False,
         "description": "w/o uncertainty-discounted similarity (standard cosine)",
@@ -433,17 +436,24 @@ ABLATION_CONFIGS = {
     },
     "k3": {
         "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
-        "lambda_cover": 0.5, "lambda_cov": 0.01, "lambda_reg": 0.01,
+        "lambda_cover": 0.5, "lambda_cov": 0.2, "lambda_reg": 0.01,
         "cov_rank": MSDA_COV_RANK, "num_captions": 3,
         "use_uncertainty_sim": True,
         "description": "K=3 captions",
     },
     "k5": {
         "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
-        "lambda_cover": 0.5, "lambda_cov": 0.01, "lambda_reg": 0.01,
+        "lambda_cover": 0.5, "lambda_cov": 0.2, "lambda_reg": 0.01,
         "cov_rank": MSDA_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
         "description": "K=5 captions (full)",
+    },
+    "no_neg": {
+        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
+        "lambda_cover": 0.5, "lambda_cover_neg": 0.0, "lambda_cov": 0.2, "lambda_reg": 0.01,
+        "cov_rank": MSDA_COV_RANK, "num_captions": 5,
+        "use_uncertainty_sim": True,
+        "description": "w/o L_cover negative repulsion (pos-only coverage, methodology 5.4 canonical)",
     },
 }
 

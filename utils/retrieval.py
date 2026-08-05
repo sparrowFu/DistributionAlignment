@@ -206,3 +206,99 @@ def compute_i2t_caption_pair_counts(
         out[f"cos_pair_count@{k}"] = cos[k]
         out[f"msda_pair_count@{k}"] = msda[k]
     return out
+
+
+@torch.no_grad()
+def compute_multicaption_recall(
+    img_mu: torch.Tensor,
+    img_logvar: torch.Tensor,
+    text_mus: torch.Tensor,
+    text_logvars: torch.Tensor,
+    k_values: List[int],
+    tau: float = 0.07,
+    chunk_size: int = 1000,
+) -> Dict[str, float]:
+    """Standard multi-caption bidirectional Recall@K (N images vs N*K captions).
+
+    This is the canonical MS-COCO/Flickr30k retrieval protocol and the
+    methodology's intended "one-image-many-captions" evaluation (evaluating on
+    the merged text mean would collapse the one-to-many structure at eval time
+    and is not comparable to any published baseline):
+
+      I2T: query = N image means, gallery = N*K per-caption means. Image i has K
+           positives -- its own captions at flattened indices [i*K, i*K+K). A hit
+           is ANY of them landing in the top-K (any-hit).
+      T2I: query = N*K per-caption means, gallery = N image means. Each caption's
+           ONLY positive is its own image (single-positive per query).
+
+    Reported under BOTH the MSDA uncertainty-discounted score (primary) and plain
+    cosine (for baseline comparison). Means are L2-normalized internally;
+    mean(sigma^2) averages over D. Uses torch.topk (not a full argsort) since the
+    N*K gallery is large and only the top max(k_values) are needed.
+
+    Returns keys (per k in k_values)::
+
+        mc_recall_i2t@{k}, mc_recall_t2i@{k}, mc_recall@{k}          (MSDA score)
+        mc_cos_recall_i2t@{k}, mc_cos_recall_t2i@{k}, mc_cos_recall@{k} (cosine)
+    """
+    N, K, _ = text_mus.shape
+    cap_mu = text_mus.reshape(N * K, -1)              # (N*K, D)
+    cap_lv = text_logvars.reshape(N * K, -1)          # (N*K, D)
+
+    img_mu_n = F.normalize(img_mu, dim=-1)            # (N, D)
+    cap_mu_n = F.normalize(cap_mu, dim=-1)            # (N*K, D)
+    img_scale = torch.sqrt(1.0 + torch.exp(img_logvar).mean(dim=-1))   # (N,)
+    cap_scale = torch.sqrt(1.0 + torch.exp(cap_lv).mean(dim=-1))       # (N*K,)
+
+    maxk = max(k_values)
+
+    def _cos(q, g, _qs, _gs):
+        return torch.matmul(q, g.T)
+
+    def _msda(q, g, qs, gs):
+        return torch.matmul(q, g.T) / (tau * qs.unsqueeze(1) * gs.unsqueeze(0))
+
+    def _i2t(scorer, desc):
+        """N image queries vs N*K caption gallery; any-of-K-own-caption hit."""
+        hits = {k: 0 for k in k_values}
+        for start in tqdm(range(0, N, chunk_size), desc=desc, leave=False):
+            end = min(start + chunk_size, N)
+            sim = scorer(img_mu_n[start:end], cap_mu_n,
+                         img_scale[start:end], cap_scale)           # (chunk, N*K)
+            mk = min(maxk, sim.size(1))
+            top = torch.topk(sim, mk, dim=1).indices               # (chunk, mk)
+            rows = torch.arange(start, end, device=sim.device).unsqueeze(1)
+            in_range = (top >= rows * K) & (top < rows * K + K)     # (chunk, mk)
+            for k in k_values:
+                hits[k] += in_range[:, :k].any(dim=1).sum().item()  # :k clamps to mk
+        return {k: hits[k] / N for k in k_values}
+
+    def _t2i(scorer, desc):
+        """N*K caption queries vs N image gallery; single-positive per query."""
+        Q = N * K
+        hits = {k: 0 for k in k_values}
+        for start in tqdm(range(0, Q, chunk_size), desc=desc, leave=False):
+            end = min(start + chunk_size, Q)
+            sim = scorer(cap_mu_n[start:end], img_mu_n,
+                         cap_scale[start:end], img_scale)           # (chunk_q, N)
+            mk = min(maxk, sim.size(1))
+            top = torch.topk(sim, mk, dim=1).indices               # (chunk_q, mk)
+            q_idx = torch.arange(start, end, device=sim.device)
+            gt_img = (q_idx // K).unsqueeze(1)                      # (chunk_q, 1)
+            match = top == gt_img                                   # (chunk_q, mk)
+            for k in k_values:
+                hits[k] += match[:, :k].any(dim=1).sum().item()
+        return {k: hits[k] / Q for k in k_values}
+
+    i2t_cos, t2i_cos = _i2t(_cos, "MC I2T (cos)"), _t2i(_cos, "MC T2I (cos)")
+    i2t_msda, t2i_msda = _i2t(_msda, "MC I2T (msda)"), _t2i(_msda, "MC T2I (msda)")
+
+    out: Dict[str, float] = {}
+    for k in k_values:
+        out[f"mc_recall_i2t@{k}"] = i2t_msda[k]
+        out[f"mc_recall_t2i@{k}"] = t2i_msda[k]
+        out[f"mc_recall@{k}"] = (i2t_msda[k] + t2i_msda[k]) / 2
+        out[f"mc_cos_recall_i2t@{k}"] = i2t_cos[k]
+        out[f"mc_cos_recall_t2i@{k}"] = t2i_cos[k]
+        out[f"mc_cos_recall@{k}"] = (i2t_cos[k] + t2i_cos[k]) / 2
+    return out

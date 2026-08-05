@@ -58,15 +58,15 @@ L = λ_ctr · L_set-NCE + λ_mu · L_mu + λ_var · L_var
 |---|---|---|
 | `L_set-NCE` | 不确定性折扣双向 InfoNCE：`sim = μ̂_x·μ̂_c / (τ·√(1+meanσ²_x)·√(1+meanσ²_c))` | 集合级检索对齐（主驱动） |
 | `L_mu` | `1 − cos(μ_x, μ_c)` | 均值中心对齐 |
-| `L_var`（核心） | `MSE(σ²_x, sg[Var_k(μ_c^(k))])`，对描述散度 stop-gradient | **σ² 拟合多描述语义散度** |
-| `L_cover` | `mean(relu(dM/D − m_pos))`，`dM` 为 Mahalanobis 距离 | 多描述覆盖约束 |
+| `L_var`（核心） | `MSE(log σ²_x, log sg[Var_k(μ_c^(k))])`（log 空间匹配，最小值仍 σ²=s²；见 §6.4） | **σ² 拟合多描述语义散度** |
+| `L_cover` | 正项 `mean(relu(dM/D − m_pos))` + 可选负排斥 `λ_neg·mean(relu(m_neg − dM/D))`（§5.4 "可以再加"；`λ_neg=0` 关闭，= 方法论 canonical 正项 only） | 多描述覆盖约束 |
 | `L_cov` | `2r − 2‖Q_vᵀ Q_t‖²`（子空间 Frobenius 距离） | **协方差方向对齐** |
 | `L_reg` | `MSE(logσ², log σ₀²)`（图像+文本对称） | 防止方差坍塌/爆炸 |
 
 其中 `Q_v = orth(U_x)`（QR 得到），`Q_t` 由描述偏差矩阵 `dev = μ_c^(k) − μ_c` 经小 Gram 矩阵特征分解得到（**对 `dev` 做 stop-gradient**，理由见 §6）。
 
-**默认权重**：`λ_ctr/mu/var/cover/cov/reg = 1.0 / 0.5 / 1.0 / 0.5 / 0.01 / 0.01`
-（`λ_cov` 在 §6 修复中由 `0.1` 下调至 `0.01`）。其余超参：`τ=0.07, m_pos=1.0, σ₀²=0.5, r=4`。
+**默认权重**：`λ_ctr/mu/var/cover/cov/reg = 1.0 / 0.5 / 1.0 / 0.5 / 0.2 / 0.01`
+（`λ_cov=0.2` 取 HTML 方法论建议值；`L_cov` 量级较大，稳定性依赖 grad-clip + 线性 ramp + NaN-guard，详见 §6）。其余超参：`τ=0.07, m_pos=1.0, σ₀²=0.04（≈实测 MSCOCO caption 散度，见 §6.4）, r=4`。
 
 ---
 
@@ -99,23 +99,52 @@ L = λ_ctr · L_set-NCE + λ_mu · L_mu + λ_var · L_var
 
 > 代码注释中作者已知 "`L_cov` 会 crash Recall@1 the moment it activates"，并用 `detach()` 挡住了文本端；但 image 端经 `L_cover` 的回流、以及权重/裁剪问题此前未解决。
 
-### 6.3 P0 修复（已实现并验证）
+### 6.3 稳定性保障（当前正式方法）
+
+`L_cov` 量级大（max `2r=8`、实测~3），在 `λ_cov=0.1/0.2` 时易占 total loss 过半并主导梯度（§6.1–6.2 的崩溃即发生在 `λ_cov=0.1`）。当前正式方法按 HTML 方法论取 **`λ_cov=0.2`**，并通过下列三重保障吸收其量级，不再下调权重：
 
 | # | 位置 | 改动 |
 |---|---|---|
 | 1 | `scripts/train_dist_align.py` `train_epoch` | 反向后、step 前加 `torch.nn.utils.clip_grad_norm_(model.parameters(), config.MSDA_GRAD_CLIP_NORM)` |
-| 1b | `config.py` | 新增 `MSDA_GRAD_CLIP_NORM = 1.0` |
-| 2 | `config.py` | `MSDA_LAMBDA_COV`: **0.1 → 0.01** |
-| 2b | `config.py` 消融块 | 7 处 `"lambda_cov": 0.1` 同步改为 `0.01`（`no_cov`/`diagonal_only`/`k1` 的 `0.0` 不动） |
-| 3 | `scripts/train_dist_align.py` `stage_multipliers` | Full 阶段 `cov` 系数改为 **线性 ramp** `0→1`，取代硬切 |
-| 4 | `losses/dist_align_losses.py` `MSDALoss.forward` | `L_cov` 非有限值时置零（`torch.zeros_like(cov_loss)`） |
+| 1b | `config.py` | `MSDA_GRAD_CLIP_NORM = 1.0` |
+| 2 | `scripts/train_dist_align.py` `stage_multipliers` | Full 阶段 `cov` 系数改为 **线性 ramp** `0→1`（让 `img_cov_head` 先热身，`Q_v` 不再是纯随机 → `L_cov` 不再一激活就近上限）|
+| 3 | `losses/dist_align_losses.py` `MSDALoss.forward` | `L_cov` 非有限值时置零（用 `torch.zeros_like`；IEEE-754 下 `nan*0=nan`，必须 `zeros_like` 才能真正归零）|
 
 **设计要点**：
-- 梯度裁剪 + 降权 + ramp 三者共同保证：`L_cov` 即便在冷启动近上限时，其梯度贡献也不再主导、不再瞬时打飞 `img_cov_head`。
-- NaN 保护用 `torch.zeros_like` 而非 `nan*0`（IEEE-754 下 `nan*0=nan`，无法归零——这是实现中验证发现并修正的坑）。
-- 这些仅保证 **不再崩**；要追平/超过 UC-CL 的 0.5622，还需配合训练轮数等（见 `experiments.md` §7）。
+- 梯度裁剪 + 线性 ramp + NaN-guard 三者共同保证：`L_cov` 即便在冷启动近上限时，其梯度贡献也不再瞬时打飞 `img_cov_head` 与（经 `L_cover` 回流的）检索均值。
+- 历史上的 P0 修复曾把 `λ_cov` 从 `0.1` 下调到 `0.01`；现已按 HTML 方法论回退为 `0.2`，改由上述三重保障维持稳定（`L_cov` 量级与描述偏差 target 的具体形式无关——正交基重叠公式对输入尺度不变）。
+- **重训监控建议**：若 Full 阶段 `L_cov` 占 total loss 比例持续过高或 R@1 再次下滑，可回退 `λ_cov` 至 `0.1`（HTML 下限）乃至 `0.01`（已验证稳定）。
+- 这些保障仅保证 **不再崩**；要追平/超过 UC-CL 的 0.5622，还需配合训练轮数等（见 `experiments.md` §7）。
+
+### 6.4 σ² 坍塌修复（σ₀² 尺度 + L_var log 空间）
+
+`scripts/diagnostics/eval_sigma_diagnostic.py` 实测（MSCOCO，`dist_align_coco_best.pt`）：caption 散度 `s²≈0.038`（CV 41%），但模型 σ² 坍塌成常数（mean 0.13，CV 7.2%，Pearson(σ², s²)=0.04）——**核心创新（σ²=多描述散度）未生效**。根因：
+
+1. **σ₀² 尺度失配**：旧 `MSDA_TARGET_VAR=1.0` 比 s²≈0.038 大 ~26×，`L_reg`（log 空间）把 σ² 强行拉向常数 1.0，压垮 `L_var`。
+2. **L_var 线性 vs L_reg log 空间梯度失衡**：s² 很小时线性 MSE 梯度极小（~0.18/dim），弱于 `L_reg` 的 log 空间梯度（~0.31/dim），方差头取"输出常数"的捷径。
+
+修复（P0+P1）：
+
+- **P0**：`MSDA_TARGET_VAR = 0.04`（≈实测散度），让 `L_reg` 与 `L_var` 目标同量级、不再对拉。
+- **P1**：`L_var = MSE(log σ², log s²)`（s² stop-gradient）。最小值仍 `σ²=s²`，但梯度尺度无关，小 σ² 也能拿到足够跟踪梯度。
+
+**验证标准**（重训后复跑 `eval_sigma_diagnostic.py`）：σ² CV 从 7% 升向 ~41%、Pearson(σ², s²) 从 0.04 升向显著正相关、σ²/s² → ~1×。注：`L_var` 改 log 空间是对方法论 §5.4 线性 MSE 的**有据偏离**（同最小值、仅优化 landscape 更良态）；σ₀² 需在重训后复测校准，flickr 量级可能不同。
 
 ---
+
+### 6.5 训练稳定性大修（cover 拆分 · L_var ramp · 阻断 L_set→σ² 梯度 · 5 段调度 · 坍塌监控）
+
+σ² 在 Main 阶段激活瞬间坍塌到 floor（训练日志：σ²img 0.037→1e-4，Reg→36，R@1 0.395→0.046）。根因：L_var 在 σ² 高于**未成熟**的 caption 散度 s²（~0.015，文本头尚未区分 K 条 caption）时**硬激活**（0→1），log 空间 L_var（§6.4）把 σ² 猛拉向 s²，叠加 L_set 的不确定性折扣把 σ² 压向 0，弱化的 L_reg（σ₀²=0.04）拉不住，floor 把 σ² 困死。
+
+修复（5 项联合）：
+
+1. **拆分 L_cover**：`L_cover_pos`（正覆盖，§5.4 canonical）与 `L_cover_neg`（可选负排斥）**分离加权**（`λ_cover_pos=0.5`、`λ_cover_neg=0.0`），不再共享一个权重。便于"有/无负排斥"消融。
+2. **阻断 L_set→σ² 梯度（Warmup）**：`uncertainty_grad_alpha` 用 straight-through 缩放 `eff_logvar = logvar.detach() + α·(logvar − logvar.detach())`——前向分数不变，只缩放 L_set 对方差的梯度。Warmup α=0（L_set 不再压低 σ²），Var-Bootstrap 渐增到 1。
+3. **L_var 按 optimizer step 线性 ramp**：Var-Bootstrap 阶段 `λ_var·L_var` 从 0.05 线性增到 1.0（`var_ramp`），避免 epoch 边界 0→1 硬切的梯度方向突变。验收：刚启用时 `λ_var·L_var ≪ L_set + λ_mu·L_mu`。
+4. **5 段调度**：Mean-Warmup → Var-Bootstrap（渐增 L_var）→ Pos-Coverage（渐增正覆盖）→ Neg-Repulsion（最后加负排斥）→ Full-Cov（最后加 L_cov）。验收：正覆盖启用前 σ² 已能跟踪 caption 散度。
+5. **坍塌监控**：每 batch 记 `variance_floor_ratio`（σ² 接近 floor 的维度占比）；连续多 batch `ratio>0.5 且 mean σ²<2·floor` 时发 SEVERE 警告。**不提高 floor**（只会掩盖坍塌）。
+
+**首轮稳定性配置**：`λ_cover_neg=0`、`λ_cov=0.01`（Full 阶段 cov 仍有再崩风险；官方目标仍 0.2，稳定后再测 0.05/0.1/0.2）、`λ_cover_neg` 稳定后扫 0.05/0.1/0.25/0.5。验收：σ²img 全程 >~0.02（不触 floor）、`Var` 随 s² 成熟而下降、R@1 超过 0.395、无 SEVERE 警告。
 
 ## 7. 推理
 
