@@ -1,7 +1,7 @@
 # 实验记录 · Experiments
 
 > 本文件记录图文检索（MSCOCO）训练实验的结果与分析，重点是：
-> UC-CL 旧基线（0.5622）与 MSDA 新方法（0.4648）的对比，以及 MSDA 首次实验中
+> MCDisp_Align 对角模式（`r=0`，0.5622）与全协方差模式（首次，0.4648）的对比，以及全协方差模式首次实验中
 > **第 9 轮 `L_cov` 激活即崩溃** 的根因排查与 P0 修复。
 > 方法细节见 `methods.md`。
 
@@ -25,16 +25,16 @@
 
 | 方法 | 损失族 | Epochs | 可训练参数 | σ²img 行为 | **Best R@1** | 备注 |
 |---|---|---|---|---|---|---|
-| UC-CL（旧） | CL + Consist + Var | 30（早停于 25） | 4.72M | 钉死 ~0.102（硬下限 0.1） | **0.5622**（ep22） | 单调上升，无崩溃 |
-| MSDA（首次） | set-NCE+mu+var+cover+cov+reg | 10 | 9.45M | 学习 ~0.12~0.22 | **0.4648**（ep8） | 第 9 轮 cov 激活即崩（→0.265） |
+| MCDisp_Align（对角模式 r=0） | CL + Consist + Var | 30（早停于 25） | 4.72M | 钉死 ~0.102（硬下限 0.1） | **0.5622**（ep22） | 单调上升，无崩溃 |
+| MCDisp_Align（全协方差 r=4，首次） | set-NCE+mu+var+cover+cov+reg | 10 | 9.45M | 学习 ~0.12~0.22 | **0.4648**（ep8） | 第 9 轮 cov 激活即崩（→0.265） |
 
-> 注：两者是**不同的损失族**，非小修改对比。MSDA 是 UC-CL 的架构升级（一般高斯 + 协方差项）。
+> 注：两者是**不同的损失族**，非小修改对比。全协方差模式是对角模式的架构升级（一般高斯 + 协方差项）。
 
 ---
 
-## 3. UC-CL 基线轨迹（0.5622）
+## 3. MCDisp_Align 对角模式轨迹（r=0，0.5622）
 
-`logs/train_dist_align.log`（2026-06-26 起，30 轮）：
+`logs/train_mcdisp_align.log`（2026-06-26 起，30 轮）：
 
 | Epoch | Train CL | Val Loss | R@1 | R@5 | R@10 |
 |---|---|---|---|---|---|
@@ -52,9 +52,9 @@
 
 ---
 
-## 4. MSDA 首次实验与第 9 轮崩溃
+## 4. MCDisp_Align 首次实验与第 9 轮崩溃
 
-`logs/train_dist_align.log`（2026-07-01 起，10 轮）。调度：ep1–2 Warmup、ep3–8 Main、ep9–10 Full。
+`logs/train_mcdisp_align.log`（2026-07-01 起，10 轮）。调度：ep1–2 Warmup、ep3–8 Main、ep9–10 Full。
 
 | Epoch | 阶段 | Train Loss | NCE | Var | Cover | Cov | σ²img | **R@1** |
 |---|---|---|---|---|---|---|---|---|
@@ -108,10 +108,10 @@ ep9 total loss = 0.5184 分解：
 
 | # | 文件 | 改动 |
 |---|---|---|
-| 1 | `scripts/train_dist_align.py` | 反向后加 `clip_grad_norm_(model.parameters(), MSDA_GRAD_CLIP_NORM=1.0)` |
-| 2 | `config.py` | `MSDA_LAMBDA_COV`: 0.1 → **0.01**；消融块 7 处同步 |
-| 3 | `scripts/train_dist_align.py` `stage_multipliers` | Full 阶段 `cov` **线性 ramp** 0→1 |
-| 4 | `losses/dist_align_losses.py` | `L_cov` 非有限值时 `torch.zeros_like` 置零 |
+| 1 | `scripts/train_mcdisp_align.py` | 反向后加 `clip_grad_norm_(model.parameters(), MCDISP_ALIGN_GRAD_CLIP_NORM=1.0)` |
+| 2 | `config.py` | `MCDISP_ALIGN_LAMBDA_COV`: 0.1 → **0.01**；消融块 7 处同步 |
+| 3 | `scripts/train_mcdisp_align.py` `stage_multipliers` | Full 阶段 `cov` **线性 ramp** 0→1 |
+| 4 | `losses/mcdisp_align_losses.py` | `L_cov` 非有限值时 `torch.zeros_like` 置零 |
 
 ### 6.2 验证证据（均实跑通过）
 
@@ -130,13 +130,13 @@ ep9 total loss = 0.5184 分解：
 > P0 仅保证 **不再崩**。要在绝对值上追平/超过 0.5622，还需：
 
 ### P1 — 恢复/超越 0.5622
-- [ ] `DIST_ALIGN_EPOCHS`: 10 → **30**（10 轮时 cov 阶段只有 2 轮，即便不崩也学不到东西）。
+- [ ] `MCDISP_ALIGN_EPOCHS`: 10 → **30**（10 轮时 cov 阶段只有 2 轮，即便不崩也学不到东西）。
 - [ ] 重配调度比例（按 30 轮）：warmup 0.1 / main 0.6 / full 0.3。
 - [ ] cov head 单独设更低 LR（`create_optimizer` 增加第三个 param group）。
 - [ ] 数据驱动初始化 `img_U`（用首批描述偏差 SVD 初始化 cov head）。
 
 ### P2 — 关键消融（先定位再决定是否上 cov）
-- [ ] `diagonal_only`（cov_rank=0）跑 30 轮：完全绕过崩溃，看 "无 cov 的 MSDA" 天花板。
+- [ ] `diagonal_only`（cov_rank=0）跑 30 轮：完全绕过崩溃，看 "无 cov 的 MCDisp_Align" 天花板。
 - [ ] `no_cov`（cov_rank=4 但 λ_cov=0）跑 30 轮：隔离 cov 的影响。
 - [ ] 训练日志加 `grad_norm`（分 head）与 `img_U` 范数监控，便于下次定位。
 
@@ -149,12 +149,12 @@ ep9 total loss = 0.5184 分解：
 PY=/home/xpfu/.conda/envs/CudaVersion128Fuxp/bin/python
 
 # 训练（建议先 P0 + --epochs 30 验证止崩与上升趋势）
-$PY scripts/train_dist_align.py --epochs 30
-# 或：$PY main.py --task train_dist_align
+$PY scripts/train_mcdisp_align.py --epochs 30
+# 或：$PY main.py --task train_mcdisp_align
 
 # loss 自测
-PYTHONPATH=. $PY losses/dist_align_losses.py
+PYTHONPATH=. $PY losses/mcdisp_align_losses.py
 
 # 查看 ramp 调度
-$PY -c "import sys; sys.path.insert(0,'scripts'); import config; from train_dist_align import stage_multipliers as s; [print(e+1, s(e,30,False)['cov']) for e in range(30)]"
+$PY -c "import sys; sys.path.insert(0,'scripts'); import config; from train_mcdisp_align import stage_multipliers as s; [print(e+1, s(e,30,False)['cov']) for e in range(30)]"
 ```

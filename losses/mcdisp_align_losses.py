@@ -2,13 +2,13 @@
 GaussianImageDistribution - Distribution Alignment Loss Functions
 
 This module implements loss functions for distribution-based alignment.
-The primary loss is MSDALoss (Multi-caption Semantic Distribution Alignment).
+The primary loss is MCDispAlignLoss (Multi-Caption Semantic Dispersion Guided Distribution Alignment).
 """
 
 import os
 import sys
 
-# When run as a script (`python losses/dist_align_losses.py`), sys.path[0] is the
+# When run as a script (`python losses/mcdisp_align_losses.py`), sys.path[0] is the
 # script's own directory, so the repo-root `config` module is not importable.
 # Put the repo root (this file's parent dir) on the path so `import config` and
 # the `utils.*` imports resolve in both `import` and `__main__` invocation modes.
@@ -26,12 +26,12 @@ import torch.nn.functional as F
 from utils.logger import get_logger
 
 
-logger = get_logger("dist_align_losses")
+logger = get_logger("mcdisp_align_losses")
 
 
-class MSDALoss(nn.Module):
+class MCDispAlignLoss(nn.Module):
     """
-    Multi-caption Semantic Distribution Alignment (MSDA) loss.
+    Multi-Caption Semantic Dispersion Guided Distribution Alignment (MCDisp_Align) loss.
 
     Total loss = lambda_ctr * L_set + lambda_mu * L_mu + lambda_var * L_var
                + lambda_cover_pos * L_cover_pos + lambda_cover_neg * L_cover_neg
@@ -73,7 +73,7 @@ class MSDALoss(nn.Module):
         uncertainty_grad_alpha: float = 1.0,
         eps: float = 1e-6,
     ):
-        """MSDA loss per the methodology.
+        """MCDisp_Align loss per the methodology.
 
         Args:
             lambda_*: weights for the loss terms (0 disables a term).
@@ -308,7 +308,7 @@ class MSDALoss(nn.Module):
         text_logvars: torch.Tensor,
         text_Us: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
-        """MSDA loss. text_mu / text_logvar are the moment-matched caption-set
+        """MCDisp_Align loss. text_mu / text_logvar are the moment-matched caption-set
         distribution (mu_t_bar, sigma_t_bar^2); text_mus / text_logvars are the
         per-caption parameters. text_Us is accepted for caller compat and unused
         (text is diagonal in v1)."""
@@ -389,7 +389,7 @@ class MSDALoss(nn.Module):
 
 
 if __name__ == "__main__":
-    print("Testing MSDA loss (methodology-aligned)...")
+    print("Testing MCDisp_Align loss (methodology-aligned)...")
     B, D, K, r = 4, 768, 5, 4
     img_mu = torch.randn(B, D)
     img_logvar = torch.randn(B, D)
@@ -400,7 +400,7 @@ if __name__ == "__main__":
     text_logvars = torch.randn(B, K, D)
 
     print("\n1. Full loss (with covariance, uncertainty-discounted sim):")
-    crit = MSDALoss()
+    crit = MCDispAlignLoss()
     loss, d = crit(img_mu, img_logvar, img_U, text_mu, text_logvar,
                    text_mus, text_logvars)
     for k in ("total", "set_nce", "mu", "var", "cover_pos", "cover_neg", "cov", "reg"):
@@ -408,13 +408,13 @@ if __name__ == "__main__":
     assert math.isfinite(d["total"])
 
     print("\n2. Diagonal only (img_U=None):")
-    crit_d = MSDALoss(lambda_cov=0.0)
+    crit_d = MCDispAlignLoss(lambda_cov=0.0)
     loss_d, d_d = crit_d(img_mu, img_logvar, None, text_mu, text_logvar,
                          text_mus, text_logvars)
     print(f"   total: {d_d['total']:.4f}, cov: {d_d['cov']:.4f} (expect 0)")
 
     print("\n3. Plain cosine (use_uncertainty_sim=False):")
-    crit_c = MSDALoss(use_uncertainty_sim=False)
+    crit_c = MCDispAlignLoss(use_uncertainty_sim=False)
     _, d_c = crit_c(img_mu, img_logvar, img_U, text_mu, text_logvar,
                     text_mus, text_logvars)
     print(f"   set_nce: {d_c['set_nce']:.4f}")
@@ -438,4 +438,4 @@ if __name__ == "__main__":
     # text_mus still receives gradient via L_set/L_cover/L_cov (mu_t_bar, per-caption),
     # but the L_var target itself is detached; this just confirms backward runs.
     print("   backward completed without error")
-    print("\nAll MSDA loss tests passed.")
+    print("\nAll MCDisp_Align loss tests passed.")

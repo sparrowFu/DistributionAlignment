@@ -1,4 +1,4 @@
-"""Distribution-likelihood matching score for dist_align (MSDA).
+"""Distribution-likelihood matching score for mcdisp_align (MCDisp_Align).
 
 The retrieval/matching score is the log-likelihood of the text mean under the
 image Gaussian distribution:

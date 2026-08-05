@@ -184,36 +184,36 @@ EVAL_BATCH_SIZE = 64
 # Distribution Alignment Model Configuration
 # =============================================================================
 # Training log for distribution alignment model
-TRAIN_DIST_ALIGN_LOG_PATH = LOG_DIR / "train_dist_align.log"
+TRAIN_MCDISP_ALIGN_LOG_PATH = LOG_DIR / "train_mcdisp_align.log"
 
 # Evaluation log for distribution alignment model
-EVAL_DIST_ALIGN_LOG_PATH = LOG_DIR / "evaluate_dist_align.log"
+EVAL_MCDISP_ALIGN_LOG_PATH = LOG_DIR / "evaluate_mcdisp_align.log"
 
 # Checkpoint paths
-DIST_ALIGN_BEST_CKPT = CHECKPOINT_DIR / "dist_align_coco_best.pt"
-DIST_ALIGN_LAST_CKPT = CHECKPOINT_DIR / "dist_align_coco_last.pt"
+MCDISP_ALIGN_BEST_CKPT = CHECKPOINT_DIR / "mcdisp_align_coco_best.pt"
+MCDISP_ALIGN_LAST_CKPT = CHECKPOINT_DIR / "mcdisp_align_coco_last.pt"
 
 # Evaluation results path
-DIST_ALIGN_EVAL_RESULTS_PATH = OUTPUT_DIR / "dist_align_eval_results.json"
+MCDISP_ALIGN_EVAL_RESULTS_PATH = OUTPUT_DIR / "mcdisp_align_eval_results.json"
 
 # I2T per-caption pair-count metric (separate file; see compute_i2t_caption_pair_counts)
-DIST_ALIGN_I2T_PAIR_COUNTS_PATH = OUTPUT_DIR / "dist_align_i2t_pair_counts.json"
+MCDISP_ALIGN_I2T_PAIR_COUNTS_PATH = OUTPUT_DIR / "mcdisp_align_i2t_pair_counts.json"
 
 # Training hyperparameters
-DIST_ALIGN_EPOCHS = 10
-DIST_ALIGN_BATCH_SIZE = 32
-DIST_ALIGN_CLIP_LR = 1e-6  # Learning rate for CLIP (if fine-tuning)
-DIST_ALIGN_MLP_LR = 5e-5   # Learning rate for MLP distribution heads (trained from scratch; balanced for convergence vs overfitting)
-DIST_ALIGN_WEIGHT_DECAY = 1e-4
-DIST_ALIGN_FREEZE_CLIP = True  # Whether to freeze CLIP parameters
+MCDISP_ALIGN_EPOCHS = 10
+MCDISP_ALIGN_BATCH_SIZE = 32
+MCDISP_ALIGN_CLIP_LR = 1e-6  # Learning rate for CLIP (if fine-tuning)
+MCDISP_ALIGN_MLP_LR = 5e-5   # Learning rate for MLP distribution heads (trained from scratch; balanced for convergence vs overfitting)
+MCDISP_ALIGN_WEIGHT_DECAY = 1e-4
+MCDISP_ALIGN_FREEZE_CLIP = True  # Whether to freeze CLIP parameters
 
 # Distribution configuration
-DIST_ALIGN_DROPOUT_RATE = 0.1         # Dropout rate for MLP heads
-DIST_ALIGN_DISTRIBUTION_MERGING = "moment_matching"  # Method: "moment_matching", "poe", "simple"
+MCDISP_ALIGN_DROPOUT_RATE = 0.1         # Dropout rate for MLP heads
+MCDISP_ALIGN_DISTRIBUTION_MERGING = "moment_matching"  # Method: "moment_matching", "poe", "simple"
 
 
 # =============================================================================
-# MSDA: Multi-caption Semantic Distribution Alignment
+# MCDisp_Align: Multi-Caption Semantic Dispersion Guided Distribution Alignment
 # =============================================================================
 # Per the methodology (docs/方法论设计.html / spec 2026-07-20-msda-redesign):
 # image and text are modeled as Gaussians. The image uses a general covariance
@@ -225,34 +225,34 @@ DIST_ALIGN_DISTRIBUTION_MERGING = "moment_matching"  # Method: "moment_matching"
 #            + lambda_cover*L_cover + lambda_cov*L_cov + lambda_reg*L_reg
 # where L_set is a bidirectional InfoNCE on the uncertainty-discounted cosine
 # similarity  sim = (mu_v . mu_t) / (tau * sqrt(1+mean sigma_v^2) * sqrt(1+mean sigma_t^2)).
-MSDA_COV_RANK = 4                 # low-rank covariance rank r for the IMAGE side (0 = diagonal only)
-MSDA_TAU = 0.07                   # FIXED temperature in the L_set similarity (not learnable)
-MSDA_LAMBDA_CTR = 1.0             # weight for the set contrastive loss L_set
-MSDA_LAMBDA_MU = 0.5              # weight for the mean-center alignment loss L_mu
-MSDA_LAMBDA_VAR = 1.0             # weight for the variance semantic consistency loss L_var (core)
-MSDA_LAMBDA_COVER_POS = 0.5       # weight for L_cover positive coverage (methodology 5.4 canonical)
-MSDA_LAMBDA_COVER_NEG = 0.0       # weight for L_cover OPTIONAL negative repulsion (5.4 "可以再加"; 0 = off; sweep 0.05/0.1/0.25/0.5 once stable)
-MSDA_LAMBDA_COV = 0.01            # weight for L_cov -- STABILITY-RUN value (Full-cov crash risk); official target 0.2 once Full stage verified stable
-MSDA_LAMBDA_REG = 0.01            # weight for the variance regularization loss L_reg
-MSDA_M_POS = 1.0                  # L_cover positive coverage margin (per-D normalized Mahalanobis)
-MSDA_M_NEG = 2.0                  # L_cover negative repulsion margin
-MSDA_TARGET_VAR = 0.04            # L_reg variance prior sigma_0^2 -- = measured MSCOCO caption spread (was 1.0, ~26x too large; sigma diagnostic Case A)
-MSDA_USE_UNCERTAINTY_SIM = True   # L_set/retrieval use the uncertainty-discounted score (False = plain cosine)
-MSDA_VAR_FLOOR = 1e-4             # numerical floor on sigma^2 (softplus positivity + div-by-zero guard; NOT a semantic floor -- the range is learned via L_var / L_reg)
-MSDA_VAR_FLOOR_NEAR_MULT = 10     # variance floor-collapse monitor: a dim is "near floor" if sigma^2 < MSDA_VAR_FLOOR_NEAR_MULT * MSDA_VAR_FLOOR
-MSDA_VAR_FLOOR_RATIO_WARN = 0.5   # warn when >this fraction of dims are near-floor AND mean sigma^2 < 2*MSDA_VAR_FLOOR
-MSDA_COV_EPS = 1e-6               # numerical epsilon for Mahalanobis / log
-MSDA_GRAD_CLIP_NORM = 1.0         # global grad-norm clip (clip_grad_norm_) -- guards against L_cov / cover spikes destabilizing the retrieval means
+MCDISP_ALIGN_COV_RANK = 4                 # low-rank covariance rank r for the IMAGE side (0 = diagonal only)
+MCDISP_ALIGN_TAU = 0.07                   # FIXED temperature in the L_set similarity (not learnable)
+MCDISP_ALIGN_LAMBDA_CTR = 1.0             # weight for the set contrastive loss L_set
+MCDISP_ALIGN_LAMBDA_MU = 0.5              # weight for the mean-center alignment loss L_mu
+MCDISP_ALIGN_LAMBDA_VAR = 1.0             # weight for the variance semantic consistency loss L_var (core)
+MCDISP_ALIGN_LAMBDA_COVER_POS = 0.5       # weight for L_cover positive coverage (methodology 5.4 canonical)
+MCDISP_ALIGN_LAMBDA_COVER_NEG = 0.0       # weight for L_cover OPTIONAL negative repulsion (5.4 "可以再加"; 0 = off; sweep 0.05/0.1/0.25/0.5 once stable)
+MCDISP_ALIGN_LAMBDA_COV = 0.01            # weight for L_cov -- STABILITY-RUN value (Full-cov crash risk); official target 0.2 once Full stage verified stable
+MCDISP_ALIGN_LAMBDA_REG = 0.01            # weight for the variance regularization loss L_reg
+MCDISP_ALIGN_M_POS = 1.0                  # L_cover positive coverage margin (per-D normalized Mahalanobis)
+MCDISP_ALIGN_M_NEG = 2.0                  # L_cover negative repulsion margin
+MCDISP_ALIGN_TARGET_VAR = 0.04            # L_reg variance prior sigma_0^2 -- = measured MSCOCO caption spread (was 1.0, ~26x too large; sigma diagnostic Case A)
+MCDISP_ALIGN_USE_UNCERTAINTY_SIM = True   # L_set/retrieval use the uncertainty-discounted score (False = plain cosine)
+MCDISP_ALIGN_VAR_FLOOR = 1e-4             # numerical floor on sigma^2 (softplus positivity + div-by-zero guard; NOT a semantic floor -- the range is learned via L_var / L_reg)
+MCDISP_ALIGN_VAR_FLOOR_NEAR_MULT = 10     # variance floor-collapse monitor: a dim is "near floor" if sigma^2 < MCDISP_ALIGN_VAR_FLOOR_NEAR_MULT * MCDISP_ALIGN_VAR_FLOOR
+MCDISP_ALIGN_VAR_FLOOR_RATIO_WARN = 0.5   # warn when >this fraction of dims are near-floor AND mean sigma^2 < 2*MCDISP_ALIGN_VAR_FLOOR
+MCDISP_ALIGN_COV_EPS = 1e-6               # numerical epsilon for Mahalanobis / log
+MCDISP_ALIGN_GRAD_CLIP_NORM = 1.0         # global grad-norm clip (clip_grad_norm_) -- guards against L_cov / cover spikes destabilizing the retrieval means
 # Deprecated likelihood-rewrite knobs (kept ONLY for deferred loglik evals in
 # eval_flickr30k.py / eval_vqa_retrieval.py, which still use distribution_score).
-# The MSDA training/loss path no longer reads these.
-MSDA_USE_LOGDET = True            # deprecated: loglik-eval only
-MSDA_PER_DIM_NORMALIZE = True     # deprecated: loglik-eval only
+# The MCDisp_Align training/loss path no longer reads these.
+MCDISP_ALIGN_USE_LOGDET = True            # deprecated: loglik-eval only
+MCDISP_ALIGN_PER_DIM_NORMALIZE = True     # deprecated: loglik-eval only
 
 # 3-stage training schedule (fraction of total epochs each stage spans)
-MSDA_STAGE_WARMUP_FRAC = 0.2      # L_set + L_mu (+ L_reg always on)
-MSDA_STAGE_MAIN_FRAC = 0.6        # + L_var + L_cover
-MSDA_STAGE_FULL_FRAC = 0.2        # + L_cov (ramped 0 -> 1)
+MCDISP_ALIGN_STAGE_WARMUP_FRAC = 0.2      # L_set + L_mu (+ L_reg always on)
+MCDISP_ALIGN_STAGE_MAIN_FRAC = 0.6        # + L_var + L_cover
+MCDISP_ALIGN_STAGE_FULL_FRAC = 0.2        # + L_cov (ramped 0 -> 1)
 
 
 # =============================================================================
@@ -366,7 +366,6 @@ OOD_RESULTS_DIR = OUTPUT_DIR / "ood_detection"
 OOD_LOG_PATH = LOG_DIR / "ood_detection.log"
 
 # OOD datasets: will be downloaded via torchvision if not present
-OOD_DATASETS = ["svhn", "cifar10", "tiny_imagenet"]
 OOD_DATA_DIR = PROJECT_ROOT / "TrainDatasets" / "ood"
 
 
@@ -381,35 +380,35 @@ ABLATION_CONFIGS = {
     "full_model": {
         "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
         "lambda_cover": 0.5, "lambda_cov": 0.2, "lambda_reg": 0.01,
-        "cov_rank": MSDA_COV_RANK, "num_captions": 5,
+        "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
-        "description": "Full MSDA (set-NCE + mu + var + cover + cov + reg)",
+        "description": "Full MCDisp_Align (set-NCE + mu + var + cover + cov + reg)",
     },
     "no_var": {
         "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 0.0,
         "lambda_cover": 0.5, "lambda_cov": 0.2, "lambda_reg": 0.01,
-        "cov_rank": MSDA_COV_RANK, "num_captions": 5,
+        "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
         "description": "w/o L_var (variance semantic consistency)",
     },
     "no_cover": {
         "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
         "lambda_cover": 0.0, "lambda_cov": 0.2, "lambda_reg": 0.01,
-        "cov_rank": MSDA_COV_RANK, "num_captions": 5,
+        "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
         "description": "w/o L_cover (multi-caption coverage)",
     },
     "no_cov": {
         "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
         "lambda_cover": 0.5, "lambda_cov": 0.0, "lambda_reg": 0.01,
-        "cov_rank": MSDA_COV_RANK, "num_captions": 5,
+        "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
         "description": "w/o L_cov (covariance direction)",
     },
     "no_mu": {
         "lambda_ctr": 1.0, "lambda_mu": 0.0, "lambda_var": 1.0,
         "lambda_cover": 0.5, "lambda_cov": 0.2, "lambda_reg": 0.01,
-        "cov_rank": MSDA_COV_RANK, "num_captions": 5,
+        "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
         "description": "w/o L_mu (mean-center alignment)",
     },
@@ -423,35 +422,35 @@ ABLATION_CONFIGS = {
     "no_uncertainty_sim": {
         "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
         "lambda_cover": 0.5, "lambda_cov": 0.2, "lambda_reg": 0.01,
-        "cov_rank": MSDA_COV_RANK, "num_captions": 5,
+        "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": False,
         "description": "w/o uncertainty-discounted similarity (standard cosine)",
     },
     "k1": {
         "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
         "lambda_cover": 0.5, "lambda_cov": 0.0, "lambda_reg": 0.01,
-        "cov_rank": MSDA_COV_RANK, "num_captions": 1,
+        "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 1,
         "use_uncertainty_sim": True,
         "description": "K=1 caption (single-caption fairness)",
     },
     "k3": {
         "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
         "lambda_cover": 0.5, "lambda_cov": 0.2, "lambda_reg": 0.01,
-        "cov_rank": MSDA_COV_RANK, "num_captions": 3,
+        "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 3,
         "use_uncertainty_sim": True,
         "description": "K=3 captions",
     },
     "k5": {
         "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
         "lambda_cover": 0.5, "lambda_cov": 0.2, "lambda_reg": 0.01,
-        "cov_rank": MSDA_COV_RANK, "num_captions": 5,
+        "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
         "description": "K=5 captions (full)",
     },
     "no_neg": {
         "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
         "lambda_cover": 0.5, "lambda_cover_neg": 0.0, "lambda_cov": 0.2, "lambda_reg": 0.01,
-        "cov_rank": MSDA_COV_RANK, "num_captions": 5,
+        "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
         "description": "w/o L_cover negative repulsion (pos-only coverage, methodology 5.4 canonical)",
     },

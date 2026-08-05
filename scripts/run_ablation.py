@@ -1,18 +1,18 @@
 """
 GaussianImageDistribution - Exp5: Ablation Study Script
 
-Quantifies the contribution of each MSDA loss component by training dist_align
+Quantifies the contribution of each MCDisp_Align loss component by training mcdisp_align
 with different configurations and evaluating retrieval.
 
 Each ablation variant is trained by the SAME code as the real model
-(:func:`utils.dist_align_trainer.run_dist_align_training`) — staged schedule,
+(:func:`utils.mcdisp_align_trainer.run_mcdisp_align_training`) — staged schedule,
 grad clipping, recall/loss best-checkpoint selection, early stopping — differing
 only in the loss weights / ``cov_rank`` / ``num_captions`` overrides, the
 ``--dataset`` (coco or flickr), and the per-variant checkpoint path. So ablation
 results are directly comparable to a full training run.
 
 Ablation configurations (see config.ABLATION_CONFIGS):
-    - Full MSDA (set-NCE + mu + var + cover + cov + reg)
+    - Full MCDisp_Align (set-NCE + mu + var + cover + cov + reg)
     - w/o L_var (variance semantic consistency)
     - w/o L_cover (multi-caption coverage)
     - w/o L_cov (covariance direction)
@@ -41,7 +41,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
 from utils.dataset_registry import VALID_DATASETS
-from utils.dist_align_trainer import DistAlignTrainConfig, run_dist_align_training
+from utils.mcdisp_align_trainer import MCDispAlignTrainConfig, run_mcdisp_align_training
 from utils.logger import get_logger, log_exception
 
 
@@ -61,10 +61,10 @@ def parse_args():
     parser.add_argument("--dataset", type=str, default="coco",
                         choices=list(VALID_DATASETS),
                         help="Dataset to train/evaluate on (coco=MSCOCO, flickr=flickr30k)")
-    parser.add_argument("--epochs", type=int, default=config.DIST_ALIGN_EPOCHS)
-    parser.add_argument("--batch-size", type=int, default=config.DIST_ALIGN_BATCH_SIZE)
-    parser.add_argument("--lr", type=float, default=config.DIST_ALIGN_MLP_LR,
-                        help="Learning rate for the (non-frozen) MSDA heads")
+    parser.add_argument("--epochs", type=int, default=config.MCDISP_ALIGN_EPOCHS)
+    parser.add_argument("--batch-size", type=int, default=config.MCDISP_ALIGN_BATCH_SIZE)
+    parser.add_argument("--lr", type=float, default=config.MCDISP_ALIGN_MLP_LR,
+                        help="Learning rate for the (non-frozen) MCDisp_Align heads")
     parser.add_argument("--eval-samples", type=int, default=500,
                         help="Number of eval samples for the final retrieval report "
                              "(coco subset; flickr uses its full test split)")
@@ -77,8 +77,8 @@ def parse_args():
 
 
 def _config_from_ablation(config_name, ablation_config, args, best_path, last_path):
-    """Map an ABLATION_CONFIGS entry + CLI args to a DistAlignTrainConfig."""
-    return DistAlignTrainConfig(
+    """Map an ABLATION_CONFIGS entry + CLI args to a MCDispAlignTrainConfig."""
+    return MCDispAlignTrainConfig(
         dataset=args.dataset,
         tag=config_name,
         epochs=args.epochs,
@@ -87,16 +87,16 @@ def _config_from_ablation(config_name, ablation_config, args, best_path, last_pa
         freeze_clip=True,
         clip_lr=args.lr,
         mlp_lr=args.lr,
-        cov_rank=ablation_config.get("cov_rank", config.MSDA_COV_RANK),
+        cov_rank=ablation_config.get("cov_rank", config.MCDISP_ALIGN_COV_RANK),
         num_captions_override=ablation_config.get("num_captions"),
-        lambda_ctr=ablation_config.get("lambda_ctr", config.MSDA_LAMBDA_CTR),
-        lambda_mu=ablation_config.get("lambda_mu", config.MSDA_LAMBDA_MU),
-        lambda_var=ablation_config.get("lambda_var", config.MSDA_LAMBDA_VAR),
-        lambda_cover_pos=ablation_config.get("lambda_cover_pos", ablation_config.get("lambda_cover", config.MSDA_LAMBDA_COVER_POS)),
-        lambda_cover_neg=ablation_config.get("lambda_cover_neg", config.MSDA_LAMBDA_COVER_NEG),
-        lambda_cov=ablation_config.get("lambda_cov", config.MSDA_LAMBDA_COV),
-        lambda_reg=ablation_config.get("lambda_reg", config.MSDA_LAMBDA_REG),
-        tau=ablation_config.get("temperature", config.MSDA_TAU),
+        lambda_ctr=ablation_config.get("lambda_ctr", config.MCDISP_ALIGN_LAMBDA_CTR),
+        lambda_mu=ablation_config.get("lambda_mu", config.MCDISP_ALIGN_LAMBDA_MU),
+        lambda_var=ablation_config.get("lambda_var", config.MCDISP_ALIGN_LAMBDA_VAR),
+        lambda_cover_pos=ablation_config.get("lambda_cover_pos", ablation_config.get("lambda_cover", config.MCDISP_ALIGN_LAMBDA_COVER_POS)),
+        lambda_cover_neg=ablation_config.get("lambda_cover_neg", config.MCDISP_ALIGN_LAMBDA_COVER_NEG),
+        lambda_cov=ablation_config.get("lambda_cov", config.MCDISP_ALIGN_LAMBDA_COV),
+        lambda_reg=ablation_config.get("lambda_reg", config.MCDISP_ALIGN_LAMBDA_REG),
+        tau=ablation_config.get("temperature", config.MCDISP_ALIGN_TAU),
         use_uncertainty_sim=ablation_config.get("use_uncertainty_sim", True),
         device=args.device,
         best_ckpt_path=best_path,
@@ -120,7 +120,7 @@ def train_ablation(config_name, ablation_config, args, output_dir):
         config_name, ablation_config, args,
         best_path=ckpt_dir / "best.pt", last_path=ckpt_dir / "last.pt",
     )
-    res = run_dist_align_training(cfg, logger)
+    res = run_mcdisp_align_training(cfg, logger)
 
     return {
         "config": config_name,
@@ -158,12 +158,12 @@ def run_sensitivity_analysis(args, output_dir):
 
 
 def _retr(metrics, k):
-    """Pull R@k from an ablation result's retrieval block (msda_recall primary)."""
+    """Pull R@k from an ablation result's retrieval block (mcdisp_align_recall primary)."""
     if not metrics:
         return 0.0
-    msda = metrics.get("msda_recall", {})
-    if f"R@{k}" in msda:
-        return msda[f"R@{k}"]
+    mcdisp = metrics.get("mcdisp_align_recall", {})
+    if f"R@{k}" in mcdisp:
+        return mcdisp[f"R@{k}"]
     return metrics.get("cos_recall", {}).get(f"R@{k}", 0.0)
 
 

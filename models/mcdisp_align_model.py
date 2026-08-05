@@ -17,10 +17,10 @@ from utils.logger import get_logger
 from utils.image_preprocess import preprocess_images_on_gpu
 
 
-logger = get_logger("dist_align_model")
+logger = get_logger("mcdisp_align_model")
 
 
-class DistributionAlignmentModel(nn.Module):
+class MCDispAlignModel(nn.Module):
     """
     Distribution Alignment Model for Multi-Modal Semantic Matching.
 
@@ -67,7 +67,7 @@ class DistributionAlignmentModel(nn.Module):
         self.distribution_merging = distribution_merging
         self.dropout_rate = dropout_rate
         # Low-rank covariance rank r (0 = diagonal-only). Defaults to config.
-        self.cov_rank = cov_rank if cov_rank is not None else config.MSDA_COV_RANK
+        self.cov_rank = cov_rank if cov_rank is not None else config.MCDISP_ALIGN_COV_RANK
 
         # Load CLIP model from local files
         logger.info(f"Loading CLIP model from: {self.model_path}")
@@ -194,7 +194,7 @@ class DistributionAlignmentModel(nn.Module):
         removed so sigma^2 can track the true caption spread even when it is
         below 0.1.
         """
-        return torch.log(F.softplus(raw_logvar) + config.MSDA_VAR_FLOOR)
+        return torch.log(F.softplus(raw_logvar) + config.MCDISP_ALIGN_VAR_FLOOR)
 
     def merge_distributions(
         self,
@@ -214,7 +214,7 @@ class DistributionAlignmentModel(nn.Module):
             mus: Per-caption means of shape (B, K, D)
             logvars: Per-caption log variances of shape (B, K, D)
             us: Per-caption low-rank factors of shape (B, K, D, r) or None
-            method: Merging method. MSDA uses "moment_matching"; "poe" and
+            method: Merging method. MCDisp_Align uses "moment_matching"; "poe" and
                    "simple" are retained as diagonal-only compatibility stubs.
 
         Returns:
@@ -264,7 +264,7 @@ class DistributionAlignmentModel(nn.Module):
         if us is not None:
             diag_cov = diag_cov + (us ** 2).sum(dim=-1)  # + diag(U U^T)
         combined_var = (weights.view(1, K, 1) * (diag_cov + mus ** 2)).sum(dim=1) - combined_mu ** 2
-        combined_logvar = torch.log(combined_var + config.MSDA_COV_EPS)  # (B, D)
+        combined_logvar = torch.log(combined_var + config.MCDISP_ALIGN_COV_EPS)  # (B, D)
 
         return combined_mu, combined_logvar
 
@@ -538,14 +538,14 @@ if __name__ == "__main__":
     from utils.seed import set_seed
 
     # Setup
-    setup_logger("dist_align_model", config.LOG_DIR / "dist_align_model_test.log")
+    setup_logger("mcdisp_align_model", config.LOG_DIR / "mcdisp_align_model_test.log")
     set_seed(config.SEED)
 
     # Create model
-    model = DistributionAlignmentModel(
-        freeze_clip=config.DIST_ALIGN_FREEZE_CLIP,
-        distribution_merging=config.DIST_ALIGN_DISTRIBUTION_MERGING,
-        dropout_rate=config.DIST_ALIGN_DROPOUT_RATE
+    model = MCDispAlignModel(
+        freeze_clip=config.MCDISP_ALIGN_FREEZE_CLIP,
+        distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
+        dropout_rate=config.MCDISP_ALIGN_DROPOUT_RATE
     )
 
     print(f"Model created successfully")
@@ -577,16 +577,16 @@ if __name__ == "__main__":
     # Verify covariance factor shapes (default model uses cov_rank > 0).
     # Text is diagonal-only (methodology v1), so text_Us is always None.
     assert outputs['img_U'] is not None, "img_U should exist for cov_rank>0"
-    assert outputs['img_U'].shape == (batch_size, 768, config.MSDA_COV_RANK)
+    assert outputs['img_U'].shape == (batch_size, 768, config.MCDISP_ALIGN_COV_RANK)
     assert outputs['text_Us'] is None, "text_Us should be None (text diagonal-only)"
     assert outputs['text_logvars'].shape == (batch_size, num_captions, 768)
     print("\nCovariance factor shapes verified.")
 
     # Verify diagonal-only mode (cov_rank=0) returns None for U
-    diag_model = DistributionAlignmentModel(
-        freeze_clip=config.DIST_ALIGN_FREEZE_CLIP,
-        distribution_merging=config.DIST_ALIGN_DISTRIBUTION_MERGING,
-        dropout_rate=config.DIST_ALIGN_DROPOUT_RATE,
+    diag_model = MCDispAlignModel(
+        freeze_clip=config.MCDISP_ALIGN_FREEZE_CLIP,
+        distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
+        dropout_rate=config.MCDISP_ALIGN_DROPOUT_RATE,
         cov_rank=0,
     )
     with torch.no_grad():

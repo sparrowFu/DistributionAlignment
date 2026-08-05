@@ -3,7 +3,7 @@ GaussianImageDistribution - Shared training-dataset selection.
 
 The single source of truth for turning a ``--dataset`` tag into the *training*
 ``Dataset``, so the three fine-tuning scripts (``train_clip_baseline``,
-``train_dist_align``, ``train_prolip``) all switch training data by
+``train_mcdisp_align``, ``train_prolip``) all switch training data by
 ``--dataset`` the same way the evaluation scripts switch eval data via
 :func:`utils.eval_common.build_eval_dataloader`.
 

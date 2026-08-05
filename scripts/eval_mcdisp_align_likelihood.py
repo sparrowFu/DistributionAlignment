@@ -1,8 +1,8 @@
 """
-Distribution-aware retrieval evaluation for dist_align (MSDA).
+Distribution-aware retrieval evaluation for mcdisp_align (MCDisp_Align).
 
 This is the "make the distribution actually participate in inference" diagnostic.
-Unlike ``evaluate_dist_align.py`` (whose primary score is the uncertainty-
+Unlike ``evaluate_mcdisp_align.py`` (whose primary score is the uncertainty-
 discounted *cosine* -- only a scalar sigma^2 discount, the per-D variance and the
 covariance factor U never enter retrieval), this script scores retrieval with the
 FULL image Gaussian
@@ -17,7 +17,7 @@ and reports it SIDE BY SIDE with the two mean-based scorers, so the marginal
 contribution of sigma^2 / U is directly visible:
 
     - cos_recall  : cosine-on-means           (mu-only)
-    - msda_recall : uncertainty-discounted cos (mu + SCALAR sigma^2 discount)
+    - mcdisp_align_recall : uncertainty-discounted cos (mu + SCALAR sigma^2 discount)
     - lik_recall  : full-Gaussian likelihood  (mu + per-D sigma^2 + U)   <-- NEW
 
 The likelihood score is asymmetric (text point scored under image Gaussian; text
@@ -27,7 +27,7 @@ column (text -> images).
 
 IMPORTANT -- space/scale caveat: sigma^2 was supervised by L_var in the
 UN-normalized head space, while L_set / L_cov normalize the means. By default we
-L2-normalize the means before scoring (matching the cos/msda scorers and the
+L2-normalize the means before scoring (matching the cos/mcdisp_align scorers and the
 likelihood function's contract) and pass sigma^2 / U as the model produced them;
 mean(sigma^2) and ||U|| diagnostics are printed so any scale mismatch is
 visible. Use --no-normalize-means to score in raw head space, and
@@ -35,12 +35,12 @@ visible. Use --no-normalize-means to score in raw head space, and
 
 NO RETRAINING is required: this only loads an existing checkpoint and swaps the
 retrieval scorer. Use --which both to compare the mu-selected "best" checkpoint
-against the "last" one (the best was selected by msda_recall@1, which is mu-based,
+against the "last" one (the best was selected by mcdisp_align_recall@1, which is mu-based,
 so it is not guaranteed to be the best under the likelihood score).
 
 Usage:
-    python scripts/eval_dist_align_likelihood.py --dataset coco --which best
-    python scripts/eval_dist_align_likelihood.py --dataset flickr --which both
+    python scripts/eval_mcdisp_align_likelihood.py --dataset coco --which best
+    python scripts/eval_mcdisp_align_likelihood.py --dataset flickr --which both
 """
 
 import argparse
@@ -52,27 +52,27 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-# Allow `python scripts/eval_dist_align_likelihood.py` (repo root on sys.path).
+# Allow `python scripts/eval_mcdisp_align_likelihood.py` (repo root on sys.path).
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
-from models.dist_align_model import DistributionAlignmentModel
+from models.mcdisp_align_model import MCDispAlignModel
 from utils.distribution_score import image_text_loglik_matrix
 from utils.eval_common import build_eval_dataloader, resolve_checkpoint, VALID_DATASETS
 from utils.eval_results import append_eval_results, groups_to_flat, print_recall_groups
 from utils.logger import get_logger, log_exception
-from utils.retrieval import compute_recall_bidirectional, compute_recall_msda_chunked
+from utils.retrieval import compute_recall_bidirectional, compute_recall_mcdisp_align_chunked
 from utils.seed import set_seed
 
 
-_LOG_PATH = config.LOG_DIR / "eval_dist_align_likelihood.log"
-_RESULTS_PATH = config.OUTPUT_DIR / "dist_align_likelihood_eval_results.json"
+_LOG_PATH = config.LOG_DIR / "eval_mcdisp_align_likelihood.log"
+_RESULTS_PATH = config.OUTPUT_DIR / "mcdisp_align_likelihood_eval_results.json"
 
-logger = get_logger("eval_dist_align_likelihood", _LOG_PATH)
+logger = get_logger("eval_mcdisp_align_likelihood", _LOG_PATH)
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Distribution-aware (likelihood) retrieval eval for dist_align")
+    parser = argparse.ArgumentParser(description="Distribution-aware (likelihood) retrieval eval for mcdisp_align")
     parser.add_argument("--checkpoint", type=str, default=None,
                         help="Explicit checkpoint path. Overrides --dataset/--which.")
     parser.add_argument("--dataset", type=str, default="coco",
@@ -86,8 +86,8 @@ def parse_args():
     parser.add_argument("--recall-at-k", type=int, nargs="+", default=config.RECALL_AT_K)
     parser.add_argument("--num-samples", type=int, default=5000,
                         help="Number of images to evaluate (coco subset; flickr uses full test). Default: 5000")
-    parser.add_argument("--tau", type=float, default=config.MSDA_TAU,
-                        help="Temperature for the MSDA uncertainty-discounted similarity")
+    parser.add_argument("--tau", type=float, default=config.MCDISP_ALIGN_TAU,
+                        help="Temperature for the MCDisp_Align uncertainty-discounted similarity")
     # Likelihood knobs (the two deprecated-but-relevant scale controls).
     parser.add_argument("--per-dim-normalize", action="store_true", default=True,
                         help="Divide the Mahalanobis term by D (default: True).")
@@ -96,7 +96,7 @@ def parse_args():
                         help="Include the -0.5*log|Sigma| normalization term (default: True).")
     parser.add_argument("--no-logdet", dest="use_logdet", action="store_false")
     parser.add_argument("--normalize-means", action="store_true", default=True,
-                        help="L2-normalize means before likelihood scoring (matches cos/msda; default: True).")
+                        help="L2-normalize means before likelihood scoring (matches cos/mcdisp_align; default: True).")
     parser.add_argument("--no-normalize-means", dest="normalize_means", action="store_false")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     return parser.parse_args()
@@ -106,7 +106,7 @@ def parse_args():
 def extract_features(model, dataloader, device, num_samples=None):
     """Extract distribution features, INCLUDING the image covariance factor U.
 
-    Mirrors evaluate_dist_align.extract_features but also collects img_U (which
+    Mirrors evaluate_mcdisp_align.extract_features but also collects img_U (which
     that script drops). Returns CPU tensors; the caller moves what it needs to GPU.
     """
     model.eval()
@@ -206,16 +206,16 @@ def _group(family, label, i2t, t2i, k_values):
 
 @torch.no_grad()
 def evaluate_one(args, checkpoint_path):
-    """Run cos / msda / lik retrieval on one checkpoint. Returns (groups, extras)."""
+    """Run cos / mcdisp_align / lik retrieval on one checkpoint. Returns (groups, extras)."""
     logger.info("=" * 70)
     logger.info(f"Checkpoint: {checkpoint_path}")
 
     # Build model with cov_rank matching the checkpoint (load() rebuilds the cov
     # head to match, so the constructor default is just a starting point).
-    model = DistributionAlignmentModel(
-        freeze_clip=config.DIST_ALIGN_FREEZE_CLIP,
-        distribution_merging=config.DIST_ALIGN_DISTRIBUTION_MERGING,
-        cov_rank=config.MSDA_COV_RANK,
+    model = MCDispAlignModel(
+        freeze_clip=config.MCDISP_ALIGN_FREEZE_CLIP,
+        distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
+        cov_rank=config.MCDISP_ALIGN_COV_RANK,
     )
     model.load(checkpoint_path)
     logger.info(f"Loaded with cov_rank={model.cov_rank} (U is {'present' if model.cov_rank > 0 else 'absent (diagonal-only)'})")
@@ -266,18 +266,18 @@ def evaluate_one(args, checkpoint_path):
     cos_i2t = {k: cos[f"recall_i2t@{k}"] for k in args.recall_at_k}
     cos_t2i = {k: cos[f"recall_t2i@{k}"] for k in args.recall_at_k}
 
-    # --- Scorer 2: MSDA uncertainty-discounted cosine (mu + scalar sigma^2 discount) ---
-    msda = compute_recall_msda_chunked(img_mu_d, img_lv_d, text_mu_d, text_lv_d,
+    # --- Scorer 2: MCDisp_Align uncertainty-discounted cosine (mu + scalar sigma^2 discount) ---
+    mcdisp_align = compute_recall_mcdisp_align_chunked(img_mu_d, img_lv_d, text_mu_d, text_lv_d,
                                        args.recall_at_k, tau=args.tau)
-    msda_i2t = {k: msda[f"msda_recall_i2t@{k}"] for k in args.recall_at_k}
-    msda_t2i = {k: msda[f"msda_recall_t2i@{k}"] for k in args.recall_at_k}
+    mcdisp_align_i2t = {k: mcdisp_align[f"mcdisp_align_recall_i2t@{k}"] for k in args.recall_at_k}
+    mcdisp_align_t2i = {k: mcdisp_align[f"mcdisp_align_recall_t2i@{k}"] for k in args.recall_at_k}
 
     # --- Scorer 3: full-Gaussian likelihood (mu + per-D sigma^2 + U) ---
     lik_img_mean = F.normalize(img_mu_d, dim=-1) if args.normalize_means else img_mu_d
     lik_text_mean = F.normalize(text_mu_d, dim=-1) if args.normalize_means else text_mu_d
     sim_lik = image_text_loglik_matrix(
         lik_img_mean, torch.exp(img_lv_d), img_U_d, lik_text_mean,
-        eps=config.MSDA_COV_EPS,
+        eps=config.MCDISP_ALIGN_COV_EPS,
         per_dim_normalize=args.per_dim_normalize,
         use_logdet=args.use_logdet,
     )
@@ -285,7 +285,7 @@ def evaluate_one(args, checkpoint_path):
 
     groups = [
         _group("cos_recall", "Cosine-on-means       (mu-only)", cos_i2t, cos_t2i, args.recall_at_k),
-        _group("msda_recall", "MSDA discounted cos   (mu + SCALAR sigma^2)", msda_i2t, msda_t2i, args.recall_at_k),
+        _group("mcdisp_align_recall", "MCDisp_Align discounted cos   (mu + SCALAR sigma^2)", mcdisp_align_i2t, mcdisp_align_t2i, args.recall_at_k),
         _group("lik_recall", "Full-Gaussian lik     (mu + per-D sigma^2 + U)", lik_i2t, lik_t2i, args.recall_at_k),
     ]
     print_recall_groups(groups, logger)
@@ -299,7 +299,7 @@ def main():
     if args.checkpoint:
         ckpts = [args.checkpoint]
     else:
-        ckpts = [str(resolve_checkpoint("dist_align", args.dataset, w))
+        ckpts = [str(resolve_checkpoint("mcdisp_align", args.dataset, w))
                  for w in (("best", "last") if args.which == "both" else (args.which,))]
 
     logger.info(f"Dataset={args.dataset} | which={args.which} | normalize_means={args.normalize_means} | "
@@ -323,14 +323,14 @@ def main():
     # --- Compact side-by-side summary across all checkpoints ---
     logger.info("=" * 70)
     logger.info("Side-by-side R@1 (mean of I2T+T2I):")
-    header = f"  {'checkpoint':<48} {'cos':>7} {'msda':>7} {'lik':>7}"
+    header = f"  {'checkpoint':<48} {'cos':>7} {'mcdisp':>7} {'lik':>7}"
     logger.info(header)
     for r in all_results:
         m = r["metrics"]
         name = Path(r["checkpoint"]).name
         logger.info(f"  {name:<48} "
                     f"{m.get('cos_recall@1', float('nan')):>7.3f} "
-                    f"{m.get('msda_recall@1', float('nan')):>7.3f} "
+                    f"{m.get('mcdisp_align_recall@1', float('nan')):>7.3f} "
                     f"{m.get('lik_recall@1', float('nan')):>7.3f}")
     logger.info("=" * 70)
 

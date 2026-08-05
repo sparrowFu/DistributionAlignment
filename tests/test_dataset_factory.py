@@ -1,6 +1,6 @@
 """
 Tests for utils/dataset_factory.build_train_dataset — the ``--dataset``
-dispatch shared by the three fine-tuning scripts (clip_baseline, dist_align,
+dispatch shared by the three fine-tuning scripts (clip_baseline, mcdisp_align,
 prolip), so ``--dataset coco|flickr`` selects the *training data* (not just the
 checkpoint filename).
 

@@ -13,7 +13,7 @@
 
 ## 1. 任务背景
 
-- 项目:`DistributionAlignment`(方法名 MSDA / dist_align)。ProLIP 是 baseline B3。
+- 项目:`DistributionAlignment`(方法名 MCDisp_Align / mcdisp_align)。ProLIP 是 baseline B3。
 - 旧 `models/prolip_model.py` 名字叫 ProLIP,但其实是 CLIP ViT-L/14 + 4 个 MLP 头从零训,**从没加载过真 ProLIP 权重**。
 - 真模型权重 `PreTrainedModels/prolip` 是 `SanghyukChun/ProLIP-ViT-H-14-FT-DC-1B-1_28M`(OpenCLIP 架构 + ProLIP 的 uncertainty 头,**不能**用 HuggingFace `CLIPModel.from_pretrained` 加载)。
 - 用户已把 `prolip` 库及其依赖装进 conda env `CudaVersion128Fuxp`;三个本地 artifact 已下载:`PreTrainedModels/prolip`(权重)、`prolipProcessor`(图像)、`prolipTokenizer`(文本)。
@@ -57,7 +57,7 @@
 | t2i | cosine | 0.3512 | 0.5784 | 0.6738 |
 | t2i | csd | 0.3420 | 0.5718 | 0.6672 |
 
-读数:CSD 在 i2t 上比 cosine 好约 +0.016(σ 在文本侧有用),在 t2i 上略差(图像 σ² 更多反映场景复杂度,惩罚它帮倒忙)。这是真 ProLIP 的 σ²;对比本项目 dist_align 的 σ²(见 memory `sigma-retrieval-finding`)对检索无增益——**σ 有没有用取决于它怎么训出来的**。
+读数:CSD 在 i2t 上比 cosine 好约 +0.016(σ 在文本侧有用),在 t2i 上略差(图像 σ² 更多反映场景复杂度,惩罚它帮倒忙)。这是真 ProLIP 的 σ²;对比本项目 mcdisp_align 的 σ²(见 memory `sigma-retrieval-finding`)对检索无增益——**σ 有没有用取决于它怎么训出来的**。
 
 ---
 
@@ -166,5 +166,5 @@ compute_retrieval_metrics(img_mu, img_logvar, text_mu, text_logvar, [1,5,10])
 
 - `prolip-real-baseline.md` — 本任务的持久记录
 - `conda-env.md` — env 用法
-- `sigma-retrieval-finding.md` — dist_align 的 σ 对检索无增益(对照)
+- `sigma-retrieval-finding.md` — mcdisp_align 的 σ 对检索无增益(对照)
 - `msda-methodology.md` — 项目方法

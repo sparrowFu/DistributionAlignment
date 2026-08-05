@@ -1,6 +1,6 @@
 # 方法文档 · Methods
 
-> 本文件描述本项目当前采用的图文分布对齐方法 **MSDA（Multi-caption Semantic Distribution Alignment）**，
+> 本文件描述本项目当前采用的图文分布对齐方法 **MCDisp_Align（Multi-Caption Semantic Dispersion Guided Distribution Alignment）**，
 > 以及在引入协方差项 `L_cov` 后出现的训练稳定性问题与其修复方案（§6）。
 > 项目总览与使用方式见 `README.md`；实验结果与复现命令见 `experiments.md`。
 
@@ -8,9 +8,9 @@
 
 ## 1. 概述
 
-MSDA 是 UC-CL 的演进版本，核心思想不变：**把图像与文本建模为高斯分布，并显式约束图像方差 σ² 等于多描述的语义散度**。相对 UC-CL，MSDA 做了三点升级：
+MCDisp_Align 的核心思想：**把图像与文本建模为高斯分布，并显式约束图像方差 σ² 等于多描述的语义散度**。它支持两种模式——**对角模式**（`r=0`，`Σ = diag(σ²)`）与**全协方差模式**（`r>0`，默认）。全协方差模式相对对角模式做了三点升级：
 
-1. **一般高斯**：将 UC-CL 的对角高斯 `N(μ, diag(σ²))` 升级为一般高斯 `N(μ, Σ)`，其中 `Σ = diag(σ²) + UUᵀ`，`U ∈ ℝ^{D×r}` 为低秩协方差因子（`r` 为协方差秩，`r=0` 退化为对角版）。
+1. **一般高斯**：将对角高斯 `N(μ, diag(σ²))` 升级为一般高斯 `N(μ, Σ)`，其中 `Σ = diag(σ²) + UUᵀ`，`U ∈ ℝ^{D×r}` 为低秩协方差因子（`r` 为协方差秩，`r=0` 退化为对角模式）。
 2. **协方差方向对齐损失 `L_cov`**：监督图像协方差子空间去对齐多描述的偏离子空间。
 3. **3 段式分阶段训练调度**：Warmup → Main → Full，逐步激活损失项。
 
@@ -39,8 +39,8 @@ text_mu_head, text_logvar_head, text_cov_head（文本端：μ, logσ², U，逐
 ```
 
 - 每个头输入均为冻结的 CLIP 特征，CLIP 不参与训练（`Freeze CLIP = True`）。
-- 可训练参数：`r=4` 时约 **9.45M**；`r=0`（对角版）约 **4.72M**（与 UC-CL 持平）。
-- **方差数值下限**：`σ² = softplus(x) + VAR_FLOOR(1e-4)`。相比 UC-CL 旧的硬下限 `0.1`，此处改为软下限，使 σ² 能向下拟合真实描述散度（语义范围由 `L_var` / `L_reg` 学习决定，而非人为钉死）。
+- 可训练参数：`r=4` 时约 **9.45M**；`r=0`（对角模式）约 **4.72M**。
+- **方差数值下限**：`σ² = softplus(x) + VAR_FLOOR(1e-4)`。相比对角模式旧的硬下限 `0.1`，此处改为软下限，使 σ² 能向下拟合真实描述散度（语义范围由 `L_var` / `L_reg` 学习决定，而非人为钉死）。
 - **文本分布融合（Moment Matching）**：
   - `μ_c = (1/K) Σ_k μ_c^(k)`
   - `diag(Σ_c) = (1/K) Σ_k [ σ²_c^(k) + diag(U_c^(k) U_c^(k)ᵀ) + μ_c^(k)² ] − μ_c²`
@@ -72,7 +72,7 @@ L = λ_ctr · L_set-NCE + λ_mu · L_mu + λ_var · L_var
 
 ## 5. 3 段式分阶段训练调度
 
-按总轮数 `T` 的比例划分（`MSDA_STAGE_WARMUP_FRAC/MAIN_FRAC/FULL_FRAC = 0.2/0.6/0.2`）：
+按总轮数 `T` 的比例划分（`MCDISP_ALIGN_STAGE_WARMUP_FRAC/MAIN_FRAC/FULL_FRAC = 0.2/0.6/0.2`）：
 
 | 阶段 | 区间（占总轮数） | 激活的损失项 | cov 系数 |
 |---|---|---|---|
@@ -88,7 +88,7 @@ L = λ_ctr · L_set-NCE + λ_mu · L_mu + λ_var · L_var
 
 ### 6.1 问题现象
 
-首次 MSDA 实验（10 轮）中，`L_cov` 在 Full 阶段（第 9 轮）一激活，训练 loss 立刻从 0.16 暴涨到 0.52，验证 Recall@1 从 **0.465 崩到 0.265**，第 10 轮继续恶化到 0.240。详见 `experiments.md` §4。
+首次 MCDisp_Align 实验（10 轮）中，`L_cov` 在 Full 阶段（第 9 轮）一激活，训练 loss 立刻从 0.16 暴涨到 0.52，验证 Recall@1 从 **0.465 崩到 0.265**，第 10 轮继续恶化到 0.240。详见 `experiments.md` §4。
 
 ### 6.2 根因分析
 
@@ -105,27 +105,27 @@ L = λ_ctr · L_set-NCE + λ_mu · L_mu + λ_var · L_var
 
 | # | 位置 | 改动 |
 |---|---|---|
-| 1 | `scripts/train_dist_align.py` `train_epoch` | 反向后、step 前加 `torch.nn.utils.clip_grad_norm_(model.parameters(), config.MSDA_GRAD_CLIP_NORM)` |
-| 1b | `config.py` | `MSDA_GRAD_CLIP_NORM = 1.0` |
-| 2 | `scripts/train_dist_align.py` `stage_multipliers` | Full 阶段 `cov` 系数改为 **线性 ramp** `0→1`（让 `img_cov_head` 先热身，`Q_v` 不再是纯随机 → `L_cov` 不再一激活就近上限）|
-| 3 | `losses/dist_align_losses.py` `MSDALoss.forward` | `L_cov` 非有限值时置零（用 `torch.zeros_like`；IEEE-754 下 `nan*0=nan`，必须 `zeros_like` 才能真正归零）|
+| 1 | `scripts/train_mcdisp_align.py` `train_epoch` | 反向后、step 前加 `torch.nn.utils.clip_grad_norm_(model.parameters(), config.MCDISP_ALIGN_GRAD_CLIP_NORM)` |
+| 1b | `config.py` | `MCDISP_ALIGN_GRAD_CLIP_NORM = 1.0` |
+| 2 | `scripts/train_mcdisp_align.py` `stage_multipliers` | Full 阶段 `cov` 系数改为 **线性 ramp** `0→1`（让 `img_cov_head` 先热身，`Q_v` 不再是纯随机 → `L_cov` 不再一激活就近上限）|
+| 3 | `losses/mcdisp_align_losses.py` `MCDispAlignLoss.forward` | `L_cov` 非有限值时置零（用 `torch.zeros_like`；IEEE-754 下 `nan*0=nan`，必须 `zeros_like` 才能真正归零）|
 
 **设计要点**：
 - 梯度裁剪 + 线性 ramp + NaN-guard 三者共同保证：`L_cov` 即便在冷启动近上限时，其梯度贡献也不再瞬时打飞 `img_cov_head` 与（经 `L_cover` 回流的）检索均值。
 - 历史上的 P0 修复曾把 `λ_cov` 从 `0.1` 下调到 `0.01`；现已按 HTML 方法论回退为 `0.2`，改由上述三重保障维持稳定（`L_cov` 量级与描述偏差 target 的具体形式无关——正交基重叠公式对输入尺度不变）。
 - **重训监控建议**：若 Full 阶段 `L_cov` 占 total loss 比例持续过高或 R@1 再次下滑，可回退 `λ_cov` 至 `0.1`（HTML 下限）乃至 `0.01`（已验证稳定）。
-- 这些保障仅保证 **不再崩**；要追平/超过 UC-CL 的 0.5622，还需配合训练轮数等（见 `experiments.md` §7）。
+- 这些保障仅保证 **不再崩**；要追平/超过对角模式（`r=0`）的 0.5622，还需配合训练轮数等（见 `experiments.md` §7）。
 
 ### 6.4 σ² 坍塌修复（σ₀² 尺度 + L_var log 空间）
 
-`scripts/diagnostics/eval_sigma_diagnostic.py` 实测（MSCOCO，`dist_align_coco_best.pt`）：caption 散度 `s²≈0.038`（CV 41%），但模型 σ² 坍塌成常数（mean 0.13，CV 7.2%，Pearson(σ², s²)=0.04）——**核心创新（σ²=多描述散度）未生效**。根因：
+`scripts/diagnostics/eval_sigma_diagnostic.py` 实测（MSCOCO，`mcdisp_align_coco_best.pt`）：caption 散度 `s²≈0.038`（CV 41%），但模型 σ² 坍塌成常数（mean 0.13，CV 7.2%，Pearson(σ², s²)=0.04）——**核心创新（σ²=多描述散度）未生效**。根因：
 
-1. **σ₀² 尺度失配**：旧 `MSDA_TARGET_VAR=1.0` 比 s²≈0.038 大 ~26×，`L_reg`（log 空间）把 σ² 强行拉向常数 1.0，压垮 `L_var`。
+1. **σ₀² 尺度失配**：旧 `MCDISP_ALIGN_TARGET_VAR=1.0` 比 s²≈0.038 大 ~26×，`L_reg`（log 空间）把 σ² 强行拉向常数 1.0，压垮 `L_var`。
 2. **L_var 线性 vs L_reg log 空间梯度失衡**：s² 很小时线性 MSE 梯度极小（~0.18/dim），弱于 `L_reg` 的 log 空间梯度（~0.31/dim），方差头取"输出常数"的捷径。
 
 修复（P0+P1）：
 
-- **P0**：`MSDA_TARGET_VAR = 0.04`（≈实测散度），让 `L_reg` 与 `L_var` 目标同量级、不再对拉。
+- **P0**：`MCDISP_ALIGN_TARGET_VAR = 0.04`（≈实测散度），让 `L_reg` 与 `L_var` 目标同量级、不再对拉。
 - **P1**：`L_var = MSE(log σ², log s²)`（s² stop-gradient）。最小值仍 `σ²=s²`，但梯度尺度无关，小 σ² 也能拿到足够跟踪梯度。
 
 **验证标准**（重训后复跑 `eval_sigma_diagnostic.py`）：σ² CV 从 7% 升向 ~41%、Pearson(σ², s²) 从 0.04 升向显著正相关、σ²/s² → ~1×。注：`L_var` 改 log 空间是对方法论 §5.4 线性 MSE 的**有据偏离**（同最小值、仅优化 landscape 更良态）；σ₀² 需在重训后复测校准，flickr 量级可能不同。
@@ -157,7 +157,7 @@ L = λ_ctr · L_set-NCE + λ_mu · L_mu + λ_var · L_var
 
 | 模块 | 文件 |
 |---|---|
-| 模型（分布头、融合、cov head） | `models/dist_align_model.py` |
-| 损失（含 `L_cov` 与 NaN 保护） | `losses/dist_align_losses.py` |
-| 训练循环（梯度裁剪、分阶段调度） | `scripts/train_dist_align.py` |
-| 超参与调度比例 | `config.py`（`MSDA_*`） |
+| 模型（分布头、融合、cov head） | `models/mcdisp_align_model.py` |
+| 损失（含 `L_cov` 与 NaN 保护） | `losses/mcdisp_align_losses.py` |
+| 训练循环（梯度裁剪、分阶段调度） | `scripts/train_mcdisp_align.py` |
+| 超参与调度比例 | `config.py`（`MCDISP_ALIGN_*`） |

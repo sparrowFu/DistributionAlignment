@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
 from data.caption_dataset import ImageCaptionDataset, filter_none_collate
-from models.dist_align_model import DistributionAlignmentModel
+from models.mcdisp_align_model import MCDispAlignModel
 from utils.calibration import compute_auroc, compute_fpr_at_tpr
 from utils.logger import get_logger, log_exception
 from utils.seed import set_seed
@@ -40,10 +40,6 @@ logger = get_logger("eval_ood", config.OOD_LOG_PATH)
 def parse_args():
     parser = argparse.ArgumentParser(description="Exp4: OOD Detection")
     parser.add_argument("--checkpoint", type=str, default=None)
-    parser.add_argument("--methods", type=str, nargs="+",
-                        choices=["sigma_norm", "confidence"],
-                        default=["sigma_norm", "confidence"],
-                        help="OOD scoring methods (currently unused; sigma_norm and inv_confidence are always computed)")
     parser.add_argument("--ood-datasets", type=str, nargs="+",
                         default=["svhn", "cifar10"],
                         choices=["svhn", "cifar10", "tiny_imagenet"])
@@ -94,7 +90,7 @@ def get_ood_dataset(name: str, num_samples: int, data_dir: Path):
 
 @torch.no_grad()
 def extract_sigma_scores(
-    model: DistributionAlignmentModel,
+    model: MCDispAlignModel,
     dataloader: DataLoader,
     device: str,
 ):
@@ -133,7 +129,7 @@ def extract_sigma_scores(
 
 @torch.no_grad()
 def extract_sigma_from_tensors(
-    model: DistributionAlignmentModel,
+    model: MCDispAlignModel,
     dataloader: DataLoader,
     device: str,
 ):
@@ -174,12 +170,12 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Load model
-    checkpoint_path = args.checkpoint or str(config.DIST_ALIGN_BEST_CKPT)
+    checkpoint_path = args.checkpoint or str(config.MCDISP_ALIGN_BEST_CKPT)
     logger.info(f"Loading model from {checkpoint_path}")
 
-    model = DistributionAlignmentModel(
-        freeze_clip=config.DIST_ALIGN_FREEZE_CLIP,
-        distribution_merging=config.DIST_ALIGN_DISTRIBUTION_MERGING,
+    model = MCDispAlignModel(
+        freeze_clip=config.MCDISP_ALIGN_FREEZE_CLIP,
+        distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
     )
     if Path(checkpoint_path).exists():
         model.load(checkpoint_path)

@@ -1,7 +1,7 @@
 """
-Tests for utils/dist_align_trainer — the 5-stage MSDA schedule:
+Tests for utils/mcdisp_align_trainer — the 5-stage MCDisp_Align schedule:
 stage_multipliers, var_ramp, alpha_schedule. (The shared trainer's other exports
-— create_optimizer / train_epoch / evaluate / run_dist_align_training — need a
+— create_optimizer / train_epoch / evaluate / run_mcdisp_align_training — need a
 real model + data, so they are covered by the end-to-end training scripts.)
 
 For total=10 the 5 stages (each 2 epochs) are:
@@ -9,7 +9,7 @@ For total=10 the 5 stages (each 2 epochs) are:
   [6,8) neg_repulsion | [8,10) full (cov ramp)
 
 Runnable without pytest:
-    python tests/test_dist_align_trainer.py
+    python tests/test_mcdisp_align_trainer.py
 """
 
 import sys
@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from utils.dist_align_trainer import stage_multipliers, var_ramp, alpha_schedule
+from utils.mcdisp_align_trainer import stage_multipliers, var_ramp, alpha_schedule
 
 
 def _ones():

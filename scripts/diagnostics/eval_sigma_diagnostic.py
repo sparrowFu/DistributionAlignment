@@ -16,7 +16,7 @@ WHY THIS EXISTS
 COMPUTES
     - img_var  = exp(img_logvar)                     # the predicted σ² (N,D)
     - caption_spread = mean_k (μ_k - μ̄)²            # the EXACT L_var target (N,D)
-      (matches losses/dist_align_losses.py:514)
+      (matches losses/mcdisp_align_losses.py:514)
     - coefficient of variation (CV = std/mean) of each → is each signal varying?
     - scale ratio img_var / caption_spread
     - Pearson/Spearman in RAW and LOG space (log-space test = fix hypothesis)
@@ -43,7 +43,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import config
 from data.caption_dataset import ImageCaptionDataset, filter_none_collate
-from models.dist_align_model import DistributionAlignmentModel
+from models.mcdisp_align_model import MCDispAlignModel
 from utils.logger import get_logger, log_exception
 from utils.seed import set_seed
 
@@ -106,7 +106,7 @@ def diagnose(img_logvar: torch.Tensor, img_mu: torch.Tensor, text_mus: torch.Ten
     eps = 1e-12
     img_var = torch.exp(img_logvar)                               # (N,D) predicted σ²
     text_mu_bar = text_mus.mean(dim=1)                            # (N,D) caption center
-    # EXACT L_var target: losses/dist_align_losses.py:514
+    # EXACT L_var target: losses/mcdisp_align_losses.py:514
     caption_spread = ((text_mus - text_mu_bar.unsqueeze(1)) ** 2).mean(dim=1)  # (N,D)
 
     # Per-image scalars (mean over D)
@@ -218,12 +218,12 @@ def main():
     out_dir = Path(args.output_dir) if args.output_dir else config.SIGMA_ANALYSIS_RESULTS_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    ckpt = args.checkpoint or str(config.DIST_ALIGN_BEST_CKPT)
+    ckpt = args.checkpoint or str(config.MCDISP_ALIGN_BEST_CKPT)
     logger.info(f"Loading model from {ckpt}")
-    model = DistributionAlignmentModel(
-        freeze_clip=config.DIST_ALIGN_FREEZE_CLIP,
-        distribution_merging=config.DIST_ALIGN_DISTRIBUTION_MERGING,
-        cov_rank=config.MSDA_COV_RANK,
+    model = MCDispAlignModel(
+        freeze_clip=config.MCDISP_ALIGN_FREEZE_CLIP,
+        distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
+        cov_rank=config.MCDISP_ALIGN_COV_RANK,
     )
     if Path(ckpt).exists():
         model.load(ckpt)

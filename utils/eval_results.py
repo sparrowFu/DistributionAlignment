@@ -12,20 +12,20 @@ groups", then calls:
                                        `dataset`.
 
 This keeps the print format and the on-disk schema identical across all models
-(dist_align, clip_baseline, prolip, and the two zero-shot variants).
+(mcdisp_align, clip_baseline, prolip, and the two zero-shot variants).
 
 Group shape::
 
-    {"family": "msda_recall",                     # flat-key prefix
-     "label":  "MSDA-score Recall@K (primary)",   # terminal header
+    {"family": "mcdisp_align_recall",                     # flat-key prefix
+     "label":  "MCDisp_Align-score Recall@K (primary)",   # terminal header
      "per_k":  {1: {"i2t": .6, "t2i": .6, "mean": .6},   # or {"value": .5}
                 5: {...}, ...}}
 
-Flat-key convention (matches the existing dist_align_eval_results.json)::
+Flat-key convention (matches the existing mcdisp_align_eval_results.json)::
 
-    mean          -> {family}@{k}        e.g. msda_recall@1
-    i2t           -> {family}_i2t@{k}    e.g. msda_recall_i2t@1
-    t2i           -> {family}_t2i@{k}    e.g. msda_recall_t2i@1
+    mean          -> {family}@{k}        e.g. mcdisp_align_recall@1
+    i2t           -> {family}_i2t@{k}    e.g. mcdisp_align_recall_i2t@1
+    t2i           -> {family}_t2i@{k}    e.g. mcdisp_align_recall_t2i@1
     single value  -> {family}@{k}        e.g. recall@1
 """
 

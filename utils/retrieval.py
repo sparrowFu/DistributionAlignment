@@ -84,7 +84,7 @@ def compute_recall_bidirectional(
 
 
 @torch.no_grad()
-def compute_recall_msda_chunked(
+def compute_recall_mcdisp_align_chunked(
     img_mu: torch.Tensor,
     img_logvar: torch.Tensor,
     text_mu: torch.Tensor,
@@ -94,15 +94,15 @@ def compute_recall_msda_chunked(
     chunk_size: int = 1000,
 ) -> Dict[str, float]:
     """
-    Bidirectional Recall@K under the MSDA uncertainty-discounted cosine score,
+    Bidirectional Recall@K under the MCDisp_Align uncertainty-discounted cosine score,
     i.e. the same score used by the L_set contrastive loss (train and eval agree):
 
         sim(x, y) = (mu_x . mu_y) / (tau * sqrt(1 + mean(sigma_x^2)) * sqrt(1 + mean(sigma_y^2)))
 
     Means are L2-normalized internally; mean(sigma^2) averages over D.
 
-    Returns keys: ``msda_recall_i2t@{k}``, ``msda_recall_t2i@{k}``,
-    ``msda_recall@{k}`` (mean of the two directions).
+    Returns keys: ``mcdisp_align_recall_i2t@{k}``, ``mcdisp_align_recall_t2i@{k}``,
+    ``mcdisp_align_recall@{k}`` (mean of the two directions).
     """
     img_mu_n = F.normalize(img_mu, dim=-1)
     text_mu_n = F.normalize(text_mu, dim=-1)
@@ -123,14 +123,14 @@ def compute_recall_msda_chunked(
                 hits[k] += (ranked[:, :k] == gt).any(dim=1).sum().item()
         return {k: hits[k] / n for k in k_values}
 
-    i2t = _direction(img_mu_n, text_mu_n, img_scale, text_scale, "MSDA I2T chunks")
-    t2i = _direction(text_mu_n, img_mu_n, text_scale, img_scale, "MSDA T2I chunks")
+    i2t = _direction(img_mu_n, text_mu_n, img_scale, text_scale, "MCDisp_Align I2T chunks")
+    t2i = _direction(text_mu_n, img_mu_n, text_scale, img_scale, "MCDisp_Align T2I chunks")
 
     out: Dict[str, float] = {}
     for k in k_values:
-        out[f"msda_recall_i2t@{k}"] = i2t[k]
-        out[f"msda_recall_t2i@{k}"] = t2i[k]
-        out[f"msda_recall@{k}"] = (i2t[k] + t2i[k]) / 2
+        out[f"mcdisp_align_recall_i2t@{k}"] = i2t[k]
+        out[f"mcdisp_align_recall_t2i@{k}"] = t2i[k]
+        out[f"mcdisp_align_recall@{k}"] = (i2t[k] + t2i[k]) / 2
     return out
 
 
@@ -148,24 +148,24 @@ def compute_i2t_caption_pair_counts(
     Image->text retrieval against a per-caption gallery: for each image, count
     how many of its K captions land in the top-K retrieved, averaged over images.
 
-    Unlike :func:`compute_recall_msda_chunked` (1:1 against the single merged
+    Unlike :func:`compute_recall_mcdisp_align_chunked` (1:1 against the single merged
     text mean), the gallery here is ALL N*K per-caption means, and image i has K
     positives -- its own captions at the flattened (image-major) indices
     ``[i*K, i*K+K)``. The reported value is the mean per-image hit count
-    (range ``0..K``), under both the cosine and the MSDA uncertainty-discounted
+    (range ``0..K``), under both the cosine and the MCDisp_Align uncertainty-discounted
     scores.
 
     Args:
         img_mu:        (N, D) image means
-        img_logvar:    (N, D) image log-variances (MSDA scorer only)
+        img_logvar:    (N, D) image log-variances (MCDisp_Align scorer only)
         text_mus:      (N, K, D) per-caption means
-        text_logvars:  (N, K, D) per-caption log-variances (MSDA scorer only)
+        text_logvars:  (N, K, D) per-caption log-variances (MCDisp_Align scorer only)
         k_values:      top-K cutoffs for the hit count (e.g. [5, 10])
-        tau:           MSDA score temperature
+        tau:           MCDisp_Align score temperature
         chunk_size:    query (image) chunk size to bound the sim-matrix memory
 
     Returns:
-        ``{cos_pair_count@{k}, msda_pair_count@{k}}`` for each k in ``k_values``.
+        ``{cos_pair_count@{k}, mcdisp_align_pair_count@{k}}`` for each k in ``k_values``.
     """
     N, K, _ = text_mus.shape
     gallery_mu = text_mus.reshape(N * K, -1)             # (N*K, D)
@@ -194,17 +194,17 @@ def compute_i2t_caption_pair_counts(
     def _cos(q, g, _qs, _gs):
         return torch.matmul(q, g.T)
 
-    def _msda(q, g, qs, gs):
+    def _mcdisp_align(q, g, qs, gs):
         sim = torch.matmul(q, g.T)
         return sim / (tau * qs.unsqueeze(1) * gs.unsqueeze(0))
 
     cos = _count(_cos, "I2T pair-count (cos)")
-    msda = _count(_msda, "I2T pair-count (msda)")
+    mcdisp_align = _count(_mcdisp_align, "I2T pair-count (mcdisp_align)")
 
     out: Dict[str, float] = {}
     for k in k_values:
         out[f"cos_pair_count@{k}"] = cos[k]
-        out[f"msda_pair_count@{k}"] = msda[k]
+        out[f"mcdisp_align_pair_count@{k}"] = mcdisp_align[k]
     return out
 
 
@@ -231,14 +231,14 @@ def compute_multicaption_recall(
       T2I: query = N*K per-caption means, gallery = N image means. Each caption's
            ONLY positive is its own image (single-positive per query).
 
-    Reported under BOTH the MSDA uncertainty-discounted score (primary) and plain
+    Reported under BOTH the MCDisp_Align uncertainty-discounted score (primary) and plain
     cosine (for baseline comparison). Means are L2-normalized internally;
     mean(sigma^2) averages over D. Uses torch.topk (not a full argsort) since the
     N*K gallery is large and only the top max(k_values) are needed.
 
     Returns keys (per k in k_values)::
 
-        mc_recall_i2t@{k}, mc_recall_t2i@{k}, mc_recall@{k}          (MSDA score)
+        mc_recall_i2t@{k}, mc_recall_t2i@{k}, mc_recall@{k}          (MCDisp_Align score)
         mc_cos_recall_i2t@{k}, mc_cos_recall_t2i@{k}, mc_cos_recall@{k} (cosine)
     """
     N, K, _ = text_mus.shape
@@ -255,7 +255,7 @@ def compute_multicaption_recall(
     def _cos(q, g, _qs, _gs):
         return torch.matmul(q, g.T)
 
-    def _msda(q, g, qs, gs):
+    def _mcdisp_align(q, g, qs, gs):
         return torch.matmul(q, g.T) / (tau * qs.unsqueeze(1) * gs.unsqueeze(0))
 
     def _i2t(scorer, desc):
@@ -291,13 +291,13 @@ def compute_multicaption_recall(
         return {k: hits[k] / Q for k in k_values}
 
     i2t_cos, t2i_cos = _i2t(_cos, "MC I2T (cos)"), _t2i(_cos, "MC T2I (cos)")
-    i2t_msda, t2i_msda = _i2t(_msda, "MC I2T (msda)"), _t2i(_msda, "MC T2I (msda)")
+    i2t_mcdisp_align, t2i_mcdisp_align = _i2t(_mcdisp_align, "MC I2T (mcdisp_align)"), _t2i(_mcdisp_align, "MC T2I (mcdisp_align)")
 
     out: Dict[str, float] = {}
     for k in k_values:
-        out[f"mc_recall_i2t@{k}"] = i2t_msda[k]
-        out[f"mc_recall_t2i@{k}"] = t2i_msda[k]
-        out[f"mc_recall@{k}"] = (i2t_msda[k] + t2i_msda[k]) / 2
+        out[f"mc_recall_i2t@{k}"] = i2t_mcdisp_align[k]
+        out[f"mc_recall_t2i@{k}"] = t2i_mcdisp_align[k]
+        out[f"mc_recall@{k}"] = (i2t_mcdisp_align[k] + t2i_mcdisp_align[k]) / 2
         out[f"mc_cos_recall_i2t@{k}"] = i2t_cos[k]
         out[f"mc_cos_recall_t2i@{k}"] = t2i_cos[k]
         out[f"mc_cos_recall@{k}"] = (i2t_cos[k] + t2i_cos[k]) / 2

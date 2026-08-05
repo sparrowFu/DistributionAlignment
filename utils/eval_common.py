@@ -34,7 +34,7 @@ def resolve_checkpoint(model_name: str, dataset: str, which: str = "best") -> Pa
     ``checkpoints/prolip_coco_best.pt``.
 
     Args:
-        model_name: model prefix ("dist_align", "clip_baseline", "prolip").
+        model_name: model prefix ("mcdisp_align", "clip_baseline", "prolip").
         dataset: dataset tag (see :data:`utils.dataset_registry.VALID_DATASETS`).
         which: "best" (default) or "last".
     """

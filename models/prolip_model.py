@@ -5,7 +5,7 @@ Real ProLIP ViT-H/14 (SanghyukChun/ProLIP-ViT-H-14-FT-DC-1B-1_28M) loaded via
 the `prolip` library. Each image/text is modeled as a Gaussian N(mu, sigma^2 I)
 where mu and log(sigma^2) come from ProLIP's pretrained uncertainty heads.
 sigma is learned implicitly via ProLIP's inclusion objective during
-pretraining; unlike our MSDA, it carries no explicit semantic constraint.
+pretraining; unlike our MCDisp_Align, it carries no explicit semantic constraint.
 
 Two usage modes (mirror the CLIP baseline):
   - zero_shot : ProLIPModel(freeze=True) -- frozen pretrained weights, no checkpoint
@@ -170,7 +170,7 @@ class ProLIPModel(nn.Module):
             input_ids: (B, L) single caption, or (B, K, L) multiple captions
                        (merged via moment matching into one text Gaussian).
             attention_mask: unused (ProLIP handles padding); kept for signature
-                            compatibility with the CLIP / dist_align wrappers.
+                            compatibility with the CLIP / mcdisp_align wrappers.
 
         Returns:
             Dict with ProLIP-native ``image_features`` / ``text_features`` dicts

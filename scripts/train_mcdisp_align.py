@@ -1,25 +1,25 @@
 """
-GaussianImageDistribution - MSDA Distribution Alignment Training Script (CLI)
+GaussianImageDistribution - MCDisp_Align Distribution Alignment Training Script (CLI)
 
-Thin command-line wrapper around :func:`utils.dist_align_trainer.run_dist_align_training`.
+Thin command-line wrapper around :func:`utils.mcdisp_align_trainer.run_mcdisp_align_training`.
 The actual training logic (staged loss schedule, grad clipping, recall/loss
 best-checkpoint selection, early stopping, best+last checkpointing, resume) lives
 in the shared trainer, so ``scripts/run_ablation.py`` trains ablation variants
-with exactly the same code — see :mod:`utils.dist_align_trainer`.
+with exactly the same code — see :mod:`utils.mcdisp_align_trainer`.
 
-Trains the MSDA (Multi-caption Semantic Distribution Alignment) model, which
+Trains the MCDisp_Align (Multi-Caption Semantic Dispersion Guided Distribution Alignment) model, which
 models image and text embeddings as Gaussians. The image uses a general
 covariance Sigma_v = diag(sigma_v^2) + U_v U_v^T; text is diagonal-only (v1).
 The image variance is supervised toward the multi-caption semantic spread, and
 the image low-rank directions toward the caption deviation directions.
 
-Checkpoint selection is by the MSDA uncertainty-discounted cosine Recall@1
+Checkpoint selection is by the MCDisp_Align uncertainty-discounted cosine Recall@1
 (the same score L_set optimizes), so the trained objective, the selection
 metric and the reported metric all agree.
 
 Usage:
-    python scripts/train_dist_align.py
-    python main.py --task train_dist_align
+    python scripts/train_mcdisp_align.py
+    python main.py --task train_mcdisp_align
 """
 
 import argparse
@@ -33,12 +33,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
 from utils.dataset_registry import VALID_DATASETS
-from utils.dist_align_trainer import DistAlignTrainConfig, run_dist_align_training
+from utils.mcdisp_align_trainer import MCDispAlignTrainConfig, run_mcdisp_align_training
 from utils.logger import get_logger, log_exception
 
 
 # Setup logger
-logger = get_logger("train_dist_align", config.TRAIN_DIST_ALIGN_LOG_PATH)
+logger = get_logger("train_mcdisp_align", config.TRAIN_MCDISP_ALIGN_LOG_PATH)
 
 # Exclude faulty CPU cores (e.g. unstable CPU 2) before DataLoader workers and
 # torch threads are created. Inherited by forked worker processes.
@@ -48,7 +48,7 @@ apply_cpu_affinity()
 
 def parse_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Train MSDA Distribution Alignment Model")
+    parser = argparse.ArgumentParser(description="Train MCDisp_Align Distribution Alignment Model")
 
     # Data arguments
     parser.add_argument("--captions-path", type=str, default=None,
@@ -61,15 +61,15 @@ def parse_args():
                              "checkpoint-name tag (coco=MSCOCO, flickr=flickr30k)")
 
     # Training arguments
-    parser.add_argument("--epochs", type=int, default=config.DIST_ALIGN_EPOCHS,
+    parser.add_argument("--epochs", type=int, default=config.MCDISP_ALIGN_EPOCHS,
                         help="Number of training epochs")
-    parser.add_argument("--batch-size", type=int, default=config.DIST_ALIGN_BATCH_SIZE,
+    parser.add_argument("--batch-size", type=int, default=config.MCDISP_ALIGN_BATCH_SIZE,
                         help="Training batch size")
-    parser.add_argument("--clip-lr", type=float, default=config.DIST_ALIGN_CLIP_LR,
+    parser.add_argument("--clip-lr", type=float, default=config.MCDISP_ALIGN_CLIP_LR,
                         help="Learning rate for CLIP (if fine-tuning)")
-    parser.add_argument("--mlp-lr", type=float, default=config.DIST_ALIGN_MLP_LR,
+    parser.add_argument("--mlp-lr", type=float, default=config.MCDISP_ALIGN_MLP_LR,
                         help="Learning rate for MLP / covariance heads")
-    parser.add_argument("--weight-decay", type=float, default=config.DIST_ALIGN_WEIGHT_DECAY,
+    parser.add_argument("--weight-decay", type=float, default=config.MCDISP_ALIGN_WEIGHT_DECAY,
                         help="Weight decay")
     parser.add_argument("--lr-scheduler", type=str, default=config.LR_SCHEDULER,
                         choices=["none", "cosine"],
@@ -80,41 +80,41 @@ def parse_args():
     parser.add_argument("--min-lr-ratio", type=float, default=config.LR_MIN_LR_RATIO,
                         help="Cosine floor as a fraction of the base LR")
 
-    # MSDA loss arguments (six terms)
-    parser.add_argument("--lambda-ctr", type=float, default=config.MSDA_LAMBDA_CTR)
-    parser.add_argument("--lambda-mu", type=float, default=config.MSDA_LAMBDA_MU)
-    parser.add_argument("--lambda-var", type=float, default=config.MSDA_LAMBDA_VAR)
-    parser.add_argument("--lambda-cover-pos", type=float, default=config.MSDA_LAMBDA_COVER_POS)
-    parser.add_argument("--lambda-cover-neg", type=float, default=config.MSDA_LAMBDA_COVER_NEG,
+    # MCDisp_Align loss arguments (six terms)
+    parser.add_argument("--lambda-ctr", type=float, default=config.MCDISP_ALIGN_LAMBDA_CTR)
+    parser.add_argument("--lambda-mu", type=float, default=config.MCDISP_ALIGN_LAMBDA_MU)
+    parser.add_argument("--lambda-var", type=float, default=config.MCDISP_ALIGN_LAMBDA_VAR)
+    parser.add_argument("--lambda-cover-pos", type=float, default=config.MCDISP_ALIGN_LAMBDA_COVER_POS)
+    parser.add_argument("--lambda-cover-neg", type=float, default=config.MCDISP_ALIGN_LAMBDA_COVER_NEG,
                         help="weight of L_cover's optional negative-repulsion (0 = pos-only)")
-    parser.add_argument("--lambda-cov", type=float, default=config.MSDA_LAMBDA_COV)
-    parser.add_argument("--lambda-reg", type=float, default=config.MSDA_LAMBDA_REG)
-    parser.add_argument("--tau", type=float, default=config.MSDA_TAU,
+    parser.add_argument("--lambda-cov", type=float, default=config.MCDISP_ALIGN_LAMBDA_COV)
+    parser.add_argument("--lambda-reg", type=float, default=config.MCDISP_ALIGN_LAMBDA_REG)
+    parser.add_argument("--tau", type=float, default=config.MCDISP_ALIGN_TAU,
                         help="Fixed temperature in the L_set similarity (not learnable)")
-    parser.add_argument("--m-pos", type=float, default=config.MSDA_M_POS,
+    parser.add_argument("--m-pos", type=float, default=config.MCDISP_ALIGN_M_POS,
                         help="L_cover positive coverage margin (per-D normalized Mahalanobis)")
-    parser.add_argument("--target-var", type=float, default=config.MSDA_TARGET_VAR,
+    parser.add_argument("--target-var", type=float, default=config.MCDISP_ALIGN_TARGET_VAR,
                         help="L_reg variance prior sigma_0^2")
-    parser.add_argument("--m-neg", type=float, default=config.MSDA_M_NEG,
+    parser.add_argument("--m-neg", type=float, default=config.MCDISP_ALIGN_M_NEG,
                         help="L_cover negative repulsion margin")
     parser.add_argument("--use-uncertainty-sim", action="store_true",
-                        default=config.MSDA_USE_UNCERTAINTY_SIM,
+                        default=config.MCDISP_ALIGN_USE_UNCERTAINTY_SIM,
                         help="L_set uses the uncertainty-discounted score (default)")
     parser.add_argument("--no-uncertainty-sim", dest="use_uncertainty_sim",
                         action="store_false",
                         help="L_set uses plain cosine (ablation)")
 
-    # MSDA model arguments
-    parser.add_argument("--cov-rank", type=int, default=config.MSDA_COV_RANK,
+    # MCDisp_Align model arguments
+    parser.add_argument("--cov-rank", type=int, default=config.MCDISP_ALIGN_COV_RANK,
                         help="Low-rank covariance rank r for the image side (0 = diagonal only)")
-    parser.add_argument("--freeze-clip", action="store_true", default=config.DIST_ALIGN_FREEZE_CLIP,
+    parser.add_argument("--freeze-clip", action="store_true", default=config.MCDISP_ALIGN_FREEZE_CLIP,
                         help="Freeze CLIP parameters")
     parser.add_argument("--no-freeze-clip", action="store_false", dest="freeze_clip",
                         help="Don't freeze CLIP parameters")
-    parser.add_argument("--distribution-merging", type=str, default=config.DIST_ALIGN_DISTRIBUTION_MERGING,
+    parser.add_argument("--distribution-merging", type=str, default=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
                         choices=["moment_matching", "poe", "simple"],
                         help="Method for merging multiple text distributions")
-    parser.add_argument("--dropout-rate", type=float, default=config.DIST_ALIGN_DROPOUT_RATE,
+    parser.add_argument("--dropout-rate", type=float, default=config.MCDISP_ALIGN_DROPOUT_RATE,
                         help="Dropout rate for MLP heads")
     parser.add_argument("--no-staged", action="store_true",
                         help="Disable 3-stage schedule; use all losses from epoch 1")
@@ -137,7 +137,7 @@ def parse_args():
     parser.add_argument("--select-by", type=str, default="recall",
                         choices=["recall", "loss"],
                         help="Best-checkpoint selection metric: 'recall' "
-                             "(MSDA R@1, higher better) or 'loss' "
+                             "(MCDisp_Align R@1, higher better) or 'loss' "
                              "(val loss, lower better). Default: recall")
 
     # Output arguments
@@ -145,7 +145,7 @@ def parse_args():
                         help="Checkpoint directory (uses config default if None)")
     parser.add_argument("--resume", type=str, default=None,
                         help="Path to checkpoint to resume training from "
-                             "(e.g. checkpoints/dist_align_coco_last.pt). "
+                             "(e.g. checkpoints/mcdisp_align_coco_last.pt). "
                              "Restores model weights, optimizer state, epoch, and best_recall.")
 
     return parser.parse_args()
@@ -155,7 +155,7 @@ def main():
     """Main training function."""
     args = parse_args()
 
-    cfg = DistAlignTrainConfig(
+    cfg = MCDispAlignTrainConfig(
         # data
         dataset=args.dataset,
         captions_path=args.captions_path,
@@ -200,7 +200,7 @@ def main():
         resume_path=Path(args.resume) if args.resume else None,
     )
 
-    run_dist_align_training(cfg, logger)
+    run_mcdisp_align_training(cfg, logger)
 
 
 if __name__ == "__main__":

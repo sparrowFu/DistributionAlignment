@@ -6,11 +6,11 @@ distribution-based alignment.
 """
 
 from .clip_losses import clip_contrastive_loss
-from .dist_align_losses import (
-    MSDALoss,
+from .mcdisp_align_losses import (
+    MCDispAlignLoss,
 )
 
 __all__ = [
     "clip_contrastive_loss",
-    "MSDALoss",
+    "MCDispAlignLoss",
 ]

@@ -2,13 +2,13 @@
 VQA-as-Retrieval 评估脚本(gemma caption)。
 
 把 VQA 重构为双向图文检索,评估 5 个模型:
-  clip_zero_shot / clip_baseline / dist_align / prolip_zero_shot / prolip
+  clip_zero_shot / clip_baseline / mcdisp_align / prolip_zero_shot / prolip
 两套指标(同图 R@K + answer-match@K),都按 类型 × split × overall 拆。
 
 纯新增文件,不修改现有代码;import config 只读复用路径与常量。
 
 Usage:
-    python scripts/eval_vqa_retrieval.py --model dist_align
+    python scripts/eval_vqa_retrieval.py --model mcdisp_align
     python scripts/eval_vqa_retrieval.py --model all
     python scripts/eval_vqa_retrieval.py --model clip_zero_shot --num-samples 64  # 冒烟
 """
@@ -40,7 +40,7 @@ def encode_all(adapter, image_paths: List[Path], captions: List[str],
     """编码全部唯一图 + 全部 entry caption(文本按字符串去重编码再展开)。
 
     Returns: (img_mean[N,D], img_logvar|None, img_U|None, cap_mean[M,D], cap_logvar|None)
-    img_U 为图像侧低秩协方差因子 (N, D, r),仅 dist_align(cov_rank>0)提供。
+    img_U 为图像侧低秩协方差因子 (N, D, r),仅 mcdisp_align(cov_rank>0)提供。
     图片缺失则用黑图占位以保持 image_id 对齐,并告警。
     """
     from PIL import Image
@@ -105,8 +105,8 @@ def compute_all_metrics(ds, img_mean, img_logvar, img_U, cap_mean, cap_logvar,
 
     三种相似度:
       cosine(mean·mean)、csd(仅当 use_csd 且双侧有 logvar)、
-      loglik(仅当 img_U is not None,即 dist_align low-rank 模型)。
-    loglik 用 image 侧协方差打分,配置项 config.MSDA_PER_DIM_NORMALIZE / config.MSDA_USE_LOGDET。
+      loglik(仅当 img_U is not None,即 mcdisp_align low-rank 模型)。
+    loglik 用 image 侧协方差打分,配置项 config.MCDISP_ALIGN_PER_DIM_NORMALIZE / config.MCDISP_ALIGN_USE_LOGDET。
 
     ds 需暴露:answer_ids()->Tensor, types()->list, splits()->list,
     image_splits()->list, img_to_caps(list[list[int]]), cap_to_img(list[int])。
@@ -201,8 +201,8 @@ def compute_all_metrics(ds, img_mean, img_logvar, img_U, cap_mean, cap_logvar,
     result = {"track_a_same_image": {"i2t": {}, "t2i": {}},
               "track_b_answer_match": {"i2t": {}}}
 
-    per_dim_normalize = bool(getattr(config, "MSDA_PER_DIM_NORMALIZE", True))
-    use_logdet = bool(getattr(config, "MSDA_USE_LOGDET", True))
+    per_dim_normalize = bool(getattr(config, "MCDISP_ALIGN_PER_DIM_NORMALIZE", True))
+    use_logdet = bool(getattr(config, "MCDISP_ALIGN_USE_LOGDET", True))
     has_loglik = img_U is not None
 
     sim_iter = [("cosine", False, False)]
@@ -246,7 +246,7 @@ def compute_all_metrics(ds, img_mean, img_logvar, img_U, cap_mean, cap_logvar,
     return result
 
 
-ALL_MODELS = ["clip_zero_shot", "clip_baseline", "dist_align",
+ALL_MODELS = ["clip_zero_shot", "clip_baseline", "mcdisp_align",
               "prolip_zero_shot", "prolip"]
 
 
@@ -254,7 +254,7 @@ class ModelAdapter:
     """统一 5 个底层模型的图像/文本编码接口。
 
     encode_images/encode_texts 返回 (mean, logvar|None);logvar = log sigma^2
-    (仅 dist_align / prolip 提供,用于 CSD)。CLIP 系 logvar=None(只算 cosine)。
+    (仅 mcdisp_align / prolip 提供,用于 CSD)。CLIP 系 logvar=None(只算 cosine)。
     """
 
     def __init__(self, name: str, device: str):
@@ -271,14 +271,14 @@ class ModelAdapter:
             if name == "clip_baseline":
                 self.base.load(str(config.CLIP_BASELINE_BEST_CKPT))
             self.supports_csd = False
-        elif name == "dist_align":
-            from models.dist_align_model import DistributionAlignmentModel
-            self.base = DistributionAlignmentModel(
-                freeze_clip=config.DIST_ALIGN_FREEZE_CLIP,
-                distribution_merging=config.DIST_ALIGN_DISTRIBUTION_MERGING,
-                cov_rank=config.MSDA_COV_RANK,
+        elif name == "mcdisp_align":
+            from models.mcdisp_align_model import MCDispAlignModel
+            self.base = MCDispAlignModel(
+                freeze_clip=config.MCDISP_ALIGN_FREEZE_CLIP,
+                distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
+                cov_rank=config.MCDISP_ALIGN_COV_RANK,
             )
-            self.base.load(str(config.DIST_ALIGN_BEST_CKPT))
+            self.base.load(str(config.MCDISP_ALIGN_BEST_CKPT))
             self.supports_csd = True
         elif name in ("prolip_zero_shot", "prolip"):
             from models.prolip_model import ProLIPModel
@@ -305,14 +305,14 @@ class ModelAdapter:
     def encode_images(self, pixel_values):
         """Returns (mean, logvar|None, U|None)。
 
-        U 为图像侧低秩协方差因子 (..., D, r),仅 dist_align(cov_rank>0)提供,
+        U 为图像侧低秩协方差因子 (..., D, r),仅 mcdisp_align(cov_rank>0)提供,
         用于 loglik 打分。CLIP/ProLIP 返回 None。
         """
         name = self.name
         if name in ("clip_zero_shot", "clip_baseline"):
             m = self.base.encode_image(pixel_values, normalize=True)
             return m, None, None
-        if name == "dist_align":
+        if name == "mcdisp_align":
             feat = self.base.clip_model.get_image_features(pixel_values).pooler_output
             mu = self.base.img_mu_head(feat)
             lv = self.base._floor_logvar(self.base.img_logvar_head(feat))
@@ -330,7 +330,7 @@ class ModelAdapter:
         if name in ("clip_zero_shot", "clip_baseline"):
             m = self.base.encode_text(input_ids, attention_mask, normalize=True)
             return m, None
-        if name == "dist_align":
+        if name == "mcdisp_align":
             feat = self.base.clip_model.get_text_features(
                 input_ids=input_ids, attention_mask=attention_mask).pooler_output
             mu = self.base.text_mu_head(feat)

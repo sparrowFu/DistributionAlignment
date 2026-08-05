@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
 from data.caption_dataset import ImageCaptionDataset, filter_none_collate
-from models.dist_align_model import DistributionAlignmentModel
+from models.mcdisp_align_model import MCDispAlignModel
 from utils.logger import get_logger, log_exception
 from utils.seed import set_seed
 
@@ -49,7 +49,7 @@ def parse_args():
 
 @torch.no_grad()
 def extract_all_features(
-    model: DistributionAlignmentModel,
+    model: MCDispAlignModel,
     dataloader: DataLoader,
     device: str,
     num_samples: int,
@@ -241,12 +241,12 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Load model
-    checkpoint_path = args.checkpoint or str(config.DIST_ALIGN_BEST_CKPT)
+    checkpoint_path = args.checkpoint or str(config.MCDISP_ALIGN_BEST_CKPT)
     logger.info(f"Loading model from {checkpoint_path}")
 
-    model = DistributionAlignmentModel(
-        freeze_clip=config.DIST_ALIGN_FREEZE_CLIP,
-        distribution_merging=config.DIST_ALIGN_DISTRIBUTION_MERGING,
+    model = MCDispAlignModel(
+        freeze_clip=config.MCDISP_ALIGN_FREEZE_CLIP,
+        distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
     )
     if Path(checkpoint_path).exists():
         model.load(checkpoint_path)

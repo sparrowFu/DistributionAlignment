@@ -13,7 +13,7 @@ across all methods:
 Usage:
     python scripts/visualize_modality_gap.py
     python scripts/visualize_modality_gap.py --num-samples 2000 --device cuda
-    python scripts/visualize_modality_gap.py --model-type dist_align
+    python scripts/visualize_modality_gap.py --model-type mcdisp_align
 """
 
 import argparse
@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from data.caption_dataset import ImageCaptionDataset, filter_none_collate
 from models.clip_baseline import CLIPFineTuneBaseline
-from models.dist_align_model import DistributionAlignmentModel
+from models.mcdisp_align_model import MCDispAlignModel
 from models.prolip_model import ProLIPModel
 from utils.logger import get_logger, log_exception
 from utils.seed import set_seed
@@ -155,7 +155,7 @@ def extract_prolip(model, dataloader, device, num_samples):
 
 
 @torch.no_grad()
-def extract_dist_align(model, dataloader, device, num_samples):
+def extract_mcdisp_align(model, dataloader, device, num_samples):
     """Distribution Alignment: img_mu and text_mu, then normalize."""
     model.eval()
     all_img, all_text, all_img_lv, all_text_lv = [], [], [], []
@@ -197,12 +197,12 @@ METHOD_CONFIGS = {
         "extract_fn": extract_prolip,
     },
     "Ours": {
-        "model_fn": lambda: DistributionAlignmentModel(
-            freeze_clip=config.DIST_ALIGN_FREEZE_CLIP,
-            distribution_merging=config.DIST_ALIGN_DISTRIBUTION_MERGING,
+        "model_fn": lambda: MCDispAlignModel(
+            freeze_clip=config.MCDISP_ALIGN_FREEZE_CLIP,
+            distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
         ),
-        "checkpoint": str(config.DIST_ALIGN_BEST_CKPT),
-        "extract_fn": extract_dist_align,
+        "checkpoint": str(config.MCDISP_ALIGN_BEST_CKPT),
+        "extract_fn": extract_mcdisp_align,
     },
 }
 
@@ -573,7 +573,7 @@ def plot_variance_profile(features: Dict, output_dir: Path):
 # =============================================================================
 
 MODEL_TYPE_ALIASES = {
-    "dist_align": "Ours",
+    "mcdisp_align": "Ours",
     "clip_zero": "CLIP Zero-Shot",
     "clip_baseline": "CLIP Fine-tune",
     "prolip": "ProLIP",
@@ -597,7 +597,7 @@ def parse_args():
     parser.add_argument("--model-type", type=str, default=None,
                         choices=list(MODEL_TYPE_ALIASES.keys()),
                         help="Shortcut to select a single model by alias "
-                             "(e.g. dist_align, clip_zero). Overrides --methods.")
+                             "(e.g. mcdisp_align, clip_zero). Overrides --methods.")
     return parser.parse_args()
 
 

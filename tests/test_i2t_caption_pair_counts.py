@@ -5,7 +5,7 @@ Verifies, for image->text retrieval over the full per-caption gallery:
   1. a perfect-alignment case yields the max hit count (all K of an image's
      captions land in its top-K);
   2. on random features the vectorized implementation matches an independent
-     naive double-loop reference, for BOTH the cosine and the MSDA scorers and
+     naive double-loop reference, for BOTH the cosine and the MCDisp_Align scorers and
      across multiple query chunks (chunk_size < N exercises the global-index
      logic).
 
@@ -34,12 +34,12 @@ def _naive(img_mu, img_logvar, text_mus, text_logvars, k_values, tau):
     g_scale = torch.sqrt(1.0 + g_lv.exp().mean(-1))
 
     out = {}
-    for name, msda in (("cos", False), ("msda", True)):
+    for name, is_mcdisp in (("cos", False), ("mcdisp_align", True)):
         for k in k_values:
             tot = 0
             for i in range(N):
                 sim = i_n[i] @ g_n.T
-                if msda:
+                if is_mcdisp:
                     sim = sim / (tau * i_scale[i] * g_scale)
                 order = torch.argsort(sim, descending=True)
                 topk = set(order[:k].tolist())
@@ -69,7 +69,7 @@ def test_perfect_alignment():
     # images' (zero-sim) captions -> mean hit count is exactly K=5 at K=5 and K=10.
     for k in (5, 10):
         assert abs(out[f"cos_pair_count@{k}"] - 5.0) < 1e-6, (k, out)
-        assert abs(out[f"msda_pair_count@{k}"] - 5.0) < 1e-6, (k, out)
+        assert abs(out[f"mcdisp_align_pair_count@{k}"] - 5.0) < 1e-6, (k, out)
     print("test_perfect_alignment OK:", out)
 
 

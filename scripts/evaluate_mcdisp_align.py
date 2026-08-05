@@ -1,12 +1,12 @@
 """
-GaussianImageDistribution - MSDA Distribution Alignment Evaluation Script
+GaussianImageDistribution - MCDisp_Align Distribution Alignment Evaluation Script
 
-Evaluates the MSDA (Multi-caption Semantic Distribution Alignment) model using
+Evaluates the MCDisp_Align (Multi-Caption Semantic Dispersion Guided Distribution Alignment) model using
 image-text retrieval. The PRIMARY protocol is standard multi-caption retrieval
 (N images vs N*K captions; I2T any-of-K-hit, T2I per-caption single-positive),
 reported under two scorers:
 
-  - MSDA score (primary scorer): the uncertainty-discounted cosine
+  - MCDisp_Align score (primary scorer): the uncertainty-discounted cosine
         sim = (mu_v . mu_t) / (tau * sqrt(1+mean sigma_v^2) * sqrt(1+mean sigma_t^2))
     i.e. the same score the L_set contrastive loss optimizes.
   - Cosine-on-means: plain cosine (for baseline comparison).
@@ -16,8 +16,8 @@ diagnostic (it measures whether the moment-matched caption-set distribution is
 well-centered, and is NOT comparable to published MS-COCO/Flickr baselines).
 
 Usage:
-    python scripts/evaluate_dist_align.py
-    python main.py --task eval_dist_align
+    python scripts/evaluate_mcdisp_align.py
+    python main.py --task eval_mcdisp_align
 """
 
 import argparse
@@ -31,7 +31,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
-from models.dist_align_model import DistributionAlignmentModel
+from models.mcdisp_align_model import MCDispAlignModel
 from utils.eval_common import build_eval_dataloader, resolve_checkpoint, VALID_DATASETS
 from utils.eval_results import append_eval_results, groups_to_flat, print_recall_groups
 from utils.logger import get_logger, log_exception
@@ -39,12 +39,12 @@ from utils.retrieval import (
     compute_i2t_caption_pair_counts,
     compute_multicaption_recall,
     compute_recall_bidirectional,
-    compute_recall_msda_chunked,
+    compute_recall_mcdisp_align_chunked,
 )
 from utils.seed import set_seed
 
 
-logger = get_logger("eval_dist_align", config.EVAL_DIST_ALIGN_LOG_PATH)
+logger = get_logger("eval_mcdisp_align", config.EVAL_MCDISP_ALIGN_LOG_PATH)
 
 
 def parse_args():
@@ -53,7 +53,7 @@ def parse_args():
 
     parser.add_argument("--checkpoint", type=str, default=None,
                         help="Path to checkpoint. If None, auto-selects "
-                             "dist_align_{dataset}_best.pt from --dataset "
+                             "mcdisp_align_{dataset}_best.pt from --dataset "
                              "(pass a ..._last.pt path to evaluate the last checkpoint).")
     parser.add_argument("--dataset", type=str, default="coco",
                         choices=list(VALID_DATASETS),
@@ -73,15 +73,15 @@ def parse_args():
                         help="Output JSON path (uses config default if None)")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
                         help="Device to use")
-    parser.add_argument("--tau", type=float, default=config.MSDA_TAU,
-                        help="Temperature for the MSDA uncertainty-discounted similarity")
+    parser.add_argument("--tau", type=float, default=config.MCDISP_ALIGN_TAU,
+                        help="Temperature for the MCDisp_Align uncertainty-discounted similarity")
 
     return parser.parse_args()
 
 
 @torch.no_grad()
 def extract_features(
-    model: DistributionAlignmentModel,
+    model: MCDispAlignModel,
     dataloader: DataLoader,
     device: torch.device,
     num_samples: int = None
@@ -167,14 +167,14 @@ def main():
     # Set random seed
     set_seed(config.SEED)
 
-    # Load model (auto-select checkpoint by dataset: dist_align_{dataset}_best.pt)
-    checkpoint_path = args.checkpoint or str(resolve_checkpoint("dist_align", args.dataset))
+    # Load model (auto-select checkpoint by dataset: mcdisp_align_{dataset}_best.pt)
+    checkpoint_path = args.checkpoint or str(resolve_checkpoint("mcdisp_align", args.dataset))
     logger.info(f"Loading model from {checkpoint_path}")
 
-    model = DistributionAlignmentModel(
-        freeze_clip=config.DIST_ALIGN_FREEZE_CLIP,
-        distribution_merging=config.DIST_ALIGN_DISTRIBUTION_MERGING,
-        cov_rank=config.MSDA_COV_RANK,
+    model = MCDispAlignModel(
+        freeze_clip=config.MCDISP_ALIGN_FREEZE_CLIP,
+        distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
+        cov_rank=config.MCDISP_ALIGN_COV_RANK,
     )
 
     model.load(checkpoint_path)
@@ -206,7 +206,7 @@ def main():
 
     # Primary: standard multi-caption bidirectional Recall (N images vs N*K
     # captions) -- the canonical MS-COCO/Flickr protocol and the methodology's
-    # intended one-image-many-captions evaluation. Reported under both the MSDA
+    # intended one-image-many-captions evaluation. Reported under both the MCDisp_Align
     # uncertainty-discounted score (= L_set score) and plain cosine.
     mc = compute_multicaption_recall(
         img_mu_d, img_lv_d, text_mus_d, text_logvars_d,
@@ -216,14 +216,14 @@ def main():
     # Auxiliary: set-level Recall on the merged text mean (N vs N). This measures
     # whether the moment-matched caption-set distribution is well-centered; it is
     # NOT standard benchmark retrieval and is kept for diagnostics only.
-    msda_metrics = compute_recall_msda_chunked(
+    mcdisp_align_metrics = compute_recall_mcdisp_align_chunked(
         img_mu_d, img_lv_d, text_mu_d, text_lv_d, args.recall_at_k, tau=args.tau)
     cos = compute_recall_bidirectional(img_mu_d, text_mu_d, args.recall_at_k, normalize=True)
 
     groups = [
         {
             "family": "mc_recall",
-            "label": "Multi-caption Recall@K (MSDA score, primary; N vs N*K)",
+            "label": "Multi-caption Recall@K (MCDisp_Align score, primary; N vs N*K)",
             "per_k": {
                 k: {
                     "i2t": mc[f"mc_recall_i2t@{k}"],
@@ -246,13 +246,13 @@ def main():
             },
         },
         {
-            "family": "msda_recall",
-            "label": "Set-level Recall@K (MSDA score, merged text -- auxiliary)",
+            "family": "mcdisp_align_recall",
+            "label": "Set-level Recall@K (MCDisp_Align score, merged text -- auxiliary)",
             "per_k": {
                 k: {
-                    "i2t": msda_metrics[f"msda_recall_i2t@{k}"],
-                    "t2i": msda_metrics[f"msda_recall_t2i@{k}"],
-                    "mean": msda_metrics[f"msda_recall@{k}"],
+                    "i2t": mcdisp_align_metrics[f"mcdisp_align_recall_i2t@{k}"],
+                    "t2i": mcdisp_align_metrics[f"mcdisp_align_recall_t2i@{k}"],
+                    "mean": mcdisp_align_metrics[f"mcdisp_align_recall@{k}"],
                 }
                 for k in args.recall_at_k
             },
@@ -275,7 +275,7 @@ def main():
     recall_metrics = groups_to_flat(groups)
 
     # Append results (never overwrite prior runs); time is stamped after dataset.
-    output_path = args.output_path or str(config.DIST_ALIGN_EVAL_RESULTS_PATH)
+    output_path = args.output_path or str(config.MCDISP_ALIGN_EVAL_RESULTS_PATH)
     append_eval_results(output_path, {
         'checkpoint': str(checkpoint_path),
         'dataset': args.dataset,
@@ -287,7 +287,7 @@ def main():
     # --- Extra metric: I2T per-caption pair-count (separate result file) -------
     # Image->text retrieval over the full per-caption gallery (all N*K captions);
     # for each image, the mean # of its K captions found in top-5 / top-10, under
-    # both the cosine and MSDA scores. Saved to its own file, never mixed into the
+    # both the cosine and MCDisp_Align scores. Saved to its own file, never mixed into the
     # main recall results above.
     pair_counts = compute_i2t_caption_pair_counts(
         img_mu_d, img_lv_d, text_mus_d, text_logvars_d,
@@ -300,7 +300,7 @@ def main():
     )
 
     if args.output_path is None:
-        pair_output = str(config.DIST_ALIGN_I2T_PAIR_COUNTS_PATH)
+        pair_output = str(config.MCDISP_ALIGN_I2T_PAIR_COUNTS_PATH)
     else:
         _p = Path(args.output_path)
         pair_output = str(_p.with_name(f"{_p.stem}_i2t_pair_counts{_p.suffix}"))

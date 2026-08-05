@@ -5,8 +5,8 @@ Evaluates models trained on MSCOCO on the Flickr30K dataset to test cross-datase
 generalization. Computes image-text retrieval R@K metrics.
 
 Usage:
-    python scripts/eval_flickr30k.py --model-type dist_align
-    python main.py --task eval_flickr30k --model-type dist_align
+    python scripts/eval_flickr30k.py --model-type mcdisp_align
+    python main.py --task eval_flickr30k --model-type mcdisp_align
 """
 
 import argparse
@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import config
 from data.flickr30k_dataset import get_flickr30k_test_loader
 from models.clip_baseline import CLIPFineTuneBaseline
-from models.dist_align_model import DistributionAlignmentModel
+from models.mcdisp_align_model import MCDispAlignModel
 from models.prolip_model import ProLIPModel
 from utils.logger import get_logger, log_exception
 from utils.seed import set_seed
@@ -37,13 +37,13 @@ logger = get_logger("eval_flickr30k", config.LOG_DIR / "flickr30k.log")
 # =============================================================================
 
 MODEL_CONFIGS = {
-    "dist_align": {
-        "model_fn": lambda: DistributionAlignmentModel(
+    "mcdisp_align": {
+        "model_fn": lambda: MCDispAlignModel(
             freeze_clip=True,
-            distribution_merging=config.DIST_ALIGN_DISTRIBUTION_MERGING,
+            distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
         ),
-        "default_ckpt": config.DIST_ALIGN_BEST_CKPT,
-        "output_path": config.OUTPUT_DIR / "flickr30k_dist_align_results.json",
+        "default_ckpt": config.MCDISP_ALIGN_BEST_CKPT,
+        "output_path": config.OUTPUT_DIR / "flickr30k_mcdisp_align_results.json",
         "has_distribution": True,
     },
     "clip_baseline": {
@@ -171,7 +171,7 @@ def extract_features_clip(model, dataloader, device, num_samples=None):
 
 @torch.no_grad()
 def extract_features_distribution(model, dataloader, device, num_samples=None):
-    """Extract features for distribution-based models (dist_align, prolip)."""
+    """Extract features for distribution-based models (mcdisp_align, prolip)."""
     model.eval()
     all_img_mu, all_text_mu = [], []
     all_img_logvar, all_text_logvar = [], []
@@ -519,8 +519,8 @@ def main():
             loglik_recall = compute_recall_loglik_chunked(
                 img_mu.to(args.device), img_logvar.to(args.device), img_U.to(args.device),
                 text_mu.to(args.device), args.recall_at_k,
-                per_dim_normalize=config.MSDA_PER_DIM_NORMALIZE,
-                use_logdet=config.MSDA_USE_LOGDET,
+                per_dim_normalize=config.MCDISP_ALIGN_PER_DIM_NORMALIZE,
+                use_logdet=config.MCDISP_ALIGN_USE_LOGDET,
             )
             recall_metrics.update(loglik_recall)
 

@@ -5,8 +5,8 @@ This script provides a unified entry point for all tasks in the project.
 It supports running training and evaluation scripts with a consistent interface.
 
 Usage:
-    python main.py --task train_dist_align
-    python main.py --task eval_dist_align
+    python main.py --task train_mcdisp_align
+    python main.py --task eval_mcdisp_align
     python main.py --task run_ablation --config all
 """
 
@@ -36,8 +36,8 @@ Available tasks:
   Stage 1 (Alignment Training):
     train_clip_baseline    Train CLIP baseline model (B2)
     eval_clip_baseline     Evaluate CLIP baseline model (B2)
-    train_dist_align       Train distribution alignment model (Ours/MSDA)
-    eval_dist_align        Evaluate distribution alignment model (Ours/MSDA)
+    train_mcdisp_align       Train distribution alignment model (Ours/MCDisp_Align)
+    eval_mcdisp_align        Evaluate distribution alignment model (Ours/MCDisp_Align)
     train_prolip           Train ProLIP baseline model (B3)
     eval_prolip            Evaluate ProLIP baseline model (B3)
     eval_prolip_zero_shot  Evaluate ProLIP Zero-Shot baseline (B3)
@@ -54,19 +54,19 @@ Available tasks:
     visualize_gap          Exp8: Modality gap visualization
     eval_flickr30k         Exp6: Flickr30K cross-dataset generalization
 
-Supported model types (--model-type): dist_align, clip_baseline, clip_zero_shot,
+Supported model types (--model-type): mcdisp_align, clip_baseline, clip_zero_shot,
                                      prolip
-eval_vqa_retrieval --model: clip_zero_shot, clip_baseline, dist_align,
+eval_vqa_retrieval --model: clip_zero_shot, clip_baseline, mcdisp_align,
                             prolip_zero_shot, prolip, all
 
 Examples:
-  python main.py --task train_dist_align
-  python main.py --task eval_dist_align
+  python main.py --task train_mcdisp_align
+  python main.py --task eval_mcdisp_align
   python main.py --task build_vqa_expansions --split test --limit 0 --no-batch
-  python main.py --task eval_vqa_retrieval --model dist_align
+  python main.py --task eval_vqa_retrieval --model mcdisp_align
   python main.py --task run_ablation --config all
   python main.py --task eval_sigma_analysis
-  python main.py --task eval_flickr30k --model-type dist_align
+  python main.py --task eval_flickr30k --model-type mcdisp_align
         """
     )
 
@@ -77,7 +77,7 @@ Examples:
         choices=[
             # Stage 1: Alignment training
             "train_clip_baseline", "eval_clip_baseline",
-            "train_dist_align", "eval_dist_align",
+            "train_mcdisp_align", "eval_mcdisp_align",
             "train_prolip", "eval_prolip", "eval_prolip_zero_shot",
             "eval_clip_zero_shot",
             # Stage 2: VQA-as-retrieval downstream (gemma caption)
@@ -98,7 +98,7 @@ Examples:
         "--model-type",
         type=str,
         default=None,
-        choices=["dist_align", "clip_baseline", "clip_zero_shot",
+        choices=["mcdisp_align", "clip_baseline", "clip_zero_shot",
                  "prolip"],
         help="Base model type for VQA training"
     )
@@ -107,7 +107,7 @@ Examples:
         "--model",
         type=str,
         default=None,
-        choices=["clip_zero_shot", "clip_baseline", "dist_align",
+        choices=["clip_zero_shot", "clip_baseline", "mcdisp_align",
                  "prolip_zero_shot", "prolip", "all"],
         help="Model to evaluate for eval_vqa_retrieval ('all' = 全部 5 个)"
     )
@@ -246,8 +246,8 @@ TASK_SCRIPTS = {
     # Stage 1: Alignment training (Ours + B2-B4)
     "train_clip_baseline":   "train_clip_baseline.py",        # python main.py --task train_clip_baseline
     "eval_clip_baseline":    "evaluate_clip_baseline.py",     # python main.py --task eval_clip_baseline --num-samples 5000
-    "train_dist_align":      "train_dist_align.py",           # python main.py --task train_dist_align
-    "eval_dist_align":       "evaluate_dist_align.py",        # python main.py --task eval_dist_align --num-samples 5000
+    "train_mcdisp_align":      "train_mcdisp_align.py",           # python main.py --task train_mcdisp_align
+    "eval_mcdisp_align":       "evaluate_mcdisp_align.py",        # python main.py --task eval_mcdisp_align --num-samples 5000
     "train_prolip":          "train_prolip.py",               # python main.py --task train_prolip
     "eval_prolip":           "evaluate_prolip.py",            # python main.py --task eval_prolip --num-samples 5000
     "eval_prolip_zero_shot": "evaluate_prolip_zero_shot.py",  # python main.py --task eval_prolip_zero_shot --num-samples 5000
@@ -255,13 +255,13 @@ TASK_SCRIPTS = {
     "eval_clip_zero_shot":   "evaluate_clip_zero_shot.py",    # python main.py --task eval_clip_zero_shot --num-samples 5000
     # Stage 2: VQA-as-retrieval downstream (gemma caption)
     "build_vqa_expansions":  "build_vqa_expansions.py",       # python main.py --task build_vqa_expansions --split test --limit 0 --no-batch
-    "eval_vqa_retrieval":    "eval_vqa_retrieval.py",         # python main.py --task eval_vqa_retrieval --model dist_align  (或 --model all)
+    "eval_vqa_retrieval":    "eval_vqa_retrieval.py",         # python main.py --task eval_vqa_retrieval --model mcdisp_align  (或 --model all)
     # Experiments
     "eval_ood":              "eval_ood.py",                   # python main.py --task eval_ood
     "run_ablation":          "run_ablation.py",               # python main.py --task run_ablation --config all
     "eval_sigma_analysis":   "eval_sigma_analysis.py",        # python main.py --task eval_sigma_analysis --num-samples 5000
-    "visualize_gap":         "visualize_modality_gap.py",     # python main.py --task visualize_gap --model-type dist_align
-    "eval_flickr30k":        "eval_flickr30k.py",             # python main.py --task eval_flickr30k --model-type dist_align
+    "visualize_gap":         "visualize_modality_gap.py",     # python main.py --task visualize_gap --model-type mcdisp_align
+    "eval_flickr30k":        "eval_flickr30k.py",             # python main.py --task eval_flickr30k --model-type mcdisp_align
 }
 
 

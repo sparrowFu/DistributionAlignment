@@ -1,13 +1,13 @@
 """
-GaussianImageDistribution - Shared MSDA (dist_align) training orchestration.
+GaussianImageDistribution - Shared MCDisp_Align (mcdisp_align) training orchestration.
 
-Both ``scripts/train_dist_align.py`` (full training) and ``scripts/run_ablation.py``
-(ablation variants) call :func:`run_dist_align_training`, so an ablation variant
+Both ``scripts/train_mcdisp_align.py`` (full training) and ``scripts/run_ablation.py``
+(ablation variants) call :func:`run_mcdisp_align_training`, so an ablation variant
 is trained with EXACTLY the same logic as the real model — staged loss schedule,
 grad-norm clipping, recall/loss best-checkpoint selection, early stopping,
 best+last checkpointing, and resume — differing only in the loss weights /
 ``cov_rank`` / ``num_captions`` / ``dataset`` / checkpoint paths passed via
-:class:`DistAlignTrainConfig`.
+:class:`MCDispAlignTrainConfig`.
 
 The per-epoch functions (:func:`train_epoch`, :func:`evaluate`,
 :func:`create_optimizer`, :func:`stage_multipliers`) are also exported for direct
@@ -25,14 +25,14 @@ from tqdm import tqdm
 
 import config
 from data.caption_dataset import filter_none_collate
-from losses.dist_align_losses import MSDALoss
-from models.dist_align_model import DistributionAlignmentModel
+from losses.mcdisp_align_losses import MCDispAlignLoss
+from models.mcdisp_align_model import MCDispAlignModel
 from utils.dataset_factory import build_train_dataset
 from utils.eval_common import build_eval_dataloader
 from utils.lr_scheduler import apply_lr_for_epoch
 from utils.retrieval import (
     compute_recall_bidirectional,
-    compute_recall_msda_chunked,
+    compute_recall_mcdisp_align_chunked,
 )
 
 
@@ -41,7 +41,7 @@ from utils.retrieval import (
 # ---------------------------------------------------------------------------
 
 def create_optimizer(
-    model: DistributionAlignmentModel,
+    model: MCDispAlignModel,
     freeze_clip: bool,
     clip_lr: float,
     mlp_lr: float,
@@ -77,16 +77,16 @@ def _stage_bounds(total: int):
     Warmup = WARMUP_FRAC; Full = FULL_FRAC; the middle is split into thirds for
     Var-Bootstrap / Pos-Coverage / Neg-Repulsion.
     """
-    warmup_end = max(1, int(round(total * config.MSDA_STAGE_WARMUP_FRAC)))
+    warmup_end = max(1, int(round(total * config.MCDISP_ALIGN_STAGE_WARMUP_FRAC)))
     full_start = max(warmup_end + 3,
-                     total - max(1, int(round(total * config.MSDA_STAGE_FULL_FRAC))))
+                     total - max(1, int(round(total * config.MCDISP_ALIGN_STAGE_FULL_FRAC))))
     middle = max(3, full_start - warmup_end)
     third = max(1, middle // 3)
     return warmup_end, warmup_end + third, warmup_end + 2 * third, full_start
 
 
 def stage_multipliers(epoch: int, total: int, no_staged: bool) -> Dict[str, float]:
-    """Per-loss multipliers for the 5-stage MSDA schedule.
+    """Per-loss multipliers for the 5-stage MCDisp_Align schedule.
 
     Stages (by epoch fraction):
       Mean-Warmup   : L_set + L_mu + L_reg                 (var/cover/cov off)
@@ -180,13 +180,13 @@ def head_grad_norms(model) -> Dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
-# Epoch functions (ported verbatim from the original train_dist_align.py)
+# Epoch functions (ported verbatim from the original train_mcdisp_align.py)
 # ---------------------------------------------------------------------------
 
 def train_epoch(
-    model: DistributionAlignmentModel,
+    model: MCDispAlignModel,
     dataloader: DataLoader,
-    criterion: MSDALoss,
+    criterion: MCDispAlignLoss,
     optimizer: optim.Optimizer,
     device: torch.device,
     epoch: int,
@@ -207,8 +207,8 @@ def train_epoch(
     if base_lambda_var is None:
         base_lambda_var = criterion.lambda_var
     steps_per_epoch = len(dataloader)
-    var_near = config.MSDA_VAR_FLOOR * config.MSDA_VAR_FLOOR_NEAR_MULT
-    floor_thresh = config.MSDA_VAR_FLOOR * 2.0
+    var_near = config.MCDISP_ALIGN_VAR_FLOOR * config.MCDISP_ALIGN_VAR_FLOOR_NEAR_MULT
+    floor_thresh = config.MCDISP_ALIGN_VAR_FLOOR * 2.0
 
     totals = {k: 0.0 for k in (
         "loss", "set_nce", "mu", "var", "cover_pos", "cover_neg", "cov", "reg", "img_var_avg",
@@ -264,7 +264,7 @@ def train_epoch(
         # Forward pass
         outputs = model(pixel_values, input_ids, attention_mask)
 
-        # Compute MSDA loss
+        # Compute MCDisp_Align loss
         loss, loss_dict = criterion(
             outputs['img_mu'], outputs['img_logvar'], outputs['img_U'],
             outputs['text_mu'], outputs['text_logvar'],
@@ -278,10 +278,10 @@ def train_epoch(
         head_norms = head_grad_norms(model)
         # Clip global grad norm (returns the pre-clip total norm over ALL params);
         # protects against L_cov / cover spikes destabilizing the retrieval means.
-        total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.MSDA_GRAD_CLIP_NORM)
+        total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.MCDISP_ALIGN_GRAD_CLIP_NORM)
         optimizer.step()
         grad_before = float(total_norm)
-        grad_after = min(grad_before, config.MSDA_GRAD_CLIP_NORM)
+        grad_after = min(grad_before, config.MCDISP_ALIGN_GRAD_CLIP_NORM)
 
         # Accumulate losses
         for k in totals:
@@ -293,7 +293,7 @@ def train_epoch(
             img_var = torch.exp(outputs['img_logvar'])
             floor_ratio = (img_var < var_near).float().mean().item()
             floor_ratio_sum += floor_ratio
-            if floor_ratio > config.MSDA_VAR_FLOOR_RATIO_WARN and loss_dict['img_var_avg'] < floor_thresh:
+            if floor_ratio > config.MCDISP_ALIGN_VAR_FLOOR_RATIO_WARN and loss_dict['img_var_avg'] < floor_thresh:
                 floor_severe += 1
 
         # Accumulate per-head grad norms + global before/after clip (P1 #12)
@@ -324,9 +324,9 @@ def train_epoch(
 
 @torch.no_grad()
 def evaluate(
-    model: DistributionAlignmentModel,
+    model: MCDispAlignModel,
     dataloader: DataLoader,
-    criterion: MSDALoss,
+    criterion: MCDispAlignLoss,
     device: torch.device,
     compute_recall: bool = False,
     recall_k_values=None,
@@ -385,16 +385,16 @@ def evaluate(
     # Retrieval Recall@K (image<->text, diagonal pairing). The val loader uses
     # shuffle=False, so concatenated img_mu[i] stays aligned with its own
     # caption-set text_mu[i] -> the diagonal is the positive pair.
-    # Primary score: MSDA uncertainty-discounted cosine (= what L_set optimizes).
+    # Primary score: MCDisp_Align uncertainty-discounted cosine (= what L_set optimizes).
     # Secondary: plain cosine-on-means (methodology's mean-only retrieval mode).
     if compute_recall and recall_k_values and feats and feats["img_mu"]:
         img_mu = torch.cat(feats["img_mu"], dim=0).to(device)
         text_mu = torch.cat(feats["text_mu"], dim=0).to(device)
         img_lv = torch.cat(feats["img_logvar"], dim=0).to(device)
         text_lv = torch.cat(feats["text_logvar"], dim=0).to(device)
-        msda = compute_recall_msda_chunked(
+        mcdisp_align = compute_recall_mcdisp_align_chunked(
             img_mu, img_lv, text_mu, text_lv, recall_k_values, tau=criterion.tau)
-        metrics.update(msda)
+        metrics.update(mcdisp_align)
         cos = compute_recall_bidirectional(img_mu, text_mu, recall_k_values, normalize=True)
         for k in recall_k_values:
             metrics[f"cos_recall@{k}"] = (cos[f"recall_i2t@{k}"] + cos[f"recall_t2i@{k}"]) / 2
@@ -407,8 +407,8 @@ def evaluate(
 # ---------------------------------------------------------------------------
 
 @dataclass
-class DistAlignTrainConfig:
-    """All knobs for one MSDA training run (full or ablation)."""
+class MCDispAlignTrainConfig:
+    """All knobs for one MCDisp_Align training run (full or ablation)."""
 
     # --- Data ---
     dataset: str = "coco"
@@ -419,38 +419,38 @@ class DistAlignTrainConfig:
     images_dir: Optional[str] = None              # coco override
 
     # --- Training ---
-    epochs: int = field(default_factory=lambda: config.DIST_ALIGN_EPOCHS)
-    batch_size: int = field(default_factory=lambda: config.DIST_ALIGN_BATCH_SIZE)
-    clip_lr: float = field(default_factory=lambda: config.DIST_ALIGN_CLIP_LR)
-    mlp_lr: float = field(default_factory=lambda: config.DIST_ALIGN_MLP_LR)
-    weight_decay: float = field(default_factory=lambda: config.DIST_ALIGN_WEIGHT_DECAY)
+    epochs: int = field(default_factory=lambda: config.MCDISP_ALIGN_EPOCHS)
+    batch_size: int = field(default_factory=lambda: config.MCDISP_ALIGN_BATCH_SIZE)
+    clip_lr: float = field(default_factory=lambda: config.MCDISP_ALIGN_CLIP_LR)
+    mlp_lr: float = field(default_factory=lambda: config.MCDISP_ALIGN_MLP_LR)
+    weight_decay: float = field(default_factory=lambda: config.MCDISP_ALIGN_WEIGHT_DECAY)
 
     # --- Model ---
-    freeze_clip: bool = field(default_factory=lambda: config.DIST_ALIGN_FREEZE_CLIP)
-    cov_rank: int = field(default_factory=lambda: config.MSDA_COV_RANK)
-    distribution_merging: str = field(default_factory=lambda: config.DIST_ALIGN_DISTRIBUTION_MERGING)
-    dropout_rate: float = field(default_factory=lambda: config.DIST_ALIGN_DROPOUT_RATE)
+    freeze_clip: bool = field(default_factory=lambda: config.MCDISP_ALIGN_FREEZE_CLIP)
+    cov_rank: int = field(default_factory=lambda: config.MCDISP_ALIGN_COV_RANK)
+    distribution_merging: str = field(default_factory=lambda: config.MCDISP_ALIGN_DISTRIBUTION_MERGING)
+    dropout_rate: float = field(default_factory=lambda: config.MCDISP_ALIGN_DROPOUT_RATE)
 
-    # --- MSDA loss weights ---
-    lambda_ctr: float = field(default_factory=lambda: config.MSDA_LAMBDA_CTR)
-    lambda_mu: float = field(default_factory=lambda: config.MSDA_LAMBDA_MU)
-    lambda_var: float = field(default_factory=lambda: config.MSDA_LAMBDA_VAR)
-    lambda_cover_pos: float = field(default_factory=lambda: config.MSDA_LAMBDA_COVER_POS)
-    lambda_cover_neg: float = field(default_factory=lambda: config.MSDA_LAMBDA_COVER_NEG)
-    lambda_cov: float = field(default_factory=lambda: config.MSDA_LAMBDA_COV)
-    lambda_reg: float = field(default_factory=lambda: config.MSDA_LAMBDA_REG)
-    tau: float = field(default_factory=lambda: config.MSDA_TAU)
-    m_pos: float = field(default_factory=lambda: config.MSDA_M_POS)
-    m_neg: float = field(default_factory=lambda: config.MSDA_M_NEG)
-    target_var: float = field(default_factory=lambda: config.MSDA_TARGET_VAR)
-    use_uncertainty_sim: bool = field(default_factory=lambda: config.MSDA_USE_UNCERTAINTY_SIM)
+    # --- MCDisp_Align loss weights ---
+    lambda_ctr: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_CTR)
+    lambda_mu: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_MU)
+    lambda_var: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_VAR)
+    lambda_cover_pos: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_COVER_POS)
+    lambda_cover_neg: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_COVER_NEG)
+    lambda_cov: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_COV)
+    lambda_reg: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_REG)
+    tau: float = field(default_factory=lambda: config.MCDISP_ALIGN_TAU)
+    m_pos: float = field(default_factory=lambda: config.MCDISP_ALIGN_M_POS)
+    m_neg: float = field(default_factory=lambda: config.MCDISP_ALIGN_M_NEG)
+    target_var: float = field(default_factory=lambda: config.MCDISP_ALIGN_TARGET_VAR)
+    use_uncertainty_sim: bool = field(default_factory=lambda: config.MCDISP_ALIGN_USE_UNCERTAINTY_SIM)
 
     # --- Schedule / selection ---
     no_staged: bool = False
     lr_scheduler: str = field(default_factory=lambda: config.LR_SCHEDULER)
     warmup_epochs: int = field(default_factory=lambda: config.LR_WARMUP_EPOCHS)
     min_lr_ratio: float = field(default_factory=lambda: config.LR_MIN_LR_RATIO)
-    select_by: str = "recall"                     # "recall" (MSDA R@1) or "loss"
+    select_by: str = "recall"                     # "recall" (MCDisp_Align R@1) or "loss"
     early_stop_patience: int = 3
     no_early_stop: bool = False
     seed: int = field(default_factory=lambda: config.SEED)
@@ -459,7 +459,7 @@ class DistAlignTrainConfig:
     device: str = "cuda"
     tag: str = ""                                  # log/tqdm prefix (e.g. ablation name)
     checkpoint_dir: Optional[Path] = None          # standard naming root
-    model_name: str = "dist_align"                 # -> {model_name}_{dataset}_best|last.pt
+    model_name: str = "mcdisp_align"                 # -> {model_name}_{dataset}_best|last.pt
     best_ckpt_path: Optional[Path] = None          # explicit override (ablation)
     last_ckpt_path: Optional[Path] = None
     resume_path: Optional[Path] = None
@@ -484,7 +484,7 @@ class DistAlignTrainConfig:
         return Path(root) / f"{self.model_name}_{self.dataset}_last.pt"
 
 
-def _build_loaders(cfg: DistAlignTrainConfig):
+def _build_loaders(cfg: MCDispAlignTrainConfig):
     """Build train/val DataLoaders from the registry-selected training dataset."""
     full_dataset = build_train_dataset(
         dataset=cfg.dataset,
@@ -509,12 +509,12 @@ def _build_loaders(cfg: DistAlignTrainConfig):
     return train_loader, val_loader, train_size, val_size
 
 
-def run_dist_align_training(cfg: DistAlignTrainConfig, log) -> Dict:
-    """Run a full MSDA training (+ optional final retrieval eval).
+def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
+    """Run a full MCDisp_Align training (+ optional final retrieval eval).
 
     Returns a dict with ``best_val_loss``, ``best_recall``, ``select_by``, the
     last epoch index, and (when ``cfg.eval_num_samples`` is set) ``retrieval``
-    metrics on the dataset's eval split — the same scorers evaluate_dist_align uses.
+    metrics on the dataset's eval split — the same scorers evaluate_mcdisp_align uses.
     """
     from utils.seed import set_seed
     set_seed(cfg.seed)
@@ -522,7 +522,7 @@ def run_dist_align_training(cfg: DistAlignTrainConfig, log) -> Dict:
     prefix = f"[{cfg.tag}] " if cfg.tag else ""
 
     log.info("=" * 60)
-    log.info(f"{prefix}MSDA Distribution Alignment Training")
+    log.info(f"{prefix}MCDisp_Align Distribution Alignment Training")
     log.info("=" * 60)
     log.info(f"{prefix}Dataset: {cfg.dataset} | Epochs: {cfg.epochs} | Batch: {cfg.batch_size}")
     log.info(f"{prefix}CLIP LR: {cfg.clip_lr} | MLP LR: {cfg.mlp_lr} | Freeze CLIP: {cfg.freeze_clip}")
@@ -534,7 +534,7 @@ def run_dist_align_training(cfg: DistAlignTrainConfig, log) -> Dict:
 
     # Model
     log.info(f"{prefix}Creating model...")
-    model = DistributionAlignmentModel(
+    model = MCDispAlignModel(
         freeze_clip=cfg.freeze_clip,
         distribution_merging=cfg.distribution_merging,
         dropout_rate=cfg.dropout_rate,
@@ -544,7 +544,7 @@ def run_dist_align_training(cfg: DistAlignTrainConfig, log) -> Dict:
     log.info(f"{prefix}Model created with {model.num_trainable_parameters():,} trainable parameters")
 
     # Loss
-    criterion = MSDALoss(
+    criterion = MCDispAlignLoss(
         lambda_ctr=cfg.lambda_ctr,
         lambda_mu=cfg.lambda_mu,
         lambda_var=cfg.lambda_var,
@@ -558,7 +558,7 @@ def run_dist_align_training(cfg: DistAlignTrainConfig, log) -> Dict:
         m_neg=cfg.m_neg,
         use_uncertainty_sim=cfg.use_uncertainty_sim,
     )
-    log.info(f"{prefix}Using MSDA loss (uncertainty-discounted cosine L_set)")
+    log.info(f"{prefix}Using MCDisp_Align loss (uncertainty-discounted cosine L_set)")
     criterion = criterion.to(cfg.device)
 
     # Optimizer
@@ -640,8 +640,8 @@ def run_dist_align_training(cfg: DistAlignTrainConfig, log) -> Dict:
                 f"FloorR: {train_metrics.get('floor_ratio', 0):.3f} | "
                 f"Val Loss: {val_metrics['loss']:.4f}, NCE: {val_metrics['set_nce']:.4f}, "
                 f"σ²img: {val_metrics['img_var_avg']:.4f}, "
-                f"MSDA R@1/5/10: {val_metrics.get('msda_recall@1', 0):.3f}/"
-                f"{val_metrics.get('msda_recall@5', 0):.3f}/{val_metrics.get('msda_recall@10', 0):.3f}, "
+                f"MCDisp_Align R@1/5/10: {val_metrics.get('mcdisp_align_recall@1', 0):.3f}/"
+                f"{val_metrics.get('mcdisp_align_recall@5', 0):.3f}/{val_metrics.get('mcdisp_align_recall@10', 0):.3f}, "
                 f"Cos R@1/5/10: {val_metrics.get('cos_recall@1', 0):.3f}/"
                 f"{val_metrics.get('cos_recall@5', 0):.3f}/{val_metrics.get('cos_recall@10', 0):.3f}"
             )
@@ -650,9 +650,9 @@ def run_dist_align_training(cfg: DistAlignTrainConfig, log) -> Dict:
                 log.warning(
                     f"{prefix}SEVERE: variance floor collapse at epoch {epoch + 1} "
                     f"(stage={mult.get('stage')}): {train_metrics['floor_severe']} batches had "
-                    f">{config.MSDA_VAR_FLOOR_RATIO_WARN:.0%} of dims near the floor "
+                    f">{config.MCDISP_ALIGN_VAR_FLOOR_RATIO_WARN:.0%} of dims near the floor "
                     f"(σ²img={train_metrics['img_var_avg']:.4f}, mean FloorR={train_metrics['floor_ratio']:.3f}). "
-                    f"Do NOT raise MSDA_VAR_FLOOR -- it masks the collapse; check the loss schedule."
+                    f"Do NOT raise MCDISP_ALIGN_VAR_FLOOR -- it masks the collapse; check the loss schedule."
                 )
 
             # Per-epoch diagnostics (P1): weighted contributions, variance/cov stats, per-head grad norms
@@ -675,8 +675,8 @@ def run_dist_align_training(cfg: DistAlignTrainConfig, log) -> Dict:
             )
 
             # Best-checkpoint selection
-            if cfg.select_by == "recall" and "msda_recall@1" in val_metrics:
-                current_score = val_metrics["msda_recall@1"]
+            if cfg.select_by == "recall" and "mcdisp_align_recall@1" in val_metrics:
+                current_score = val_metrics["mcdisp_align_recall@1"]
                 improved = current_score > best_recall
                 if improved:
                     best_recall = current_score
@@ -688,7 +688,7 @@ def run_dist_align_training(cfg: DistAlignTrainConfig, log) -> Dict:
 
             if improved:
                 model.save(str(best_path))
-                score_str = (f"msda_recall@1: {best_recall:.4f}" if cfg.select_by == "recall"
+                score_str = (f"mcdisp_align_recall@1: {best_recall:.4f}" if cfg.select_by == "recall"
                              else f"val_loss: {best_val_loss:.4f}")
                 log.info(f"{prefix}Best model saved ({score_str}) -> {best_path}")
                 patience_counter = 0
@@ -714,7 +714,7 @@ def run_dist_align_training(cfg: DistAlignTrainConfig, log) -> Dict:
         }
         torch.save(final_state, str(last_path))
         log.info(f"{prefix}Final model saved to {last_path}")
-        log.info(f"{prefix}Best val loss: {best_val_loss:.4f} | Best MSDA recall@1: {best_recall:.4f} "
+        log.info(f"{prefix}Best val loss: {best_val_loss:.4f} | Best MCDisp_Align recall@1: {best_recall:.4f} "
                  f"(selected by: {cfg.select_by})")
 
     results = {
@@ -726,7 +726,7 @@ def run_dist_align_training(cfg: DistAlignTrainConfig, log) -> Dict:
     }
 
     # Optional final retrieval eval on the dataset's eval split (ablation reporting),
-    # using the SAME scorers as evaluate_dist_align.
+    # using the SAME scorers as evaluate_mcdisp_align.
     if cfg.eval_num_samples is not None and best_path.exists():
         log.info(f"{prefix}Final retrieval eval on {cfg.dataset} "
                  f"(num_samples={cfg.eval_num_samples})...")
@@ -744,15 +744,15 @@ def run_dist_align_training(cfg: DistAlignTrainConfig, log) -> Dict:
         )
         results["retrieval"] = {
             "num_samples": n_eval,
-            "msda_recall": {f"R@{k}": eval_metrics.get(f"msda_recall@{k}", 0.0)
+            "mcdisp_align_recall": {f"R@{k}": eval_metrics.get(f"mcdisp_align_recall@{k}", 0.0)
                             for k in cfg.recall_k_values},
             "cos_recall": {f"R@{k}": eval_metrics.get(f"cos_recall@{k}", 0.0)
                            for k in cfg.recall_k_values},
         }
-        log.info(f"{prefix}Final MSDA R@1/5/10: "
-                 f"{eval_metrics.get('msda_recall@1', 0):.3f}/"
-                 f"{eval_metrics.get('msda_recall@5', 0):.3f}/"
-                 f"{eval_metrics.get('msda_recall@10', 0):.3f}")
+        log.info(f"{prefix}Final MCDisp_Align R@1/5/10: "
+                 f"{eval_metrics.get('mcdisp_align_recall@1', 0):.3f}/"
+                 f"{eval_metrics.get('mcdisp_align_recall@5', 0):.3f}/"
+                 f"{eval_metrics.get('mcdisp_align_recall@10', 0):.3f}")
 
     log.info(f"{prefix}Training completed!")
     return results

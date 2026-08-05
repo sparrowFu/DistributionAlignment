@@ -1,13 +1,13 @@
 """One-off diagnostic: why is training-log R@1 ~0.004 while val NCE -> 0.75?
 
-Loads checkpoints/dist_align_best.pt and measures, on a fixed val subset:
+Loads checkpoints/mcdisp_align_best.pt and measures, on a fixed val subset:
   - raw CLIP feature R@1 (sanity baseline — should be ~0.3+ if data/pipeline OK)
-  - dist_align mu R@1 under THREE scorers: cosine, uncertainty-calibrated, loglik
+  - mcdisp_align mu R@1 under THREE scorers: cosine, uncertainty-calibrated, loglik
   - positive-vs-negative similarity gap (what recall actually needs)
   - feature norms + sigma^2 (collapse / scale checks)
 
 Run:
-  python scripts/diagnostics/diagnose_dist_align.py --num-samples 2000
+  python scripts/diagnostics/diagnose_mcdisp_align.py --num-samples 2000
 """
 import argparse, sys
 from pathlib import Path
@@ -19,8 +19,8 @@ from torch.utils.data import DataLoader, Subset
 
 import config
 from data.caption_dataset import ImageCaptionDataset, filter_none_collate
-from models.dist_align_model import DistributionAlignmentModel
-from utils.retrieval import compute_recall_chunked, compute_recall_msda_chunked
+from models.mcdisp_align_model import MCDispAlignModel
+from utils.retrieval import compute_recall_chunked, compute_recall_mcdisp_align_chunked
 
 
 @torch.no_grad()
@@ -64,15 +64,15 @@ def extract(model, loader, device, num_samples):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--checkpoint", default="checkpoints/dist_align_best.pt")
+    ap.add_argument("--checkpoint", default="checkpoints/mcdisp_align_best.pt")
     ap.add_argument("--num-samples", type=int, default=2000)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
 
-    model = DistributionAlignmentModel(
-        freeze_clip=config.DIST_ALIGN_FREEZE_CLIP,
-        distribution_merging=config.DIST_ALIGN_DISTRIBUTION_MERGING,
-        cov_rank=config.MSDA_COV_RANK,
+    model = MCDispAlignModel(
+        freeze_clip=config.MCDISP_ALIGN_FREEZE_CLIP,
+        distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
+        cov_rank=config.MCDISP_ALIGN_COV_RANK,
     )
     model.load(args.checkpoint)
     model = model.to(args.device)
@@ -112,7 +112,7 @@ def main():
         return pos, neg.item()
 
     print("\n===== POS vs NEG COSINE GAP (what recall needs) =====")
-    for name, a, b in [("dist_align mu", img_mu, text_mu),
+    for name, a, b in [("mcdisp_align mu", img_mu, text_mu),
                        ("raw CLIP feat", img_feat, text_feat)]:
         pos, neg = pos_neg_gap(a, b)
         print(f"  {name:16s}: pos={pos:.3f}  neg={neg:.3f}  gap={pos-neg:+.3f}")
@@ -120,11 +120,11 @@ def main():
     K = [1, 5, 10]
     print("\n===== RETRIEVAL R@1/5/10 =====")
     r_cos = compute_recall_chunked(img_mu, text_mu, K, normalize=True)
-    print(f"  dist_align COSINE   : {[round(r_cos[k],3) for k in K]}   <- mean-only retrieval mode")
-    r_msda = compute_recall_msda_chunked(img_mu, img_lv, text_mu, text_lv, K, tau=config.MSDA_TAU)
-    print(f"  dist_align MSDA     : mean={[round(r_msda[f'msda_recall@{k}'],3) for k in K]}  "
-          f"i2t={[round(r_msda[f'msda_recall_i2t@{k}'],3) for k in K]}  "
-          f"t2i={[round(r_msda[f'msda_recall_t2i@{k}'],3) for k in K]}  <- L_set objective")
+    print(f"  mcdisp_align COSINE   : {[round(r_cos[k],3) for k in K]}   <- mean-only retrieval mode")
+    r_mcdisp_align = compute_recall_mcdisp_align_chunked(img_mu, img_lv, text_mu, text_lv, K, tau=config.MCDISP_ALIGN_TAU)
+    print(f"  mcdisp_align MCDisp_Align     : mean={[round(r_mcdisp_align[f'mcdisp_align_recall@{k}'],3) for k in K]}  "
+          f"i2t={[round(r_mcdisp_align[f'mcdisp_align_recall_i2t@{k}'],3) for k in K]}  "
+          f"t2i={[round(r_mcdisp_align[f'mcdisp_align_recall_t2i@{k}'],3) for k in K]}  <- L_set objective")
     r_clip = compute_recall_chunked(img_feat, text_feat, K, normalize=True)
     print(f"  raw CLIP COSINE     : {[round(r_clip[k],3) for k in K]}   <- sanity baseline")
 
