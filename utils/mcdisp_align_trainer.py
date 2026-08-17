@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional
 
+import math
+
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
@@ -17,6 +19,7 @@ from utils.dataset_factory import build_train_dataset
 from utils.eval_common import build_eval_dataloader
 from utils.lr_scheduler import apply_lr_for_epoch
 from utils.retrieval import (
+    compute_multicaption_recall,
     compute_recall_bidirectional,
     compute_recall_mcdisp_align_chunked,
 )
@@ -214,6 +217,8 @@ def train_epoch(
     )}
     floor_ratio_sum = 0.0
     floor_severe = 0
+    clip_steps = 0
+    nonfinite_steps = 0
     processed_batches = 0
 
     desc = f"{desc_prefix}Epoch {epoch + 1}" if desc_prefix else f"Epoch {epoch + 1}"
@@ -255,6 +260,13 @@ def train_epoch(
             outputs['text_mus'], outputs['text_logvars'], outputs.get('text_Us'),
         )
 
+        if not torch.isfinite(loss):
+            # Plan §8.1: count non-finite loss/grad steps; skip the update.
+            nonfinite_steps += 1
+            optimizer.zero_grad()
+            logger.warning(f"Non-finite loss at batch {batch_idx}; step skipped.")
+            continue
+
         optimizer.zero_grad()
         loss.backward()
         # Per-head grad norms BEFORE clip (who dominates at stage transitions?)
@@ -265,6 +277,8 @@ def train_epoch(
         optimizer.step()
         grad_before = float(total_norm)
         grad_after = min(grad_before, config.MCDISP_ALIGN_GRAD_CLIP_NORM)
+        if math.isfinite(grad_before) and grad_before > config.MCDISP_ALIGN_GRAD_CLIP_NORM:
+            clip_steps += 1
 
         # Accumulate losses
         for k in totals:
@@ -301,6 +315,9 @@ def train_epoch(
     metrics.update({k: v / num_batches for k, v in grad_accum.items()})
     metrics["floor_ratio"] = floor_ratio_sum / num_batches
     metrics["floor_severe"] = floor_severe
+    # Plan §8.1/§12.5 stability accounting.
+    metrics["clip_step_ratio"] = clip_steps / num_batches
+    metrics["nonfinite_steps"] = nonfinite_steps
     return metrics
 
 
@@ -312,8 +329,16 @@ def evaluate(
     device: torch.device,
     compute_recall: bool = False,
     recall_k_values=None,
+    multicaption: bool = False,
 ) -> Dict[str, float]:
-    """Evaluate the model (loss + optional retrieval Recall@K)."""
+    """Evaluate the model (loss + optional retrieval Recall@K).
+
+    ``multicaption=True`` additionally computes the standard multi-caption
+    protocol (N images vs N*K captions, any-hit I2T / per-caption T2I, plan
+    §3.3) and its mR (mean of the 6 recall values, plan §6.1). This is the
+    ablation study's checkpoint-selection metric (``select_by="mr"``); the
+    merged-center recall stays available as a diagnostic.
+    """
     model.eval()
 
     totals = {k: 0.0 for k in
@@ -321,6 +346,8 @@ def evaluate(
     processed_batches = 0
     feats = {k: [] for k in ("img_mu", "text_mu", "img_logvar", "text_logvar")} \
         if compute_recall else None
+    cap_feats = {k: [] for k in ("text_mus", "text_logvars")} \
+        if (compute_recall and multicaption) else None
 
     pbar = tqdm(dataloader, desc="Evaluating")
 
@@ -358,6 +385,9 @@ def evaluate(
             feats["text_mu"].append(outputs['text_mu'].cpu())
             feats["img_logvar"].append(outputs['img_logvar'].cpu())
             feats["text_logvar"].append(outputs['text_logvar'].cpu())
+        if cap_feats is not None:
+            cap_feats["text_mus"].append(outputs['text_mus'].cpu())
+            cap_feats["text_logvars"].append(outputs['text_logvars'].cpu())
 
         pbar.set_postfix({'loss': f"{loss_dict['total']:.4f}"})
 
@@ -381,6 +411,16 @@ def evaluate(
         for k in recall_k_values:
             metrics[f"cos_recall@{k}"] = (cos[f"recall_i2t@{k}"] + cos[f"recall_t2i@{k}"]) / 2
 
+        # Standard multi-caption protocol (plan §3.3) + mR (plan §6.1).
+        if cap_feats is not None and cap_feats["text_mus"]:
+            text_mus = torch.cat(cap_feats["text_mus"], dim=0).to(device)
+            text_lvs = torch.cat(cap_feats["text_logvars"], dim=0).to(device)
+            mc = compute_multicaption_recall(
+                img_mu, img_lv, text_mus, text_lvs, recall_k_values, tau=criterion.tau)
+            for k in recall_k_values:
+                metrics[f"mc_recall@{k}"] = mc[f"mc_recall@{k}"]
+            metrics["mr"] = sum(mc[f"mc_recall@{k}"] for k in recall_k_values) / len(recall_k_values)
+
     return metrics
 
 
@@ -399,6 +439,15 @@ class MCDispAlignTrainConfig:
     num_captions_override: Optional[int] = None   # ablation k1/k3/k5; None -> dataset default
     captions_path: Optional[str] = None           # coco override
     images_dir: Optional[str] = None              # coco override
+
+    # --- Manifest-backed data (ablation study, plan §3.1/§3.2) ---
+    # When both are set, train/dev loaders come from the image-exclusive audit
+    # manifests instead of the registry + random_split path (legacy default).
+    train_manifest: Optional[Path] = None
+    dev_manifest: Optional[Path] = None
+    manifest_num_captions: int = 5          # training K (random-sampled when mode="random")
+    manifest_sample_mode: str = "first"     # "first" | "random" (K=1/K=3 regimes)
+    dev_num_captions: int = 5               # uniform dev protocol for checkpoint selection
 
     # --- Training ---
     epochs: int = field(default_factory=lambda: config.MCDISP_ALIGN_EPOCHS)
@@ -467,7 +516,37 @@ class MCDispAlignTrainConfig:
 
 
 def _build_loaders(cfg: MCDispAlignTrainConfig):
-    """Build train/val DataLoaders from the registry-selected training dataset."""
+    """Build train/val DataLoaders.
+
+    Manifest path (ablation study): image-exclusive audit manifests, no caption
+    repeat-padding; the dev loader is deterministic (first-K) with a UNIFORM
+    K for every config so checkpoint selection is comparable across variants
+    (plan §8: 不使用不同组成的 validation 指标).
+    """
+    if cfg.train_manifest is not None and cfg.dev_manifest is not None:
+        from data.manifest_caption_dataset import ManifestCaptionDataset
+
+        train_ds = ManifestCaptionDataset(
+            cfg.train_manifest, config.IMAGES_DIR,
+            num_captions=cfg.manifest_num_captions,
+            sample_mode=cfg.manifest_sample_mode,
+        )
+        dev_ds = ManifestCaptionDataset(
+            cfg.dev_manifest, config.IMAGES_DIR,
+            num_captions=cfg.dev_num_captions,
+            sample_mode="first",
+        )
+        train_loader = DataLoader(
+            train_ds, batch_size=cfg.batch_size, shuffle=True,
+            num_workers=cfg.num_workers, collate_fn=filter_none_collate,
+        )
+        val_loader = DataLoader(
+            dev_ds, batch_size=cfg.batch_size, shuffle=False,
+            num_workers=cfg.num_workers, collate_fn=filter_none_collate,
+        )
+        return train_loader, val_loader, len(train_ds), len(dev_ds)
+
+    # Legacy registry path (random_split of the full training pool).
     full_dataset = build_train_dataset(
         dataset=cfg.dataset,
         num_captions=cfg.num_captions_override,
@@ -608,8 +687,9 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             )
             val_metrics = evaluate(
                 model, val_loader, criterion, cfg.device,
-                compute_recall=(cfg.select_by == "recall"),
+                compute_recall=(cfg.select_by in ("recall", "mr")),
                 recall_k_values=list(cfg.recall_k_values),
+                multicaption=(cfg.select_by == "mr"),
             )
 
             log.info(
@@ -624,6 +704,7 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
                 f"σ²img: {val_metrics['img_var_avg']:.4f}, "
                 f"MCDisp_Align R@1/5/10: {val_metrics.get('mcdisp_align_recall@1', 0):.3f}/"
                 f"{val_metrics.get('mcdisp_align_recall@5', 0):.3f}/{val_metrics.get('mcdisp_align_recall@10', 0):.3f}, "
+                f"mR(mc): {val_metrics.get('mr', 0):.3f}, "
                 f"Cos R@1/5/10: {val_metrics.get('cos_recall@1', 0):.3f}/"
                 f"{val_metrics.get('cos_recall@5', 0):.3f}/{val_metrics.get('cos_recall@10', 0):.3f}"
             )
@@ -659,6 +740,12 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             # Best-checkpoint selection
             if cfg.select_by == "recall" and "mcdisp_align_recall@1" in val_metrics:
                 current_score = val_metrics["mcdisp_align_recall@1"]
+                improved = current_score > best_recall
+                if improved:
+                    best_recall = current_score
+            elif cfg.select_by == "mr" and "mr" in val_metrics:
+                # Ablation study: unified multi-caption development mR (plan §8).
+                current_score = val_metrics["mr"]
                 improved = current_score > best_recall
                 if improved:
                     best_recall = current_score
