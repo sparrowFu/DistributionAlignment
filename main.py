@@ -1,13 +1,8 @@
 """
-GaussianImageDistribution - Main Entry Point
+Main Entry Point
 
 This script provides a unified entry point for all tasks in the project.
 It supports running training and evaluation scripts with a consistent interface.
-
-Usage:
-    python main.py --task train_mcdisp_align
-    python main.py --task eval_mcdisp_align
-    python main.py --task run_ablation --config all
 """
 
 import argparse
@@ -22,14 +17,13 @@ from utils.seed import set_seed
 from utils.cpu_affinity import apply_cpu_affinity
 
 
-# Setup logger
 logger = get_logger("main", config.MAIN_LOG_PATH)
 
 
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="GaussianImageDistribution - Main Entry Point",
+        description="Main Entry Point",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Available tasks:
@@ -241,27 +235,27 @@ def run_python_script(script_path: Path, args: argparse.Namespace) -> int:
         return 1
 
 
-# Task to script mapping. 每行尾部注释是该 task 的样例调用(仅含脚本确实支持的参数)。
+# Task name -> script file mapping.
 TASK_SCRIPTS = {
     # Stage 1: Alignment training (Ours + B2-B4)
-    "train_clip_baseline":   "train_clip_baseline.py",        # python main.py --task train_clip_baseline
-    "eval_clip_baseline":    "evaluate_clip_baseline.py",     # python main.py --task eval_clip_baseline --num-samples 5000
-    "train_mcdisp_align":      "train_mcdisp_align.py",           # python main.py --task train_mcdisp_align
-    "eval_mcdisp_align":       "evaluate_mcdisp_align.py",        # python main.py --task eval_mcdisp_align --num-samples 5000
-    "train_prolip":          "train_prolip.py",               # python main.py --task train_prolip
-    "eval_prolip":           "evaluate_prolip.py",            # python main.py --task eval_prolip --num-samples 5000
-    "eval_prolip_zero_shot": "evaluate_prolip_zero_shot.py",  # python main.py --task eval_prolip_zero_shot --num-samples 5000
+    "train_clip_baseline":   "train_clip_baseline.py",
+    "eval_clip_baseline":    "evaluate_clip_baseline.py",
+    "train_mcdisp_align":      "train_mcdisp_align.py",
+    "eval_mcdisp_align":       "evaluate_mcdisp_align.py",
+    "train_prolip":          "train_prolip.py",
+    "eval_prolip":           "evaluate_prolip.py",
+    "eval_prolip_zero_shot": "evaluate_prolip_zero_shot.py",
     # Stage 1: Zero-shot
-    "eval_clip_zero_shot":   "evaluate_clip_zero_shot.py",    # python main.py --task eval_clip_zero_shot --num-samples 5000
+    "eval_clip_zero_shot":   "evaluate_clip_zero_shot.py",
     # Stage 2: VQA-as-retrieval downstream (gemma caption)
-    "build_vqa_expansions":  "build_vqa_expansions.py",       # python main.py --task build_vqa_expansions --split test --limit 0 --no-batch
-    "eval_vqa_retrieval":    "eval_vqa_retrieval.py",         # python main.py --task eval_vqa_retrieval --model mcdisp_align  (或 --model all)
+    "build_vqa_expansions":  "build_vqa_expansions.py",
+    "eval_vqa_retrieval":    "eval_vqa_retrieval.py",
     # Experiments
-    "eval_ood":              "eval_ood.py",                   # python main.py --task eval_ood
-    "run_ablation":          "run_ablation.py",               # python main.py --task run_ablation --config all
-    "eval_sigma_analysis":   "eval_sigma_analysis.py",        # python main.py --task eval_sigma_analysis --num-samples 5000
-    "visualize_gap":         "visualize_modality_gap.py",     # python main.py --task visualize_gap --model-type mcdisp_align
-    "eval_flickr30k":        "eval_flickr30k.py",             # python main.py --task eval_flickr30k --model-type mcdisp_align
+    "eval_ood":              "eval_ood.py",
+    "run_ablation":          "run_ablation.py",
+    "eval_sigma_analysis":   "eval_sigma_analysis.py",
+    "visualize_gap":         "visualize_modality_gap.py",
+    "eval_flickr30k":        "eval_flickr30k.py",
 }
 
 
@@ -276,7 +270,7 @@ def main():
     config.ensure_project_dirs()
 
     logger.info("=" * 60)
-    logger.info("GaussianImageDistribution")
+    logger.info("DistributionAlignment")
     logger.info(f"Task: {args.task}")
     logger.info("=" * 60)
 

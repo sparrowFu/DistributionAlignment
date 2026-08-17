@@ -1,10 +1,4 @@
-"""
-Tests for utils/vqa_retrieval_metrics.py
-非对角、支持 1-to-many 的 Recall@K,以及排除自身的 answer-match@K。
-
-Runnable without pytest:
-    python tests/test_vqa_retrieval_metrics.py
-"""
+"""Tests for non-diagonal 1-to-many Recall@K and self-excluding answer-match@K."""
 
 import sys
 from pathlib import Path

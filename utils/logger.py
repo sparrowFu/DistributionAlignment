@@ -1,5 +1,5 @@
 """
-GaussianImageDistribution - Unified Logging System
+Unified Logging System
 
 This module provides a centralized logging system that outputs to both
 console and log files with detailed formatting including timestamp,
@@ -124,7 +124,6 @@ def log_exception(logger: logging.Logger, exc: Exception, context: str = "") -> 
 
 
 if __name__ == "__main__":
-    # Test logger
     from pathlib import Path
     test_log = Path("test.log")
 
@@ -139,7 +138,6 @@ if __name__ == "__main__":
     logger.warning("This is a warning message")
     logger.error("This is an error message")
 
-    # Test exception logging
     try:
         1 / 0
     except Exception as e:

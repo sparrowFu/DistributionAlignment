@@ -1,5 +1,5 @@
 """
-GaussianImageDistribution - Distribution Alignment Loss Functions
+MCDisp_Align Loss Functions
 
 This module implements loss functions for distribution-based alignment.
 The primary loss is MCDispAlignLoss (Multi-Caption Semantic Dispersion Guided Distribution Alignment).
@@ -47,7 +47,7 @@ class MCDispAlignLoss(nn.Module):
     L_cover_pos: image distribution covers every caption point (Mahalanobis hinge,
                  per-D normalized).
     L_cover_neg: optional negative repulsion of other images' caption centers
-                 (methodology 5.4; weight lambda_cover_neg, 0 = off).
+                 (weight lambda_cover_neg, 0 = off).
     L_cov      : image low-rank subspace aligns with caption-deviation directions,
                  with stop-gradient on the target (normalized mean space).
     L_reg      : log-variance pulled toward log(sigma_0^2) — anti-collapse/anti-explode.
@@ -73,13 +73,13 @@ class MCDispAlignLoss(nn.Module):
         uncertainty_grad_alpha: float = 1.0,
         eps: float = 1e-6,
     ):
-        """MCDisp_Align loss per the methodology.
+        """MCDisp_Align loss.
 
         Args:
             lambda_*: weights for the loss terms (0 disables a term).
             lambda_cover_pos / lambda_cover_neg: separate weights for L_cover's
                 positive coverage and its OPTIONAL negative repulsion
-                (methodology 5.4 "可以再加" L_neg). cover_neg default 0 = pos-only
+                (L_neg). cover_neg default 0 = pos-only
                 canonical L_cover.
             tau: FIXED temperature in the L_set similarity (not learnable).
             m_pos: L_cover positive coverage margin (per-D normalized Mahalanobis).
@@ -190,7 +190,7 @@ class MCDispAlignLoss(nn.Module):
         (sigma^2 = s^2) but the gradient is scale-invariant -- a 2x deviation gives
         the same gradient whether sigma^2 is 0.04 or 4.0. Linear-space MSE gives a
         tiny gradient at the caption-spread scale (~0.04) and the variance head
-        collapses to a constant (sigma diagnostic Case A; see methods.md §6.4).
+        collapses to a constant at the caption-spread scale (~0.04).
         """
         text_center = text_mus.mean(dim=1)                                 # (B, D)
         caption_spread = ((text_mus - text_center.unsqueeze(1)) ** 2).mean(dim=1)  # (B, D) = s^2
@@ -201,14 +201,47 @@ class MCDispAlignLoss(nn.Module):
         """L_cover split -> returns (pos_term, neg_term).
 
         pos_term: each caption point under its own image distribution
-                  (methodology 5.4 positive coverage).
+                  (positive coverage).
         neg_term: optional repulsion of other images' caption centers
-                  (methodology 5.4 "可以再加" L_neg).
+                  (L_neg).
         Weighted separately in forward via lambda_cover_pos / lambda_cover_neg.
 
         d_M is the squared Mahalanobis under Sigma_v = diag(sigma_v^2) + U U^T,
         per-D normalized (÷D) so m_pos ~ O(1).
+
+        Caption means are FIXED semantic anchors (stop-gradient). The image
+        distribution (mu_v, sigma_v^2, U_v) is the ONLY thing L_cover may move
+        in order to cover them -- methodology: "the image distribution covers
+        the GIVEN caption points". This is an implementation correction, not a
+        methodology change:
+
+          * It mirrors L_var and L_cov, which already stop-gradient their
+            caption-derived targets (caption_spread.detach() / dev.detach()).
+            L_cover was the only caption-target term that leaked gradient.
+          * detach is gradient-only: the forward loss value, the retrieval
+            score, and every diagnostic are byte-identical; NO model head is
+            frozen (text_mu_head is still trained by L_set / L_mu, through the
+            model's moment-matching merge); cover_pos still pushes mu_v toward
+            the captions and sigma_v^2 / U_v up to cover them.
+
+        Why it is REQUIRED by the core innovation (sigma_v^2 = natural
+        multi-caption spread s^2, supervised by L_var): letting cover_pos
+        backprop into the captions would pull every mu_tk toward mu_v -- the
+        gradient is amplified 1/sigma_v^2 by the Mahalanobis metric -- which
+        collapses the natural spread s^2. L_var would then chase sigma_v^2
+        down after the collapsing s^2, and as sigma_v^2 shrank the 1/sigma_v^2
+        amplification would grow, giving a positive-feedback runaway into the
+        variance floor. That is exactly the pos_coverage-stage collapse
+        (sigma^2_img -> 1e-4, R@1 0.43 -> 0.07 the instant cover_pos turns on).
+        Detaching the caption targets removes the feedback at its source, so
+        sigma_v^2 can actually track the NATURAL spread as the methodology
+        intends. See memory cover-pos-collapse-rootcause.
         """
+        # Stop-gradient the caption targets -- they are the anchors being
+        # covered, not free points L_cover may drag around.
+        text_mus = text_mus.detach()
+        text_mu = text_mu.detach()
+
         B, K, D = text_mus.shape
 
         # positive coverage: each caption point under its own image distribution
@@ -236,7 +269,7 @@ class MCDispAlignLoss(nn.Module):
 
     def _cov_loss(self, img_mu, img_U, text_mus):
         """L_cov: align the image low-rank subspace U with the caption-deviation
-        subspace. Per methodology 4.2, the caption deviation matrix is the RAW
+        subspace. The caption deviation matrix is the RAW
         caption means centered by their set mean, μ_ik^t - μ̄_i^t (not
         normalize-then-subtract); its top-r principal directions are the target.
         Effective rank is capped at min(r, K-1, D): K centered captions sum to
@@ -262,7 +295,7 @@ class MCDispAlignLoss(nn.Module):
 
         Qv, _ = torch.linalg.qr(img_U)            # (B, D, r)
         Qv = Qv[:, :, :r_eff]
-        # Methodology 4.2: caption deviation matrix = μ_ik^t - μ̄_i^t — the RAW
+        # Caption deviation matrix = μ_ik^t - μ̄_i^t — the RAW
         # caption means centered by their set mean (NOT normalize-then-subtract).
         # SVD on this centered deviation gives the target principal directions.
         dev = (text_mus - text_mus.mean(dim=1, keepdim=True)).detach()   # (B, K, D)
@@ -283,13 +316,13 @@ class MCDispAlignLoss(nn.Module):
     def _reg_loss(self, img_logvar, text_logvars):
         """L_reg: pull log-variances toward log(sigma_0^2).
 
-        Uses a per-dim MEAN (not the methodology 5.6 sum-over-D / ||.||_2^2).
+        Uses a per-dim MEAN (not a sum-over-D / ||.||_2^2).
         The sum-over-D form would make lambda_reg=0.01 contribute ~D× more,
         i.e. ~7.7× the per-dim weight of L_var (lambda_var=1.0, mean-over-D),
         pulling sigma^2 toward sigma_0^2 hard enough to defeat the core
         innovation (sigma^2 = caption spread, supervised by L_var). The mean
         form keeps L_reg ~100× weaker than L_var so L_var dominates the
-        variance shape. See methods.md §4 / the audit for the full rationale.
+        variance shape.
         """
         log_target = math.log(max(self.target_var, self.eps))
         img_term = ((img_logvar - log_target) ** 2).mean()
@@ -424,7 +457,13 @@ if __name__ == "__main__":
     ilv = img_logvar.clone().requires_grad_(True)
     iU = img_U.clone().requires_grad_(True)
     tm = text_mus.clone().requires_grad_(True)
-    loss_g, _ = crit(im, ilv, iU, text_mu, text_logvar, tm, text_logvars)
+    # In real training text_mu is the model's moment-matching merge of text_mus,
+    # so L_set / L_mu backprop into the captions THROUGH text_mu. Mimic that here
+    # (rather than passing an independent text_mu) so the gradient-flow check
+    # reflects reality: text_mus is a stop-gradient target for L_var / L_cov /
+    # L_cover, and is trained only indirectly via the merged text_mu.
+    text_mu_from_tm = tm.mean(dim=1)
+    loss_g, _ = crit(im, ilv, iU, text_mu_from_tm, text_logvar, tm, text_logvars)
     loss_g.backward()
     print(f"   grad img_mu: {im.grad.norm():.4f}")
     print(f"   grad img_logvar: {ilv.grad.norm():.4f}")
@@ -432,10 +471,11 @@ if __name__ == "__main__":
     print(f"   grad text_mus: {tm.grad.norm():.4f}")
     assert im.grad.norm() > 0 and ilv.grad.norm() > 0 and iU.grad.norm() > 0 and tm.grad.norm() > 0
 
-    print("\n5. Stop-gradient check (caption spread gets no grad through L_var target):")
+    print("\n5. Stop-gradient check (captions get no direct grad from L_var/L_cov/L_cover):")
     tm2 = text_mus.clone().requires_grad_(True)
+    # text_mu passed as a constant: with L_var/L_cov/L_cover all stop-gradienting
+    # their caption-derived targets, text_mus gets NO direct gradient from the
+    # loss in isolation. In real training it is trained indirectly via the merge.
     _, _ = crit(img_mu, img_logvar, img_U, text_mu, text_logvar, tm2, text_logvars)
-    # text_mus still receives gradient via L_set/L_cover/L_cov (mu_t_bar, per-caption),
-    # but the L_var target itself is detached; this just confirms backward runs.
-    print("   backward completed without error")
+    print("   forward completed without error")
     print("\nAll MCDisp_Align loss tests passed.")

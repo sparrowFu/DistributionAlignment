@@ -1,14 +1,14 @@
 """
-GaussianImageDistribution - Dataset registry.
+Dataset registry.
 
 Single source of truth for the ``--dataset`` tag. Train/eval data selection,
 checkpoint naming, and argparse choices all read from here, so adding a dataset
 is a one-place change:
 
-  1. add its path constants to ``config.py`` (real on-disk paths);
-  2. add one entry to ``DATASETS`` below (and, only if it has a brand-new file
-     format, a loader ``Dataset`` class + a matching ``train_kind``/``eval_kind``
-     branch in ``utils.dataset_factory`` / ``utils.eval_common``).
+  1. add its path constants;
+  2. add one entry to ``DATASETS`` below;
+  3. add a loader ``Dataset`` class + a matching ``train_kind``/``eval_kind``
+     branch only if it has a brand-new file format.
 
 Real on-disk paths (verified):
   coco   -> TrainDatasets/mscoco_captions/{captions/*.parquet, images}
@@ -28,11 +28,9 @@ class DatasetSpec:
 
     Attributes:
         num_captions: default captions per image for this dataset.
-        train_kind: factory key consumed by
-            :func:`utils.dataset_factory.build_train_dataset`
+        train_kind: factory key for the training-data branch
             (``"image_caption"`` | ``"flickr_train"``).
-        eval_kind: factory key consumed by
-            :func:`utils.eval_common.build_eval_dataloader`
+        eval_kind: factory key for the eval-data branch
             (``"image_caption"`` | ``"flickr_test"``).
         accepts_path_overrides: whether ``--captions-path`` / ``--images-dir``
             apply (coco yes; flickr uses fixed ``config.FLICKR30K_*`` paths).
@@ -62,8 +60,7 @@ DATASETS = {
     ),
 }
 
-# The canonical, ordered list of supported dataset tags. argparse ``choices``
-# and main.py derive from this so a new DATASETS entry is picked up everywhere.
+# Canonical, ordered list of supported dataset tags; argparse choices derive from this.
 VALID_DATASETS = tuple(DATASETS.keys())
 
 

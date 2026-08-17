@@ -1,8 +1,4 @@
-"""Tests for utils/distribution_score.image_text_loglik_matrix.
-
-Runnable without pytest:
-    python tests/test_distribution_score.py
-"""
+"""Tests for the image-text log-likelihood matrix scorer."""
 import sys
 from pathlib import Path
 

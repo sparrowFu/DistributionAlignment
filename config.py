@@ -1,19 +1,4 @@
-"""
-GaussianImageDistribution - Configuration Module
-
-This module centralizes all paths and hyperparameters for the project.
-It supports cross-platform usage (Windows/Ubuntu) by using pathlib.Path.
-
-To migrate between systems:
-1. Modify PROJECT_ROOT to point to the project root on the new system
-2. All other paths will adjust automatically
-
-Windows default:
-    PROJECT_ROOT = D:/code/causality/GaussianImageDistribution
-
-Ubuntu default:
-    PROJECT_ROOT = /home/your_name/code/causality/GaussianImageDistribution
-"""
+"""Centralized configuration: project paths and hyperparameters."""
 
 import platform
 from pathlib import Path
@@ -112,7 +97,7 @@ SEED = 42
 # =============================================================================
 # Learning-Rate Scheduling (shared across all training scripts)
 # =============================================================================
-# Cosine annealing with linear warmup, applied per-epoch. See utils/lr_scheduler.py.
+# Cosine annealing with linear warmup, applied per-epoch.
 # LR_SCHEDULER: "cosine" (default) or "none" for a constant LR (legacy behavior).
 # LR_WARMUP_EPOCHS: linear warmup length (0 disables warmup, pure cosine).
 # LR_MIN_LR_RATIO: cosine floor as a fraction of the base LR (e.g. 5e-5 -> 1e-6).
@@ -181,7 +166,7 @@ EVAL_BATCH_SIZE = 64
 
 
 # =============================================================================
-# Distribution Alignment Model Configuration
+# MCDisp_Align Model Configuration
 # =============================================================================
 # Training log for distribution alignment model
 TRAIN_MCDISP_ALIGN_LOG_PATH = LOG_DIR / "train_mcdisp_align.log"
@@ -196,7 +181,7 @@ MCDISP_ALIGN_LAST_CKPT = CHECKPOINT_DIR / "mcdisp_align_coco_last.pt"
 # Evaluation results path
 MCDISP_ALIGN_EVAL_RESULTS_PATH = OUTPUT_DIR / "mcdisp_align_eval_results.json"
 
-# I2T per-caption pair-count metric (separate file; see compute_i2t_caption_pair_counts)
+# I2T per-caption pair-count metric (separate file)
 MCDISP_ALIGN_I2T_PAIR_COUNTS_PATH = OUTPUT_DIR / "mcdisp_align_i2t_pair_counts.json"
 
 # Training hyperparameters
@@ -215,7 +200,7 @@ MCDISP_ALIGN_DISTRIBUTION_MERGING = "moment_matching"  # Method: "moment_matchin
 # =============================================================================
 # MCDisp_Align: Multi-Caption Semantic Dispersion Guided Distribution Alignment
 # =============================================================================
-# Per the methodology (docs/方法论设计.html / spec 2026-07-20-msda-redesign):
+# Method overview:
 # image and text are modeled as Gaussians. The image uses a general covariance
 # Sigma_v = diag(sigma_v^2) + U_v U_v^T (U_v in R^{D x r}); text is diagonal-only
 # (v1). The image variance is supervised toward the multi-caption semantic spread,
@@ -230,22 +215,20 @@ MCDISP_ALIGN_TAU = 0.07                   # FIXED temperature in the L_set simil
 MCDISP_ALIGN_LAMBDA_CTR = 1.0             # weight for the set contrastive loss L_set
 MCDISP_ALIGN_LAMBDA_MU = 0.5              # weight for the mean-center alignment loss L_mu
 MCDISP_ALIGN_LAMBDA_VAR = 1.0             # weight for the variance semantic consistency loss L_var (core)
-MCDISP_ALIGN_LAMBDA_COVER_POS = 0.5       # weight for L_cover positive coverage (methodology 5.4 canonical)
-MCDISP_ALIGN_LAMBDA_COVER_NEG = 0.0       # weight for L_cover OPTIONAL negative repulsion (5.4 "可以再加"; 0 = off; sweep 0.05/0.1/0.25/0.5 once stable)
+MCDISP_ALIGN_LAMBDA_COVER_POS = 0.5       # weight for L_cover positive coverage
+MCDISP_ALIGN_LAMBDA_COVER_NEG = 0.0       # weight for L_cover negative repulsion (0 = off)
 MCDISP_ALIGN_LAMBDA_COV = 0.01            # weight for L_cov -- STABILITY-RUN value (Full-cov crash risk); official target 0.2 once Full stage verified stable
 MCDISP_ALIGN_LAMBDA_REG = 0.01            # weight for the variance regularization loss L_reg
 MCDISP_ALIGN_M_POS = 1.0                  # L_cover positive coverage margin (per-D normalized Mahalanobis)
 MCDISP_ALIGN_M_NEG = 2.0                  # L_cover negative repulsion margin
-MCDISP_ALIGN_TARGET_VAR = 0.04            # L_reg variance prior sigma_0^2 -- = measured MSCOCO caption spread (was 1.0, ~26x too large; sigma diagnostic Case A)
+MCDISP_ALIGN_TARGET_VAR = 0.04            # L_reg variance prior sigma_0^2 (= measured MSCOCO caption spread)
 MCDISP_ALIGN_USE_UNCERTAINTY_SIM = True   # L_set/retrieval use the uncertainty-discounted score (False = plain cosine)
 MCDISP_ALIGN_VAR_FLOOR = 1e-4             # numerical floor on sigma^2 (softplus positivity + div-by-zero guard; NOT a semantic floor -- the range is learned via L_var / L_reg)
 MCDISP_ALIGN_VAR_FLOOR_NEAR_MULT = 10     # variance floor-collapse monitor: a dim is "near floor" if sigma^2 < MCDISP_ALIGN_VAR_FLOOR_NEAR_MULT * MCDISP_ALIGN_VAR_FLOOR
 MCDISP_ALIGN_VAR_FLOOR_RATIO_WARN = 0.5   # warn when >this fraction of dims are near-floor AND mean sigma^2 < 2*MCDISP_ALIGN_VAR_FLOOR
 MCDISP_ALIGN_COV_EPS = 1e-6               # numerical epsilon for Mahalanobis / log
 MCDISP_ALIGN_GRAD_CLIP_NORM = 1.0         # global grad-norm clip (clip_grad_norm_) -- guards against L_cov / cover spikes destabilizing the retrieval means
-# Deprecated likelihood-rewrite knobs (kept ONLY for deferred loglik evals in
-# eval_flickr30k.py / eval_vqa_retrieval.py, which still use distribution_score).
-# The MCDisp_Align training/loss path no longer reads these.
+# Deprecated likelihood-rewrite knobs (no longer used by the training/loss path).
 MCDISP_ALIGN_USE_LOGDET = True            # deprecated: loglik-eval only
 MCDISP_ALIGN_PER_DIM_NORMALIZE = True     # deprecated: loglik-eval only
 
@@ -258,11 +241,7 @@ MCDISP_ALIGN_STAGE_FULL_FRAC = 0.2        # + L_cov (ramped 0 -> 1)
 # =============================================================================
 # VQA-as-Retrieval Dataset Paths
 # =============================================================================
-# Anchor path for the MSCOCO VQA splits. build_vqa_expansions.py derives each
-# split's files (questions / img_filenames / types / answers, plus the _filtered
-# test variants) from this directory via its _SPLIT_FILES table, and
-# eval_vqa_retrieval.py reads the generated caption expansions -- so only the
-# anchor and the shared image directory are needed here.
+# Anchor path for the MSCOCO VQA questions split.
 VQA_TRAIN_QUESTIONS = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "train" / "questions.txt"
 
 # VQA images share the same directory as MSCOCO captions
@@ -314,7 +293,7 @@ LLM_LOCAL_TRUST_REMOTE_CODE = False  # set True for models needing custom code
 # =============================================================================
 # Baseline B3: ProLIP Configuration (real ProLIP ViT-H/14 via the `prolip` lib)
 # =============================================================================
-# Three local artifacts (no network needed). Loaded by models/prolip_model.py.
+# Three local artifacts (no network needed).
 #   model     : ProLIPHF weights (config.json + model.safetensors), embed_dim 1024
 #   processor : CLIP image processor (openai/clip-vit-base-patch16) -- correct
 #               CLIP normalization for the ViT-H/14 backbone
@@ -336,8 +315,7 @@ EVAL_PROLIP_ZERO_SHOT_LOG_PATH = LOG_DIR / "evaluate_prolip_zero_shot.log"
 # ProLIP ViT-H/14 embedding dimension (mean / log-variance head output dim)
 PROLIP_EMBED_DIM = 1024
 
-# Fine-tuning hyperparameters (full fine-tuning of the whole ProLIP model with
-# the ProLIP inclusion loss; see prolip.loss.ProLIPLoss).
+# Fine-tuning hyperparameters (full fine-tuning of the whole ProLIP model with the ProLIP inclusion loss).
 PROLIP_EPOCHS = 5
 PROLIP_BATCH_SIZE = 16          # ViT-H/14 is large; keep modest to fit GPU
 PROLIP_LR = 1e-6                # full-backbone fine-tune -> small LR
@@ -452,7 +430,7 @@ ABLATION_CONFIGS = {
         "lambda_cover": 0.5, "lambda_cover_neg": 0.0, "lambda_cov": 0.2, "lambda_reg": 0.01,
         "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
-        "description": "w/o L_cover negative repulsion (pos-only coverage, methodology 5.4 canonical)",
+        "description": "w/o L_cover negative repulsion (pos-only coverage)",
     },
 }
 
@@ -500,7 +478,7 @@ def ensure_project_dirs() -> None:
 def print_config() -> None:
     """Print current configuration for verification."""
     print("=" * 60)
-    print("GaussianImageDistribution Configuration")
+    print("DistributionAlignment Configuration")
     print("=" * 60)
     print(f"Platform: {'Windows' if IS_WINDOWS else 'Linux/Unix'}")
     print(f"Project Root: {PROJECT_ROOT}")

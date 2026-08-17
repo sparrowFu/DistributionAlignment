@@ -1,5 +1,5 @@
 """
-GaussianImageDistribution - GPU Image Preprocessing
+GPU Image Preprocessing
 
 CLIP-equivalent image preprocessing (resize + center crop + normalize) that runs
 on the GPU instead of the CPU main thread.
@@ -26,7 +26,7 @@ import torch
 import torch.nn.functional as F
 
 
-# CLIP ViT-L/14 preprocessing constants (from preprocessor_config.json)
+# CLIP ViT-L/14 preprocessing constants.
 CLIP_IMAGE_MEAN: Sequence[float] = (0.48145466, 0.4578275, 0.40821073)
 CLIP_IMAGE_STD: Sequence[float] = (0.26862954, 0.26130258, 0.27577711)
 CLIP_IMAGE_SIZE: int = 224

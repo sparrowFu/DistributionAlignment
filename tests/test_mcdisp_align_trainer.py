@@ -1,15 +1,9 @@
 """
-Tests for utils/mcdisp_align_trainer — the 5-stage MCDisp_Align schedule:
-stage_multipliers, var_ramp, alpha_schedule. (The shared trainer's other exports
-— create_optimizer / train_epoch / evaluate / run_mcdisp_align_training — need a
-real model + data, so they are covered by the end-to-end training scripts.)
+Tests for the 5-stage MCDisp_Align schedule (stage_multipliers, var_ramp, alpha_schedule). The trainer's end-to-end exports need a real model + data and are covered by the training scripts.
 
 For total=10 the 5 stages (each 2 epochs) are:
   [0,2) warmup | [2,4) var_bootstrap | [4,6) pos_coverage |
   [6,8) neg_repulsion | [8,10) full (cov ramp)
-
-Runnable without pytest:
-    python tests/test_mcdisp_align_trainer.py
 """
 
 import sys

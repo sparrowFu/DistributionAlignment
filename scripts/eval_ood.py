@@ -1,5 +1,5 @@
 """
-GaussianImageDistribution - Exp4: OOD Detection Experiment
+Exp4: OOD Detection Experiment
 
 Evaluates whether learned σ can distinguish in-domain vs out-of-domain samples.
 
@@ -7,10 +7,6 @@ In-domain: MSCOCO
 OOD: SVHN / CIFAR-10 / TinyImageNet
 
 Uses σ_norm or 1-confidence as OOD score.
-
-Usage:
-    python scripts/eval_ood.py
-    python main.py --task eval_ood
 """
 
 import argparse
@@ -53,7 +49,6 @@ def parse_args():
 
 
 def get_ood_dataset(name: str, num_samples: int, data_dir: Path):
-    """Get OOD dataset."""
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -105,8 +100,7 @@ def extract_sigma_scores(
         if isinstance(batch, dict):
             pil_images = batch["image"]
         else:
-            # OOD dataset returns (tensor, label) tuples
-            # Need PIL images for CLIP processor
+            # OOD path uses tensors directly (the other overload); skip dict batches here.
             continue
 
         pixel_values = model.process_images(pil_images).to(device)

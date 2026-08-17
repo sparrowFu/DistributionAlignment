@@ -6,12 +6,7 @@ only on ``(e, total_epochs, warmup_epochs, min_lr_ratio)`` — so resume needs n
 scheduler state: the epoch is already restored from the checkpoint, and the LR
 for any epoch is recomputed deterministically.
 
-Each training script:
-1. Captures ``base_lrs = [g["lr"] for g in optimizer.param_groups]`` right after
-   the optimizer is created (and, on resume, after ``optimizer.load_state_dict``).
-2. Calls :func:`apply_lr_for_epoch` at the top of every epoch, before training.
-3. Persists ``base_lrs`` in its resume checkpoint dict (so a checkpoint saved
-   mid-schedule can still recompute the true base LR).
+The schedule is recomputable from the epoch alone, so a resumed run needs only the epoch and the captured base learning rates — no scheduler state to persist.
 """
 
 import math

@@ -1,5 +1,5 @@
 """
-GaussianImageDistribution - ProLIP Baseline (B3)
+ProLIP Baseline (B3)
 
 Real ProLIP ViT-H/14 (SanghyukChun/ProLIP-ViT-H-14-FT-DC-1B-1_28M) loaded via
 the `prolip` library. Each image/text is modeled as a Gaussian N(mu, sigma^2 I)
@@ -9,12 +9,9 @@ pretraining; unlike our MCDisp_Align, it carries no explicit semantic constraint
 
 Two usage modes (mirror the CLIP baseline):
   - zero_shot : ProLIPModel(freeze=True) -- frozen pretrained weights, no checkpoint
-  - fine_tune : ProLIPModel() then .load(config.PROLIP_BEST_CKPT), or train via
-                scripts/train_prolip.py with the ProLIP inclusion loss.
+  - fine_tune : ProLIPModel() then .load(config.PROLIP_BEST_CKPT).
 
 Three local artifacts (no network): config.PROLIP_{MODEL,PROCESSOR,TOKENIZER}_PATH.
-
-Reference: https://arxiv.org/abs/2410.18857 (ProLIP)
 """
 
 import os

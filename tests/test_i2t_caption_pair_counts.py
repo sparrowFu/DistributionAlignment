@@ -8,9 +8,6 @@ Verifies, for image->text retrieval over the full per-caption gallery:
      naive double-loop reference, for BOTH the cosine and the MCDisp_Align scorers and
      across multiple query chunks (chunk_size < N exercises the global-index
      logic).
-
-Run:
-    python tests/test_i2t_caption_pair_counts.py
 """
 
 import sys

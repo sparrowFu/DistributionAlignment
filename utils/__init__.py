@@ -1,5 +1,5 @@
 """
-GaussianImageDistribution - Utility Modules
+Utility Modules
 
 This package provides common utility functions for:
 - Random seed management

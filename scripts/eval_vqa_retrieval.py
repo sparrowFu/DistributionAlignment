@@ -1,17 +1,4 @@
-"""
-VQA-as-Retrieval 评估脚本(gemma caption)。
-
-把 VQA 重构为双向图文检索,评估 5 个模型:
-  clip_zero_shot / clip_baseline / mcdisp_align / prolip_zero_shot / prolip
-两套指标(同图 R@K + answer-match@K),都按 类型 × split × overall 拆。
-
-纯新增文件,不修改现有代码;import config 只读复用路径与常量。
-
-Usage:
-    python scripts/eval_vqa_retrieval.py --model mcdisp_align
-    python scripts/eval_vqa_retrieval.py --model all
-    python scripts/eval_vqa_retrieval.py --model clip_zero_shot --num-samples 64  # 冒烟
-"""
+"""VQA-as-Retrieval evaluation over gemma-generated captions. Reframes VQA as bidirectional image-text retrieval and evaluates the models under two metric tracks (same-image Recall@K + answer-match@K), each split by type x split x overall."""
 
 import argparse
 import json
@@ -294,14 +281,12 @@ class ModelAdapter:
     def dim(self):
         return 1024 if self.name.startswith("prolip") else 768
 
-    # ----- 预处理(转发到底层模型)-----
     def process_images(self, pils):
         return self.base.process_images(pils)
 
     def process_text(self, captions):
         return self.base.process_text(captions)
 
-    # ----- 编码 -----
     def encode_images(self, pixel_values):
         """Returns (mean, logvar|None, U|None)。
 

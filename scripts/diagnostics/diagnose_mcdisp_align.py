@@ -5,9 +5,6 @@ Loads checkpoints/mcdisp_align_best.pt and measures, on a fixed val subset:
   - mcdisp_align mu R@1 under THREE scorers: cosine, uncertainty-calibrated, loglik
   - positive-vs-negative similarity gap (what recall actually needs)
   - feature norms + sigma^2 (collapse / scale checks)
-
-Run:
-  python scripts/diagnostics/diagnose_mcdisp_align.py --num-samples 2000
 """
 import argparse, sys
 from pathlib import Path

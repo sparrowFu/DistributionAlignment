@@ -1,14 +1,10 @@
 """
-GaussianImageDistribution - ProLIP Zero-Shot Evaluation Script
+ProLIP Zero-Shot Evaluation Script
 
 Evaluates the ProLIP Zero-Shot baseline using image-text retrieval with
 Recall@K. No training required -- uses frozen pretrained ProLIP directly.
 Reports both directions (I2T and T2I) under cosine and ProLIP's uncertainty-aware
 CSD similarity. Uses a random subset of samples for efficiency.
-
-Usage:
-    python scripts/evaluate_prolip_zero_shot.py
-    python main.py --task eval_prolip_zero_shot
 """
 
 import argparse
@@ -33,7 +29,6 @@ logger = get_logger("eval_prolip_zero_shot", config.EVAL_PROLIP_ZERO_SHOT_LOG_PA
 
 
 def parse_args():
-    """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Evaluate ProLIP Zero-Shot Baseline")
 
     parser.add_argument("--dataset", type=str, default="coco",
@@ -111,7 +106,6 @@ def extract_features(model, dataloader, device, num_samples=None):
 
 
 def main():
-    """Main evaluation function."""
     args = parse_args()
     set_seed(config.SEED)
 
@@ -121,7 +115,6 @@ def main():
     model = model.to(args.device)
     logger.info(f"Trainable parameters: {model.num_trainable_parameters():,} (expect 0)")
 
-    # Load dataset (selected by --dataset: coco=MSCOCO, flickr=flickr30k test).
     # Zero-shot uses frozen ProLIP, so --dataset only selects the eval data.
     dataloader, num_eval_samples = build_eval_dataloader(
         args.dataset,
@@ -133,7 +126,6 @@ def main():
     )
     logger.info(f"Dataset loaded ({args.dataset}): {num_eval_samples} samples")
 
-    # Extract features
     img_mu, img_logvar, text_mu, text_logvar = extract_features(
         model, dataloader, args.device, args.num_samples,
     )

@@ -1,12 +1,8 @@
 """
-GaussianImageDistribution - Flickr30K Cross-Dataset Generalization Evaluation (Exp6)
+Flickr30K Cross-Dataset Generalization Evaluation (Exp6)
 
 Evaluates models trained on MSCOCO on the Flickr30K dataset to test cross-dataset
 generalization. Computes image-text retrieval R@K metrics.
-
-Usage:
-    python scripts/eval_flickr30k.py --model-type mcdisp_align
-    python main.py --task eval_flickr30k --model-type mcdisp_align
 """
 
 import argparse
@@ -75,7 +71,6 @@ MODEL_CONFIGS = {
 # =============================================================================
 
 def parse_args():
-    """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Exp6: Flickr30K Cross-Dataset Generalization Evaluation"
     )
@@ -187,7 +182,6 @@ def extract_features_distribution(model, dataloader, device, num_samples=None):
 
         pixel_values = model.process_images(pil_images).to(device)
 
-        # Flatten all captions for processing
         batch_size = len(pil_images)
         num_captions = len(caption_lists[0])
 
@@ -497,12 +491,10 @@ def main():
     has_distribution = model_cfg["has_distribution"]
 
     if has_distribution:
-        # Distribution-based models: extract mu and logvar
         img_mu, text_mu, img_logvar, text_logvar, img_U = extract_features_distribution(
             model, dataloader, args.device, args.num_samples,
         )
 
-        # Standard cosine recall on mu
         recall_metrics = compute_recall_chunked(
             img_mu, text_mu, args.recall_at_k, chunk_size=1000,
         )
@@ -525,7 +517,6 @@ def main():
             recall_metrics.update(loglik_recall)
 
     else:
-        # CLIP-based models (zero-shot and fine-tune): simple point features
         img_features, text_features = extract_features_clip(
             model, dataloader, args.device, args.num_samples,
         )

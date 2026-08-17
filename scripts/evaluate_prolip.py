@@ -1,13 +1,9 @@
 """
-GaussianImageDistribution - ProLIP Fine-tuned Evaluation Script
+ProLIP Fine-tuned Evaluation Script
 
 Evaluates the fine-tuned ProLIP model using image-text retrieval with Recall@K.
 Reports both directions (I2T and T2I) under cosine and ProLIP's uncertainty-aware
 CSD similarity. Uses a random subset of samples for efficiency.
-
-Usage:
-    python scripts/evaluate_prolip.py
-    python main.py --task eval_prolip
 """
 
 import argparse
@@ -32,7 +28,6 @@ logger = get_logger("eval_prolip", config.EVAL_PROLIP_LOG_PATH)
 
 
 def parse_args():
-    """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Evaluate ProLIP (Fine-tuned)")
 
     parser.add_argument("--checkpoint", type=str, default=None,
@@ -112,11 +107,10 @@ def extract_features(model, dataloader, device, num_samples=None):
 
 
 def main():
-    """Main evaluation function."""
     args = parse_args()
     set_seed(config.SEED)
 
-    # Load fine-tuned model (auto-select checkpoint by dataset: prolip_{dataset}_best.pt)
+    # auto-selects prolip_{dataset}_best.pt
     checkpoint_path = args.checkpoint or str(resolve_checkpoint("prolip", args.dataset))
     logger.info(f"Loading model from {checkpoint_path}")
 
@@ -124,7 +118,7 @@ def main():
     model.load(checkpoint_path)
     model = model.to(args.device)
 
-    # Load dataset (auto-selected by --dataset: coco=MSCOCO, flickr=flickr30k test)
+    # coco=MSCOCO, flickr=flickr30k test split
     dataloader, num_eval_samples = build_eval_dataloader(
         args.dataset,
         batch_size=args.batch_size,
@@ -135,7 +129,6 @@ def main():
     )
     logger.info(f"Dataset loaded ({args.dataset}): {num_eval_samples} samples")
 
-    # Extract features
     img_mu, img_logvar, text_mu, text_logvar = extract_features(
         model, dataloader, args.device, args.num_samples,
     )

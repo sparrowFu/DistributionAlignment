@@ -1,5 +1,5 @@
 """
-GaussianImageDistribution - Flickr30K Dataset
+Flickr30K Dataset
 
 Dataset loader for Flickr30K image-caption pairs.
 Supports the standard Flickr30K split for cross-dataset evaluation (Exp1).
@@ -9,8 +9,6 @@ Expected directory structure:
         images/           # All Flickr30K images
         captions.txt      # Format: image_name\tcaption per line
                          # Each image has K (typically 5) captions
-
-Alternatively, if a CSV/TSV file is available, this loader adapts accordingly.
 """
 
 import warnings
@@ -182,14 +180,11 @@ class Flickr30KDataset(Dataset):
 
     def _apply_split(self, split: str):
         """
-        Apply standard Flickr30K split.
+        Apply a percentage-based split.
 
-        Standard Flickr30K splits:
-        - train: 31,783 images (indices 0-31782)
-        - val: 1,000 images
-        - test: 1,000 images
-
-        Using the Karpathy split for consistency with literature.
+        - train: first 90%
+        - val:   next 5%
+        - test:  last 5%
         """
         n = len(self.image_names)
 
@@ -204,7 +199,6 @@ class Flickr30KDataset(Dataset):
             val_end = int(n * 0.95)
             self.image_names = self.image_names[val_start:val_end]
         elif split == "test":
-            # Last 5% for testing (or standard 1K test set)
             test_start = int(n * 0.95)
             self.image_names = self.image_names[test_start:]
         else:

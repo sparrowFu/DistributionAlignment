@@ -1,14 +1,10 @@
 """
-GaussianImageDistribution - ProLIP Fine-tuning Script
+ProLIP Fine-tuning Script
 
 Full fine-tunes the real ProLIP ViT-H/14 model (image + text encoders and the
 learned mu / log(sigma^2) uncertainty heads) on image-caption pairs using
 ProLIP's probabilistic inclusion loss (prolip.loss.ProLIPLoss): probabilistic
 pairwise contrastive loss + inclusion loss + VIB regularization.
-
-Usage:
-    python scripts/train_prolip.py
-    python main.py --task train_prolip
 """
 
 import argparse
@@ -22,7 +18,6 @@ from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 
 import sys
-# Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
@@ -35,7 +30,6 @@ from utils.lr_scheduler import apply_lr_for_epoch
 from utils.seed import set_seed
 
 
-# Setup logger
 logger = get_logger("train_prolip", config.TRAIN_PROLIP_LOG_PATH)
 
 # Exclude faulty CPU cores (e.g. unstable CPU 2) before DataLoader workers and
@@ -45,10 +39,8 @@ apply_cpu_affinity()
 
 
 def parse_args():
-    """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Train ProLIP Baseline (B3)")
 
-    # Data arguments
     parser.add_argument("--captions-path", type=str, default=None,
                         help="Path to captions parquet file (uses config default if None)")
     parser.add_argument("--images-dir", type=str, default=None,
@@ -58,7 +50,6 @@ def parse_args():
                         help="Training dataset: selects both the training data and the "
                              "checkpoint-name tag (coco=MSCOCO, flickr=flickr30k)")
 
-    # Training arguments
     parser.add_argument("--epochs", type=int, default=config.PROLIP_EPOCHS,
                         help="Number of training epochs")
     parser.add_argument("--batch-size", type=int, default=config.PROLIP_BATCH_SIZE,
@@ -86,7 +77,6 @@ def parse_args():
     parser.add_argument("--vib-beta", type=float, default=config.PROLIP_VIB_BETA,
                         help="Weight for the VIB (KL) regularization")
 
-    # System arguments
     parser.add_argument("--seed", type=int, default=config.SEED,
                         help="Random seed")
     parser.add_argument("--num-workers", type=int, default=config.NUM_WORKERS,
@@ -162,7 +152,6 @@ def train_epoch(
         pil_images = batch["image"]
         captions_list = batch["captions"]
 
-        # Randomly select one caption per image
         selected_captions = [random.choice(captions) for captions in captions_list]
 
         pixel_values = model.process_images(pil_images)
@@ -200,7 +189,6 @@ def evaluate(
     criterion: ProLIPLoss,
     device: torch.device,
 ) -> Dict[str, float]:
-    """Evaluate the model."""
     model.eval()
 
     total_loss = 0.0
@@ -217,7 +205,6 @@ def evaluate(
         pil_images = batch["image"]
         captions_list = batch["captions"]
 
-        # Use first caption for consistency
         selected_captions = [captions[0] for captions in captions_list]
 
         pixel_values = model.process_images(pil_images)
@@ -236,14 +223,11 @@ def evaluate(
 
 
 def main():
-    """Main training function."""
     args = parse_args()
 
-    # Set random seed
     set_seed(args.seed)
     logger.info(f"Random seed set to {args.seed}")
 
-    # Log configuration
     logger.info("=" * 60)
     logger.info("ProLIP (B3) Fine-tuning")
     logger.info("=" * 60)
@@ -257,20 +241,18 @@ def main():
     logger.info(f"Device: {args.device}")
     logger.info("=" * 60)
 
-    # Create model (full fine-tuning, nothing frozen)
+    # full fine-tuning, nothing frozen
     logger.info("Creating model...")
     model = ProLIPModel(freeze=False)
     model = model.to(args.device)
     logger.info(f"Model created with {model.num_trainable_parameters():,} trainable parameters")
 
-    # ProLIP inclusion loss
     criterion = ProLIPLoss(
         ppcl_lambda=args.ppcl_lambda,
         inclusion_alpha=args.inclusion_alpha,
         vib_beta=args.vib_beta,
     )
 
-    # Create optimizer
     optimizer = optim.Adam(
         model.trainable_parameters(),
         lr=args.lr,
@@ -278,7 +260,7 @@ def main():
     )
     base_lrs = [g["lr"] for g in optimizer.param_groups]
 
-    # Load dataset (selected by --dataset; coco=MSCOCO, flickr=flickr30k train split)
+    # coco=MSCOCO, flickr=flickr30k train split
     logger.info(f"Loading training dataset (--dataset {args.dataset})")
     full_dataset = build_train_dataset(
         dataset=args.dataset,
@@ -286,7 +268,6 @@ def main():
         images_dir=args.images_dir,
     )
 
-    # Split into train and validation sets
     val_size = int(len(full_dataset) * args.val_split)
     train_size = len(full_dataset) - val_size
     train_dataset, val_dataset = random_split(
@@ -313,7 +294,6 @@ def main():
     logger.info(f"Train samples: {train_size}, Val samples: {val_size}")
     logger.info(f"Batch size: {args.batch_size}, Train batches per epoch: {len(train_dataloader)}")
 
-    # Training loop with early stopping
     start_epoch = 0
     best_val_loss = float("inf")
     patience_counter = 0
@@ -348,10 +328,8 @@ def main():
                            args.warmup_epochs, args.min_lr_ratio,
                            args.lr_scheduler, logger)
 
-        # Train
         train_metrics = train_epoch(model, train_dataloader, optimizer, criterion, args.device, epoch)
 
-        # Validate
         val_metrics = evaluate(model, val_dataloader, criterion, args.device)
 
         logger.info(
@@ -360,7 +338,6 @@ def main():
             f"Val Loss: {val_metrics['loss']:.4f}, Val Acc: {val_metrics['acc']:.4f}"
         )
 
-        # Save best checkpoint
         if val_metrics["loss"] < best_val_loss:
             best_val_loss = val_metrics["loss"]
             best_checkpoint_path = checkpoint_dir / f"prolip_{args.dataset}_best.pt"
@@ -371,7 +348,6 @@ def main():
             patience_counter += 1
             logger.info(f"No improvement. Patience: {patience_counter}/{args.early_stop_patience}")
 
-        # Early stopping
         if not args.no_early_stop and patience_counter >= args.early_stop_patience:
             logger.info(f"Early stopping triggered at epoch {epoch + 1}")
             break

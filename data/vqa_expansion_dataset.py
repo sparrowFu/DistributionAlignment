@@ -1,6 +1,6 @@
 """
 VQA-as-Retrieval 数据集:读 train/test 两条 gemma expansion jsonl,合并成
-entries(112,857)+ 唯一图(66,362)+ GT 映射。
+entries + unique images + GT mapping.
 
 每条 jsonl:
   {"imagefilename","imagepath","type","question","answer","caption"}

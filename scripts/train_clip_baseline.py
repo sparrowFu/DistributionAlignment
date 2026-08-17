@@ -1,12 +1,8 @@
 """
-GaussianImageDistribution - CLIP Baseline Training Script
+CLIP Baseline Training Script
 
 This script trains the CLIP baseline model on image-caption pairs
 using contrastive learning with full fine-tuning.
-
-Usage:
-    python scripts/train_clip_baseline.py
-    python main.py --task train_clip_baseline
 """
 
 import argparse
@@ -20,7 +16,6 @@ from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 
 import sys
-# Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
@@ -33,7 +28,6 @@ from utils.lr_scheduler import apply_lr_for_epoch
 from utils.seed import set_seed
 
 
-# Setup logger
 logger = get_logger("train_clip_baseline", config.TRAIN_CLIP_BASELINE_LOG_PATH)
 
 # Exclude faulty CPU cores (e.g. unstable CPU 2) before DataLoader workers and
@@ -43,10 +37,8 @@ apply_cpu_affinity()
 
 
 def parse_args():
-    """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Train CLIP Baseline Model")
 
-    # Data arguments
     parser.add_argument("--captions-path", type=str, default=None,
                         help="Path to captions parquet file (uses config default if None)")
     parser.add_argument("--images-dir", type=str, default=None,
@@ -56,7 +48,6 @@ def parse_args():
                         help="Training dataset: selects both the training data and the "
                              "checkpoint-name tag (coco=MSCOCO, flickr=flickr30k)")
 
-    # Training arguments
     parser.add_argument("--epochs", type=int, default=config.CLIP_BASELINE_EPOCHS,
                         help="Number of training epochs")
     parser.add_argument("--batch-size", type=int, default=config.CLIP_BASELINE_BATCH_SIZE,
@@ -76,7 +67,6 @@ def parse_args():
     parser.add_argument("--temperature", type=float, default=config.CLIP_BASELINE_TEMPERATURE,
                         help="Temperature for contrastive loss")
 
-    # Model arguments
     parser.add_argument("--freeze-image", action="store_true",
                         help="Freeze image encoder")
     parser.add_argument("--no-freeze-image", action="store_false", dest="freeze_image",
@@ -86,7 +76,6 @@ def parse_args():
     parser.add_argument("--no-freeze-text", action="store_false", dest="freeze_text",
                         help="Don't freeze text encoder")
 
-    # System arguments
     parser.add_argument("--seed", type=int, default=config.SEED,
                         help="Random seed")
     parser.add_argument("--num-workers", type=int, default=config.NUM_WORKERS,
@@ -135,55 +124,45 @@ def train_epoch(
             continue
         processed_batches += 1
 
-        # Get data - PIL images and text lists
         pil_images = batch["image"]
         captions_list = batch["captions"]
 
-        # Randomly select one caption per image
         selected_captions = [random.choice(captions) for captions in captions_list]
 
-        # Process with CLIP processor
         pixel_values = model.process_images(pil_images).to(device)
         text_inputs = model.process_text(selected_captions)
         input_ids = text_inputs["input_ids"].to(device)
         attention_mask = text_inputs["attention_mask"].to(device)
 
-        # Forward pass
         image_features, text_features = model(
             images=pixel_values,
             input_ids=input_ids,
             attention_mask=attention_mask
         )
 
-        # Compute loss
         loss, loss_info = clip_contrastive_loss(
             image_features, text_features,
             temperature=temperature
         )
 
-        # Backward pass
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        # Accumulate metrics
         total_loss += loss_info["loss"]
         total_acc += loss_info["acc"]
 
-        # Update progress bar
         pbar.set_postfix({
             'loss': f"{loss_info['loss']:.4f}",
             'acc': f"{loss_info['acc']:.4f}"
         })
 
-        # Log every N batches
         if (batch_idx + 1) % 10 == 0:
             logger.debug(
                 f"Epoch {epoch + 1}, Batch {batch_idx + 1}/{len(dataloader)}, "
                 f"Loss: {loss_info['loss']:.4f}, Acc: {loss_info['acc']:.4f}"
             )
 
-    # Compute averages
     num_batches = max(processed_batches, 1)
     metrics = {
         'loss': total_loss / num_batches,
@@ -200,7 +179,6 @@ def evaluate(
     temperature: float,
     device: torch.device
 ) -> Dict[str, float]:
-    """Evaluate the model."""
     model.eval()
 
     total_loss = 0.0
@@ -214,27 +192,22 @@ def evaluate(
             continue
         processed_batches += 1
 
-        # Get data - PIL images and text lists
         pil_images = batch["image"]
         captions_list = batch["captions"]
 
-        # Use first caption for consistency
         selected_captions = [captions[0] for captions in captions_list]
 
-        # Process with CLIP processor
         pixel_values = model.process_images(pil_images).to(device)
         text_inputs = model.process_text(selected_captions)
         input_ids = text_inputs["input_ids"].to(device)
         attention_mask = text_inputs["attention_mask"].to(device)
 
-        # Forward pass
         image_features, text_features = model(
             images=pixel_values,
             input_ids=input_ids,
             attention_mask=attention_mask
         )
 
-        # Compute loss
         loss, loss_info = clip_contrastive_loss(
             image_features, text_features,
             temperature=temperature
@@ -245,7 +218,6 @@ def evaluate(
 
         pbar.set_postfix({'loss': f"{loss_info['loss']:.4f}"})
 
-    # Compute averages
     num_batches = max(processed_batches, 1)
     metrics = {
         'loss': total_loss / num_batches,
@@ -256,14 +228,11 @@ def evaluate(
 
 
 def main():
-    """Main training function."""
     args = parse_args()
 
-    # Set random seed
     set_seed(args.seed)
     logger.info(f"Random seed set to {args.seed}")
 
-    # Log configuration
     logger.info("=" * 60)
     logger.info("CLIP Baseline Training")
     logger.info("=" * 60)
@@ -278,7 +247,6 @@ def main():
     logger.info(f"Device: {args.device}")
     logger.info("=" * 60)
 
-    # Create model
     logger.info("Creating model...")
     model = CLIPFineTuneBaseline(
         freeze_image=args.freeze_image,
@@ -287,7 +255,6 @@ def main():
     model = model.to(args.device)
     logger.info(f"Model created with {model.num_trainable_parameters():,} trainable parameters")
 
-    # Create optimizer
     optimizer = optim.Adam(
         model.trainable_parameters(),
         lr=args.lr,
@@ -295,7 +262,7 @@ def main():
     )
     base_lrs = [g["lr"] for g in optimizer.param_groups]
 
-    # Load dataset (selected by --dataset; coco=MSCOCO, flickr=flickr30k train split)
+    # coco=MSCOCO, flickr=flickr30k train split
     logger.info(f"Loading training dataset (--dataset {args.dataset})")
     full_dataset = build_train_dataset(
         dataset=args.dataset,
@@ -303,7 +270,6 @@ def main():
         images_dir=args.images_dir,
     )
 
-    # Split into train and validation sets
     val_size = int(len(full_dataset) * args.val_split)
     train_size = len(full_dataset) - val_size
     train_dataset, val_dataset = random_split(
@@ -330,7 +296,6 @@ def main():
     logger.info(f"Train samples: {train_size}, Val samples: {val_size}")
     logger.info(f"Batch size: {args.batch_size}, Train batches per epoch: {len(train_dataloader)}")
 
-    # Training loop with early stopping
     start_epoch = 0
     best_val_loss = float('inf')
     patience_counter = 0
@@ -365,13 +330,11 @@ def main():
                            args.warmup_epochs, args.min_lr_ratio,
                            args.lr_scheduler, logger)
 
-        # Train
         train_metrics = train_epoch(
             model, train_dataloader, optimizer,
             args.temperature, args.device, epoch
         )
 
-        # Validate
         val_metrics = evaluate(
             model, val_dataloader,
             args.temperature, args.device
@@ -383,7 +346,6 @@ def main():
             f"Val Loss: {val_metrics['loss']:.4f}, Val Acc: {val_metrics['acc']:.4f}"
         )
 
-        # Save best checkpoint
         if val_metrics['loss'] < best_val_loss:
             best_val_loss = val_metrics['loss']
             best_checkpoint_path = checkpoint_dir / f"clip_baseline_{args.dataset}_best.pt"
@@ -394,7 +356,6 @@ def main():
             patience_counter += 1
             logger.info(f"No improvement. Patience: {patience_counter}/{args.early_stop_patience}")
 
-        # Early stopping
         if not args.no_early_stop and patience_counter >= args.early_stop_patience:
             logger.info(f"Early stopping triggered at epoch {epoch + 1}")
             break

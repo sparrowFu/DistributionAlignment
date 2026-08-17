@@ -1,5 +1,5 @@
 """
-GaussianImageDistribution - CLIP Baseline Model
+CLIP Baseline Model
 
 This module implements a CLIP fine-tuning model with support for
 freezing image/text encoders.
@@ -290,7 +290,6 @@ if __name__ == "__main__":
     setup_logger("clip_baseline", config.LOG_DIR / "model_test.log")
     set_seed(config.SEED)
 
-    # Create model
     model = CLIPFineTuneBaseline(
         freeze_image=config.CLIP_BASELINE_FREEZE_IMAGE,
         freeze_text=config.CLIP_BASELINE_FREEZE_TEXT
@@ -314,7 +313,6 @@ if __name__ == "__main__":
     print(f"\nProcessed image tensor shape: {image_tensor.shape}")
     print(f"Processed text input_ids shape: {text_inputs['input_ids'].shape}")
 
-    # Forward pass
     with torch.no_grad():
         image_features, text_features = model(
             images=image_tensor,

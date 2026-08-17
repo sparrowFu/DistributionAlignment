@@ -7,7 +7,7 @@ QUESTION
     itself is ~constant (Case B, premise weak)?
 
 WHY THIS EXISTS
-    eval_sigma_analysis.py already showed Pearson(σ², caption_diversity) ≈ -0.02.
+    Prior sigma analysis showed Pearson(σ², caption_diversity) ≈ -0.02.
     But that alone doesn't say WHY. This script pins it down by comparing the
     *variation* of σ² vs the *variation* of the exact L_var target, quantifying
     the scale mismatch, and testing whether matching in log-space (the likely
@@ -16,17 +16,12 @@ WHY THIS EXISTS
 COMPUTES
     - img_var  = exp(img_logvar)                     # the predicted σ² (N,D)
     - caption_spread = mean_k (μ_k - μ̄)²            # the EXACT L_var target (N,D)
-      (matches losses/mcdisp_align_losses.py:514)
     - coefficient of variation (CV = std/mean) of each → is each signal varying?
     - scale ratio img_var / caption_spread
     - Pearson/Spearman in RAW and LOG space (log-space test = fix hypothesis)
     - does σ² track any image property at all? (corr with ||μ_img||)
     - scatter plot img_var vs caption_spread (the visual smoking gun)
     - prints a Case A/B verdict + root cause + fix direction
-
-USAGE
-    python scripts/diagnostics/eval_sigma_diagnostic.py
-    python scripts/diagnostics/eval_sigma_diagnostic.py --num-samples 5000
 """
 
 import argparse
@@ -71,7 +66,7 @@ def parse_args():
 
 @torch.no_grad()
 def extract_features(model, dataloader, device, num_samples):
-    """Extract img_logvar, img_mu, per-caption text_mus. (mirrors eval_sigma_analysis)"""
+    """Extract img_logvar, img_mu, per-caption text_mus."""
     model.eval()
     all_img_logvar, all_img_mu, all_text_mus = [], [], []
     n = 0
@@ -106,7 +101,7 @@ def diagnose(img_logvar: torch.Tensor, img_mu: torch.Tensor, text_mus: torch.Ten
     eps = 1e-12
     img_var = torch.exp(img_logvar)                               # (N,D) predicted σ²
     text_mu_bar = text_mus.mean(dim=1)                            # (N,D) caption center
-    # EXACT L_var target: losses/mcdisp_align_losses.py:514
+    # L_var target: mean over K of (mu_k - mu_bar)^2
     caption_spread = ((text_mus - text_mu_bar.unsqueeze(1)) ** 2).mean(dim=1)  # (N,D)
 
     # Per-image scalars (mean over D)

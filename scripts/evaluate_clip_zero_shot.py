@@ -1,13 +1,9 @@
 """
-GaussianImageDistribution - CLIP Zero-Shot Evaluation Script
+CLIP Zero-Shot Evaluation Script
 
 This script evaluates the CLIP Zero-Shot baseline using image-text retrieval
 with Recall@K metrics. No training required - uses frozen CLIP directly.
 Uses a random subset of samples for efficiency.
-
-Usage:
-    python scripts/evaluate_clip_zero_shot.py
-    python main.py --task eval_clip_zero_shot
 """
 
 import argparse
@@ -33,7 +29,6 @@ logger = get_logger("eval_clip_zero_shot", config.EVAL_CLIP_ZERO_SHOT_LOG_PATH)
 
 
 def parse_args():
-    """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Evaluate CLIP Zero-Shot Baseline")
 
     parser.add_argument("--dataset", type=str, default="coco",
@@ -89,7 +84,6 @@ def extract_features(
         input_ids = text_inputs["input_ids"].to(device)
         attention_mask = text_inputs["attention_mask"].to(device)
 
-        # Extract normalized features from frozen CLIP
         img_feat, text_feat = model(
             images=pixel_values,
             input_ids=input_ids,
@@ -116,7 +110,6 @@ def extract_features(
 
 
 def main():
-    """Main evaluation function."""
     args = parse_args()
     set_seed(config.SEED)
 
@@ -128,7 +121,6 @@ def main():
     )
     model = model.to(args.device)
 
-    # Load dataset (selected by --dataset: coco=MSCOCO, flickr=flickr30k test).
     # Zero-shot uses frozen CLIP, so --dataset only selects the eval data.
     dataloader, num_eval_samples = build_eval_dataloader(
         args.dataset,
@@ -140,7 +132,6 @@ def main():
     )
     logger.info(f"Dataset loaded ({args.dataset}): {num_eval_samples} samples")
 
-    # Extract features
     img_features, text_features = extract_features(
         model, dataloader, args.device, args.num_samples,
     )

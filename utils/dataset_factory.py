@@ -1,28 +1,4 @@
-"""
-GaussianImageDistribution - Shared training-dataset selection.
-
-The single source of truth for turning a ``--dataset`` tag into the *training*
-``Dataset``, so the three fine-tuning scripts (``train_clip_baseline``,
-``train_mcdisp_align``, ``train_prolip``) all switch training data by
-``--dataset`` the same way the evaluation scripts switch eval data via
-:func:`utils.eval_common.build_eval_dataloader`.
-
-  - ``coco``   -> :class:`data.caption_dataset.ImageCaptionDataset`
-                  (MSCOCO train parquet + images, via config defaults)
-  - ``flickr`` -> :class:`data.flickr30k_dataset.Flickr30KDataset` with
-                  ``split="train"`` (the first 90% of images). This excludes the
-                  held-out Flickr30K *test* split that
-                  :func:`data.flickr30k_dataset.get_flickr30k_test_loader`
-                  evaluates on, so training and evaluation data never overlap.
-
-Both datasets yield ``{"image", "captions", ...}`` samples and work with
-:func:`data.caption_dataset.filter_none_collate`, so callers can build their
-DataLoaders and train/val ``random_split`` exactly as before.
-
-``--captions-path`` / ``--images-dir`` are honored for ``coco`` only (matching
-the eval scripts, where those flags are documented as coco-only); ``flickr``
-always uses the ``config.FLICKR30K_*`` paths.
-"""
+"""Build the training Dataset for a ``--dataset`` tag. Returns the full training pool (before the caller's train/val split) yielding ``{"image", "captions"}`` samples. ``--captions-path`` / ``--images-dir`` apply to ``coco`` only; ``flickr`` uses fixed config paths."""
 
 from typing import Optional
 
@@ -40,14 +16,14 @@ def build_train_dataset(
 ) -> Dataset:
     """Build the full training ``Dataset`` for the given ``--dataset`` tag.
 
-    Dispatches on the dataset's ``train_kind`` (see :mod:`utils.dataset_registry`),
+    Dispatches on the dataset's ``train_kind``,
     so the set of supported datasets is defined entirely by the registry. The
     returned dataset is the full training pool *before* the caller's train/val
     ``random_split`` — i.e. the same role the old hardcoded
     ``ImageCaptionDataset(config.CAPTIONS_PATH, ...)`` played.
 
     Args:
-        dataset: dataset tag (see :data:`utils.dataset_registry.VALID_DATASETS`).
+        dataset: dataset tag.
         num_captions: captions per image; ``None`` uses the dataset's registered
             default.
         captions_path: parquet path (coco only; overrides ``config.CAPTIONS_PATH``).

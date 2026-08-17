@@ -1,5 +1,5 @@
 """
-GaussianImageDistribution - CPU Affinity Management
+CPU Affinity Management
 
 Excludes faulty CPU cores (e.g. an unstable core 2 on this server) from the
 current process so that training / data loading is never scheduled onto them and

@@ -1,18 +1,4 @@
-"""
-GaussianImageDistribution - Shared MCDisp_Align (mcdisp_align) training orchestration.
-
-Both ``scripts/train_mcdisp_align.py`` (full training) and ``scripts/run_ablation.py``
-(ablation variants) call :func:`run_mcdisp_align_training`, so an ablation variant
-is trained with EXACTLY the same logic as the real model — staged loss schedule,
-grad-norm clipping, recall/loss best-checkpoint selection, early stopping,
-best+last checkpointing, and resume — differing only in the loss weights /
-``cov_rank`` / ``num_captions`` / ``dataset`` / checkpoint paths passed via
-:class:`MCDispAlignTrainConfig`.
-
-The per-epoch functions (:func:`train_epoch`, :func:`evaluate`,
-:func:`create_optimizer`, :func:`stage_multipliers`) are also exported for direct
-unit testing.
-"""
+"""MCDisp_Align training orchestration: staged loss schedule, grad-norm clipping, recall/loss best-checkpoint selection, early stopping, best+last checkpointing, and resume. Full runs and ablation variants share one code path, differing only in the loss weights / ``cov_rank`` / ``num_captions`` / ``dataset`` / checkpoint paths passed via :class:`MCDispAlignTrainConfig`. The per-epoch functions are exported for direct unit testing."""
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -180,7 +166,7 @@ def head_grad_norms(model) -> Dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
-# Epoch functions (ported verbatim from the original train_mcdisp_align.py)
+# Epoch functions
 # ---------------------------------------------------------------------------
 
 def train_epoch(
@@ -238,7 +224,6 @@ def train_epoch(
             continue
         processed_batches += 1
 
-        # Get data - PIL images and text lists
         pil_images = batch["image"]            # List[PIL.Image]
         caption_lists = batch["captions"]      # List[List[str]]
 
@@ -261,7 +246,6 @@ def train_epoch(
         criterion.uncertainty_grad_alpha = alpha_schedule(
             epoch, batch_idx, steps_per_epoch, total_epochs)
 
-        # Forward pass
         outputs = model(pixel_values, input_ids, attention_mask)
 
         # Compute MCDisp_Align loss
@@ -271,7 +255,6 @@ def train_epoch(
             outputs['text_mus'], outputs['text_logvars'], outputs.get('text_Us'),
         )
 
-        # Backward pass
         optimizer.zero_grad()
         loss.backward()
         # Per-head grad norms BEFORE clip (who dominates at stage transitions?)
@@ -303,7 +286,6 @@ def train_epoch(
         grad_accum["global_grad_norm_before_clip"] += grad_before
         grad_accum["global_grad_norm_after_clip"] += grad_after
 
-        # Update progress bar
         pbar.set_postfix({
             'loss': f"{loss_dict['total']:.4f}",
             'NCE': f"{loss_dict['set_nce']:.4f}",
@@ -386,7 +368,7 @@ def evaluate(
     # shuffle=False, so concatenated img_mu[i] stays aligned with its own
     # caption-set text_mu[i] -> the diagonal is the positive pair.
     # Primary score: MCDisp_Align uncertainty-discounted cosine (= what L_set optimizes).
-    # Secondary: plain cosine-on-means (methodology's mean-only retrieval mode).
+    # Secondary: plain cosine-on-means (mean-only retrieval mode).
     if compute_recall and recall_k_values and feats and feats["img_mu"]:
         img_mu = torch.cat(feats["img_mu"], dim=0).to(device)
         text_mu = torch.cat(feats["text_mu"], dim=0).to(device)
@@ -522,7 +504,7 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
     prefix = f"[{cfg.tag}] " if cfg.tag else ""
 
     log.info("=" * 60)
-    log.info(f"{prefix}MCDisp_Align Distribution Alignment Training")
+    log.info(f"{prefix}MCDisp_Align Training")
     log.info("=" * 60)
     log.info(f"{prefix}Dataset: {cfg.dataset} | Epochs: {cfg.epochs} | Batch: {cfg.batch_size}")
     log.info(f"{prefix}CLIP LR: {cfg.clip_lr} | MLP LR: {cfg.mlp_lr} | Freeze CLIP: {cfg.freeze_clip}")

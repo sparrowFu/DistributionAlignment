@@ -1,11 +1,7 @@
 """
-GaussianImageDistribution - MCDisp_Align Distribution Alignment Training Script (CLI)
+MCDisp_Align Training Script (CLI)
 
-Thin command-line wrapper around :func:`utils.mcdisp_align_trainer.run_mcdisp_align_training`.
-The actual training logic (staged loss schedule, grad clipping, recall/loss
-best-checkpoint selection, early stopping, best+last checkpointing, resume) lives
-in the shared trainer, so ``scripts/run_ablation.py`` trains ablation variants
-with exactly the same code — see :mod:`utils.mcdisp_align_trainer`.
+Thin command-line wrapper that parses CLI args into a training config and invokes the shared trainer (staged loss schedule, grad clipping, recall/loss best-checkpoint selection, early stopping, best+last checkpointing, resume).
 
 Trains the MCDisp_Align (Multi-Caption Semantic Dispersion Guided Distribution Alignment) model, which
 models image and text embeddings as Gaussians. The image uses a general
@@ -16,10 +12,6 @@ the image low-rank directions toward the caption deviation directions.
 Checkpoint selection is by the MCDisp_Align uncertainty-discounted cosine Recall@1
 (the same score L_set optimizes), so the trained objective, the selection
 metric and the reported metric all agree.
-
-Usage:
-    python scripts/train_mcdisp_align.py
-    python main.py --task train_mcdisp_align
 """
 
 import argparse
@@ -28,7 +20,6 @@ from pathlib import Path
 import torch
 
 import sys
-# Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
@@ -37,7 +28,6 @@ from utils.mcdisp_align_trainer import MCDispAlignTrainConfig, run_mcdisp_align_
 from utils.logger import get_logger, log_exception
 
 
-# Setup logger
 logger = get_logger("train_mcdisp_align", config.TRAIN_MCDISP_ALIGN_LOG_PATH)
 
 # Exclude faulty CPU cores (e.g. unstable CPU 2) before DataLoader workers and
@@ -47,10 +37,8 @@ apply_cpu_affinity()
 
 
 def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Train MCDisp_Align Distribution Alignment Model")
+    parser = argparse.ArgumentParser(description="Train MCDisp_Align Model")
 
-    # Data arguments
     parser.add_argument("--captions-path", type=str, default=None,
                         help="Path to captions parquet file (coco only; uses config default if None)")
     parser.add_argument("--images-dir", type=str, default=None,
@@ -60,7 +48,6 @@ def parse_args():
                         help="Training dataset: selects both the training data and the "
                              "checkpoint-name tag (coco=MSCOCO, flickr=flickr30k)")
 
-    # Training arguments
     parser.add_argument("--epochs", type=int, default=config.MCDISP_ALIGN_EPOCHS,
                         help="Number of training epochs")
     parser.add_argument("--batch-size", type=int, default=config.MCDISP_ALIGN_BATCH_SIZE,
@@ -80,7 +67,6 @@ def parse_args():
     parser.add_argument("--min-lr-ratio", type=float, default=config.LR_MIN_LR_RATIO,
                         help="Cosine floor as a fraction of the base LR")
 
-    # MCDisp_Align loss arguments (six terms)
     parser.add_argument("--lambda-ctr", type=float, default=config.MCDISP_ALIGN_LAMBDA_CTR)
     parser.add_argument("--lambda-mu", type=float, default=config.MCDISP_ALIGN_LAMBDA_MU)
     parser.add_argument("--lambda-var", type=float, default=config.MCDISP_ALIGN_LAMBDA_VAR)
@@ -104,7 +90,6 @@ def parse_args():
                         action="store_false",
                         help="L_set uses plain cosine (ablation)")
 
-    # MCDisp_Align model arguments
     parser.add_argument("--cov-rank", type=int, default=config.MCDISP_ALIGN_COV_RANK,
                         help="Low-rank covariance rank r for the image side (0 = diagonal only)")
     parser.add_argument("--freeze-clip", action="store_true", default=config.MCDISP_ALIGN_FREEZE_CLIP,
@@ -119,7 +104,6 @@ def parse_args():
     parser.add_argument("--no-staged", action="store_true",
                         help="Disable 3-stage schedule; use all losses from epoch 1")
 
-    # System arguments
     parser.add_argument("--seed", type=int, default=config.SEED,
                         help="Random seed")
     parser.add_argument("--num-workers", type=int, default=config.NUM_WORKERS,
@@ -152,7 +136,6 @@ def parse_args():
 
 
 def main():
-    """Main training function."""
     args = parse_args()
 
     cfg = MCDispAlignTrainConfig(

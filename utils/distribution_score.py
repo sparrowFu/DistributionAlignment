@@ -1,4 +1,4 @@
-"""Distribution-likelihood matching score for mcdisp_align (MCDisp_Align).
+"""Distribution-likelihood matching score: log-likelihood of the text mean under the image Gaussian.
 
 The retrieval/matching score is the log-likelihood of the text mean under the
 image Gaussian distribution:

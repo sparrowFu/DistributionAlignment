@@ -1,10 +1,4 @@
-"""
-GaussianImageDistribution - Uncertainty Calibration Metrics (Exp3)
-
-Implements OOD-detection scoring metrics used by Exp4 (eval_ood.py):
-    - AUROC (using 1-confidence as OOD score)
-    - FPR@TPR
-"""
+"""Uncertainty calibration metrics: AUROC and FPR@TPR for OOD detection, using 1-confidence as the anomaly score."""
 
 import numpy as np
 

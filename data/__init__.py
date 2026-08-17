@@ -1,5 +1,5 @@
 """
-GaussianImageDistribution - Data Modules
+Data Modules
 
 This package provides dataset classes for image-text pair loading,
 Flickr30K cross-dataset evaluation, and VQA-as-retrieval expansion data.

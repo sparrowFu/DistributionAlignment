@@ -1,5 +1,5 @@
 """
-GaussianImageDistribution - MCDisp_Align Distribution Alignment Evaluation Script
+MCDisp_Align Evaluation Script
 
 Evaluates the MCDisp_Align (Multi-Caption Semantic Dispersion Guided Distribution Alignment) model using
 image-text retrieval. The PRIMARY protocol is standard multi-caption retrieval
@@ -14,10 +14,6 @@ reported under two scorers:
 The set-level Recall on the merged text mean (N vs N) is kept as an AUXILIARY
 diagnostic (it measures whether the moment-matched caption-set distribution is
 well-centered, and is NOT comparable to published MS-COCO/Flickr baselines).
-
-Usage:
-    python scripts/evaluate_mcdisp_align.py
-    python main.py --task eval_mcdisp_align
 """
 
 import argparse
@@ -48,8 +44,7 @@ logger = get_logger("eval_mcdisp_align", config.EVAL_MCDISP_ALIGN_LOG_PATH)
 
 
 def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Evaluate Distribution Alignment Model")
+    parser = argparse.ArgumentParser(description="Evaluate MCDisp_Align Model")
 
     parser.add_argument("--checkpoint", type=str, default=None,
                         help="Path to checkpoint. If None, auto-selects "
@@ -102,30 +97,24 @@ def extract_features(
         if batch is None:
             continue
 
-        # Get data - PIL images and text lists
         pil_images = batch["image"]
         caption_lists = batch["captions"]
 
-        # Process images with CLIP processor
         pixel_values = model.process_images(pil_images).to(device)
 
-        # Process text captions
         batch_size = len(pil_images)
         num_captions = len(caption_lists[0])
 
-        # Flatten all captions: [B*K]
         all_captions = []
         for caption_list in caption_lists:
             all_captions.extend(caption_list)
 
-        # Process with CLIP processor
         text_inputs = model.process_text(all_captions)
 
         # Reshape to [B, K, max_len]
         input_ids = text_inputs["input_ids"].view(batch_size, num_captions, -1).to(device)
         attention_mask = text_inputs["attention_mask"].view(batch_size, num_captions, -1).to(device)
 
-        # Forward pass
         outputs = model(pixel_values, input_ids, attention_mask)
 
         all_img_mu.append(outputs['img_mu'].cpu())
@@ -139,7 +128,6 @@ def extract_features(
         if num_samples and sample_count >= num_samples:
             break
 
-    # Concatenate features
     img_mu = torch.cat(all_img_mu, dim=0)
     text_mu = torch.cat(all_text_mu, dim=0)
     img_logvar = torch.cat(all_img_logvar, dim=0)
@@ -161,13 +149,11 @@ def extract_features(
 
 
 def main():
-    """Main evaluation function."""
     args = parse_args()
 
-    # Set random seed
     set_seed(config.SEED)
 
-    # Load model (auto-select checkpoint by dataset: mcdisp_align_{dataset}_best.pt)
+    # auto-selects mcdisp_align_{dataset}_best.pt
     checkpoint_path = args.checkpoint or str(resolve_checkpoint("mcdisp_align", args.dataset))
     logger.info(f"Loading model from {checkpoint_path}")
 
@@ -180,7 +166,7 @@ def main():
     model.load(checkpoint_path)
     model = model.to(args.device)
 
-    # Load dataset (auto-selected by --dataset: coco=MSCOCO, flickr=flickr30k test)
+    # coco=MSCOCO, flickr=flickr30k test split
     dataloader, num_eval_samples = build_eval_dataloader(
         args.dataset,
         batch_size=args.batch_size,
@@ -191,8 +177,7 @@ def main():
     )
     logger.info(f"Dataset loaded ({args.dataset}): {num_eval_samples} samples")
 
-    # Extract features (mu and logvar); text_mus/text_logvars are the per-caption
-    # outputs used by the I2T pair-count metric.
+    # text_mus/text_logvars are the per-caption outputs used by the I2T pair-count metric.
     img_mu, text_mu, img_logvar, text_logvar, text_mus, text_logvars = extract_features(
         model, dataloader, args.device, args.num_samples
     )
@@ -205,8 +190,8 @@ def main():
     text_logvars_d = text_logvars.to(args.device)
 
     # Primary: standard multi-caption bidirectional Recall (N images vs N*K
-    # captions) -- the canonical MS-COCO/Flickr protocol and the methodology's
-    # intended one-image-many-captions evaluation. Reported under both the MCDisp_Align
+    # captions) -- the canonical MS-COCO/Flickr one-image-many-captions protocol.
+    # Reported under both the MCDisp_Align
     # uncertainty-discounted score (= L_set score) and plain cosine.
     mc = compute_multicaption_recall(
         img_mu_d, img_lv_d, text_mus_d, text_logvars_d,

@@ -1,11 +1,5 @@
 """
-Distribution-aware retrieval evaluation for mcdisp_align (MCDisp_Align).
-
-This is the "make the distribution actually participate in inference" diagnostic.
-Unlike ``evaluate_mcdisp_align.py`` (whose primary score is the uncertainty-
-discounted *cosine* -- only a scalar sigma^2 discount, the per-D variance and the
-covariance factor U never enter retrieval), this script scores retrieval with the
-FULL image Gaussian
+Distribution-aware retrieval diagnostic. Scores retrieval with the FULL image Gaussian (the per-D variance and the covariance factor U enter the score), unlike the uncertainty-discounted cosine scorer which applies only a scalar sigma^2 discount.
 
     Sigma_v = diag(sigma_v^2) + U_v U_v^T
 
@@ -25,10 +19,7 @@ is diagonal-only in v1 so there is no text covariance). One (N, N) score matrix
 yields both directions: I2T ranks each row (image -> texts), T2I ranks each
 column (text -> images).
 
-IMPORTANT -- space/scale caveat: sigma^2 was supervised by L_var in the
-UN-normalized head space, while L_set / L_cov normalize the means. By default we
-L2-normalize the means before scoring (matching the cos/mcdisp_align scorers and the
-likelihood function's contract) and pass sigma^2 / U as the model produced them;
+Scale caveat: sigma^2 was supervised in the UN-normalized head space, while the similarity losses normalize the means. By default we L2-normalize the means before scoring and pass sigma^2 / U as the model produced them;
 mean(sigma^2) and ||U|| diagnostics are printed so any scale mismatch is
 visible. Use --no-normalize-means to score in raw head space, and
 --per-dim-normalize / --no-logdet to ablate the likelihood's two scale knobs.
@@ -37,10 +28,6 @@ NO RETRAINING is required: this only loads an existing checkpoint and swaps the
 retrieval scorer. Use --which both to compare the mu-selected "best" checkpoint
 against the "last" one (the best was selected by mcdisp_align_recall@1, which is mu-based,
 so it is not guaranteed to be the best under the likelihood score).
-
-Usage:
-    python scripts/eval_mcdisp_align_likelihood.py --dataset coco --which best
-    python scripts/eval_mcdisp_align_likelihood.py --dataset flickr --which both
 """
 
 import argparse
@@ -52,7 +39,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-# Allow `python scripts/eval_mcdisp_align_likelihood.py` (repo root on sys.path).
+# Put the repo root on sys.path so utils / models / config import cleanly.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
@@ -88,7 +75,7 @@ def parse_args():
                         help="Number of images to evaluate (coco subset; flickr uses full test). Default: 5000")
     parser.add_argument("--tau", type=float, default=config.MCDISP_ALIGN_TAU,
                         help="Temperature for the MCDisp_Align uncertainty-discounted similarity")
-    # Likelihood knobs (the two deprecated-but-relevant scale controls).
+    # Likelihood scale controls.
     parser.add_argument("--per-dim-normalize", action="store_true", default=True,
                         help="Divide the Mahalanobis term by D (default: True).")
     parser.add_argument("--no-per-dim-normalize", dest="per_dim_normalize", action="store_false")
@@ -106,8 +93,7 @@ def parse_args():
 def extract_features(model, dataloader, device, num_samples=None):
     """Extract distribution features, INCLUDING the image covariance factor U.
 
-    Mirrors evaluate_mcdisp_align.extract_features but also collects img_U (which
-    that script drops). Returns CPU tensors; the caller moves what it needs to GPU.
+    Also collects img_U (which the cosine-only eval path drops). Returns CPU tensors; the caller moves what it needs to GPU.
     """
     model.eval()
 

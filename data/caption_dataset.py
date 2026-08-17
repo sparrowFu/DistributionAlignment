@@ -1,5 +1,5 @@
 """
-GaussianImageDistribution - Image Caption Dataset
+Image Caption Dataset
 
 This module provides a PyTorch Dataset class for loading image-caption pairs
 from a parquet file and image directory.
@@ -83,7 +83,7 @@ class ImageCaptionDataset(Dataset):
         """
         logger.info("Checking sample image availability (quick check of first 100 samples)...")
         missing_count = 0
-        check_samples = min(len(self.data), 100)  # Reduced from 1000 for faster initialization
+        check_samples = min(len(self.data), 100)
 
         for i in range(check_samples):
             image_file_name = self.data.loc[i, "image_file_name"]
@@ -142,10 +142,9 @@ class ImageCaptionDataset(Dataset):
         # Pad or truncate to num_captions
         if len(captions) < self.num_captions:
             # Repeat captions to fill up to num_captions
-            # Use a safe loop that won't infinite loop
             if captions:  # Only if we have at least one caption
                 while len(captions) < self.num_captions:
-                    captions.append(captions[0])  # Just repeat first caption
+                    captions.append(captions[0])
         elif len(captions) > self.num_captions:
             captions = captions[:self.num_captions]
 
@@ -203,8 +202,6 @@ def filter_none_collate(batch):
     """
     Collate function that filters out None values and converts to batch format.
 
-    Used by all training and evaluation scripts for image-caption data.
-
     Args:
         batch: List of dataset samples (may contain None for failed loads)
 
@@ -229,7 +226,6 @@ if __name__ == "__main__":
     import config
     from utils.logger import setup_logger
 
-    # Setup logger with console output
     setup_logger("caption_dataset", log_file=config.LOG_DIR / "dataset_test.log")
 
     # Create dataset

@@ -1,20 +1,4 @@
-"""
-GaussianImageDistribution - Shared retrieval-evaluation helpers.
-
-Centralizes the two things every retrieval-eval script derives from the
-``--dataset`` tag, so checkpoint auto-selection and eval-data selection stay in
-one place:
-
-  - resolve_checkpoint(model_name, dataset): the checkpoint trained on that
-    dataset, following the {model}_{dataset}_{best|last}.pt naming convention.
-  - build_eval_dataloader(dataset, ...): the evaluation DataLoader for that
-    dataset ("coco" -> MSCOCO via ImageCaptionDataset, "flickr" -> Flickr30K
-    test split).
-
-Both "coco" (MSCOCO) and "flickr" (flickr30k) produce {"image", "captions"}
-batches with diagonal image<->caption pairing, so callers can reuse the same
-feature-extraction and recall code regardless of dataset.
-"""
+"""Shared retrieval-evaluation helpers: resolve a model's checkpoint path and build the evaluation DataLoader for a ``--dataset`` tag. Both supported datasets yield {"image", "captions"} batches with diagonal image<->caption pairing."""
 
 from pathlib import Path
 from typing import Optional, Tuple
@@ -35,7 +19,7 @@ def resolve_checkpoint(model_name: str, dataset: str, which: str = "best") -> Pa
 
     Args:
         model_name: model prefix ("mcdisp_align", "clip_baseline", "prolip").
-        dataset: dataset tag (see :data:`utils.dataset_registry.VALID_DATASETS`).
+        dataset: dataset tag.
         which: "best" (default) or "last".
     """
     if dataset not in VALID_DATASETS:
@@ -58,7 +42,7 @@ def build_eval_dataloader(
 ) -> Tuple[DataLoader, int]:
     """Build the evaluation DataLoader for the given dataset tag.
 
-    Dispatches on the dataset's ``eval_kind`` (see :mod:`utils.dataset_registry`),
+    Dispatches on the dataset's ``eval_kind``,
     so the set of supported datasets is defined entirely by the registry:
 
     - ``image_caption`` -> MSCOCO via ``ImageCaptionDataset`` (config captions/

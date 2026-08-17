@@ -1,5 +1,5 @@
 """
-GaussianImageDistribution - Loss Functions
+Loss Functions
 
 This package provides loss functions for CLIP training and
 distribution-based alignment.

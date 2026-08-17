@@ -1,11 +1,7 @@
 """
-GaussianImageDistribution - CLIP Baseline Evaluation Script
+CLIP Baseline Evaluation Script
 
 This script evaluates the CLIP baseline model using image-text retrieval.
-
-Usage:
-    python scripts/evaluate_clip_baseline.py
-    python main.py --task eval_clip_baseline
 """
 
 import argparse
@@ -31,7 +27,6 @@ logger = get_logger("eval_clip_baseline", config.EVAL_CLIP_BASELINE_LOG_PATH)
 
 
 def parse_args():
-    """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Evaluate CLIP Baseline Model")
 
     parser.add_argument("--checkpoint", type=str, default=None,
@@ -67,7 +62,6 @@ def extract_features(
     device: torch.device,
     num_samples: int = None
 ):
-    """Extract image and text features."""
     model.eval()
 
     all_img_features = []
@@ -79,20 +73,16 @@ def extract_features(
         if batch is None:
             continue
 
-        # Get data - PIL images and text lists
         pil_images = batch["image"]
         caption_lists = batch["captions"]
 
-        # Use first caption for evaluation consistency
         selected_captions = [captions[0] for captions in caption_lists]
 
-        # Process with CLIP processor
         pixel_values = model.process_images(pil_images).to(device)
         text_inputs = model.process_text(selected_captions)
         input_ids = text_inputs["input_ids"].to(device)
         attention_mask = text_inputs["attention_mask"].to(device)
 
-        # Forward pass
         image_features, text_features = model(
             images=pixel_values,
             input_ids=input_ids,
@@ -106,7 +96,6 @@ def extract_features(
         if num_samples and sample_count >= num_samples:
             break
 
-    # Concatenate features
     img_features = torch.cat(all_img_features, dim=0)
     text_features = torch.cat(all_text_features, dim=0)
 
@@ -120,13 +109,11 @@ def extract_features(
 
 
 def main():
-    """Main evaluation function."""
     args = parse_args()
 
-    # Set random seed
     set_seed(config.SEED)
 
-    # Load model (auto-select checkpoint by dataset: clip_baseline_{dataset}_best.pt)
+    # auto-selects clip_baseline_{dataset}_best.pt
     checkpoint_path = args.checkpoint or str(resolve_checkpoint("clip_baseline", args.dataset))
     logger.info(f"Loading model from {checkpoint_path}")
 
@@ -135,7 +122,7 @@ def main():
     model.load(checkpoint_path)
     model = model.to(args.device)
 
-    # Load dataset (auto-selected by --dataset: coco=MSCOCO, flickr=flickr30k test)
+    # coco=MSCOCO, flickr=flickr30k test split
     dataloader, num_eval_samples = build_eval_dataloader(
         args.dataset,
         batch_size=args.batch_size,
@@ -146,7 +133,6 @@ def main():
     )
     logger.info(f"Dataset loaded ({args.dataset}): {num_eval_samples} samples")
 
-    # Extract features
     img_features, text_features = extract_features(
         model, dataloader, args.device, args.num_samples
     )

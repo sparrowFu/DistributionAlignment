@@ -1,5 +1,5 @@
 """
-GaussianImageDistribution - Exp7: σ Semantic Analysis
+Exp7: σ Semantic Analysis
 
 Verifies the core hypothesis: σ²_img ≈ Var(μ_captions)
 
@@ -7,10 +7,6 @@ Three sub-experiments:
     A: σ² vs caption diversity correlation (Pearson/Spearman)
     B: σ² variation with caption diversity
     C: σ² t-SNE visualization
-
-Usage:
-    python scripts/eval_sigma_analysis.py
-    python main.py --task eval_sigma_analysis
 """
 
 import argparse

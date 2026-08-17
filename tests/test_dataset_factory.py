@@ -1,16 +1,5 @@
 """
-Tests for utils/dataset_factory.build_train_dataset — the ``--dataset``
-dispatch shared by the three fine-tuning scripts (clip_baseline, mcdisp_align,
-prolip), so ``--dataset coco|flickr`` selects the *training data* (not just the
-checkpoint filename).
-
-Mirrors utils.eval_common.build_eval_dataloader, which already does the same
-for evaluation data: "coco" -> ImageCaptionDataset (MSCOCO train parquet),
-"flickr" -> Flickr30KDataset (train split, excluding the held-out test split
-that get_flickr30k_test_loader evaluates on).
-
-Runnable without pytest:
-    python tests/test_dataset_factory.py
+Tests for the --dataset dispatch that selects the training data (coco=MSCOCO, flickr=flickr30k) for all fine-tuning scripts.
 """
 
 import sys

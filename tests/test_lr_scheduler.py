@@ -1,8 +1,6 @@
 """
 Tests for utils/lr_scheduler.py (cosine + linear warmup schedule).
 
-Runnable without pytest:
-    python tests/test_lr_scheduler.py
 Each test_* function uses asserts; __main__ runs them all and reports.
 """
 

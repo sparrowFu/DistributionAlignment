@@ -1,5 +1,5 @@
 """
-GaussianImageDistribution - CLIP Loss Functions
+CLIP Loss Functions
 
 This module implements the standard CLIP contrastive loss for
 image-text representation learning.

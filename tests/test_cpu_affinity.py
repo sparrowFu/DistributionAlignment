@@ -10,9 +10,6 @@ Background: CPU 2 on this server is unstable and crashes runs with SIGSEGV
 in that case — an empty list that reads like "nothing was excluded", even though
 the process is in fact already protected. The log must instead state clearly that
 the requested core is already offline / unavailable.
-
-Runnable without pytest:
-    python tests/test_cpu_affinity.py
 """
 
 import logging

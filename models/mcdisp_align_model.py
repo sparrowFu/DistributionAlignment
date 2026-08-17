@@ -1,5 +1,5 @@
 """
-GaussianImageDistribution - Distribution Alignment Model
+MCDisp_Align Model
 
 This module implements a distribution-based image-text alignment model
 that models image and text embeddings as Gaussian distributions.
@@ -22,7 +22,7 @@ logger = get_logger("mcdisp_align_model")
 
 class MCDispAlignModel(nn.Module):
     """
-    Distribution Alignment Model for Multi-Modal Semantic Matching.
+    MCDisp_Align model for multi-modal semantic matching.
 
     This model extends CLIP by learning to model image and text embeddings
     as Gaussian distributions, addressing:
@@ -167,7 +167,7 @@ class MCDispAlignModel(nn.Module):
     def _build_cov_heads(self) -> None:
         """(Re)create the low-rank covariance factor head for ``self.cov_rank``.
 
-        Per the methodology, covariance is image-side only (text is diagonal in
+        Covariance is image-side only (text is diagonal in
         v1), so only ``img_cov_head`` is built. Small (non-zero) init keeps
         Sigma near-diagonal at the start while still letting the L_cov
         subspace-alignment gradient bootstrap U (zero init would make that loss
@@ -354,7 +354,7 @@ class MCDispAlignModel(nn.Module):
         img_U = self._cov_factor(self.img_cov_head, img_features) if self.cov_rank > 0 else None
 
         # Text distributions (K captions): mu, sigma^2. Text is diagonal-only
-        # (methodology v1: covariance is image-side), so there is no text_U.
+        # (covariance is image-side), so there is no text_U.
         text_mus, text_logvars = [], []
         for k in range(K):
             fk = text_features[:, k, :]
@@ -541,7 +541,6 @@ if __name__ == "__main__":
     setup_logger("mcdisp_align_model", config.LOG_DIR / "mcdisp_align_model_test.log")
     set_seed(config.SEED)
 
-    # Create model
     model = MCDispAlignModel(
         freeze_clip=config.MCDISP_ALIGN_FREEZE_CLIP,
         distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
@@ -565,7 +564,6 @@ if __name__ == "__main__":
     print(f"  Images: {dummy_images.shape}")
     print(f"  Input IDs: {dummy_input_ids.shape}")
 
-    # Forward pass
     with torch.no_grad():
         outputs = model(dummy_images, dummy_input_ids, dummy_attention_mask)
 
@@ -575,7 +573,7 @@ if __name__ == "__main__":
         print(f"  {key}: {shape}")
 
     # Verify covariance factor shapes (default model uses cov_rank > 0).
-    # Text is diagonal-only (methodology v1), so text_Us is always None.
+    # Text is diagonal-only, so text_Us is always None.
     assert outputs['img_U'] is not None, "img_U should exist for cov_rank>0"
     assert outputs['img_U'].shape == (batch_size, 768, config.MCDISP_ALIGN_COV_RANK)
     assert outputs['text_Us'] is None, "text_Us should be None (text diagonal-only)"

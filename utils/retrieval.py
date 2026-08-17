@@ -1,14 +1,4 @@
-"""
-GaussianImageDistribution - Shared image-text retrieval utilities.
-
-Centralizes Recall@K computation so every evaluation script reports the same
-metrics in the same way, including BOTH retrieval directions:
-
-    - I2T (Image -> Text): query = image, gallery = text
-    - T2I (Text -> Image): query = text,  gallery = image
-
-Previously each eval script carried its own (I2T-only) copy of this logic.
-"""
+"""Shared image-text Recall@K computation. Supports both retrieval directions: I2T (query=image, gallery=text) and T2I (query=text, gallery=image)."""
 
 from typing import Dict, List
 
@@ -220,10 +210,7 @@ def compute_multicaption_recall(
 ) -> Dict[str, float]:
     """Standard multi-caption bidirectional Recall@K (N images vs N*K captions).
 
-    This is the canonical MS-COCO/Flickr30k retrieval protocol and the
-    methodology's intended "one-image-many-captions" evaluation (evaluating on
-    the merged text mean would collapse the one-to-many structure at eval time
-    and is not comparable to any published baseline):
+    This is the canonical MS-COCO/Flickr30k retrieval protocol (evaluating on the merged text mean would collapse the one-to-many structure at eval time and is not comparable to published baselines):
 
       I2T: query = N image means, gallery = N*K per-caption means. Image i has K
            positives -- its own captions at flattened indices [i*K, i*K+K). A hit

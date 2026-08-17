@@ -1,33 +1,4 @@
-"""
-GaussianImageDistribution - Unified retrieval-eval output.
-
-Every retrieval-eval script describes what it computed as a list of "metric
-groups", then calls:
-
-  - print_recall_groups(groups, logger): the terminal table.
-  - groups_to_flat(groups):            the flat metrics dict for the JSON record.
-  - append_eval_results(path, record): append the record to the results JSON
-                                       (a list, never overwriting prior runs),
-                                       stamping a `time` field right after
-                                       `dataset`.
-
-This keeps the print format and the on-disk schema identical across all models
-(mcdisp_align, clip_baseline, prolip, and the two zero-shot variants).
-
-Group shape::
-
-    {"family": "mcdisp_align_recall",                     # flat-key prefix
-     "label":  "MCDisp_Align-score Recall@K (primary)",   # terminal header
-     "per_k":  {1: {"i2t": .6, "t2i": .6, "mean": .6},   # or {"value": .5}
-                5: {...}, ...}}
-
-Flat-key convention (matches the existing mcdisp_align_eval_results.json)::
-
-    mean          -> {family}@{k}        e.g. mcdisp_align_recall@1
-    i2t           -> {family}_i2t@{k}    e.g. mcdisp_align_recall_i2t@1
-    t2i           -> {family}_t2i@{k}    e.g. mcdisp_align_recall_t2i@1
-    single value  -> {family}@{k}        e.g. recall@1
-"""
+"""Unified retrieval-eval output. Callers describe results as a list of "metric groups", then print/flatten/append them via the helpers below. Group shape: {"family": <flat-key prefix>, "label": <terminal header>, "per_k": {k: {"i2t","t2i","mean"} or {"value"}}}. Flat keys: mean -> {family}@{k}, i2t -> {family}_i2t@{k}, t2i -> {family}_t2i@{k}, single value -> {family}@{k}."""
 
 import json
 from datetime import datetime

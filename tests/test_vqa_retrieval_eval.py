@@ -1,10 +1,4 @@
-"""
-Tests for scripts/eval_vqa_retrieval.py 的 encode_all / compute_all_metrics。
-用 fake adapter 跑编排逻辑,不加载真实模型。
-
-Runnable without pytest:
-    python tests/test_vqa_retrieval_eval.py
-"""
+"""Tests for the VQA-retrieval eval orchestration (encode_all / compute_all_metrics), using a fake adapter so no real model is loaded."""
 
 import sys
 from pathlib import Path

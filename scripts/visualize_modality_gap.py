@@ -1,5 +1,5 @@
 """
-GaussianImageDistribution - Modality Gap Visualization
+Modality Gap Visualization
 
 Generates publication-quality figures comparing modality gap reduction
 across all methods:
@@ -9,11 +9,6 @@ across all methods:
   Figure D: Variance magnitude distribution histograms (distribution models only)
   Figure E: Per-sample variance vs cosine similarity scatter (distribution models only)
   Figure F: Per-dimension variance profile bar chart (distribution models only)
-
-Usage:
-    python scripts/visualize_modality_gap.py
-    python scripts/visualize_modality_gap.py --num-samples 2000 --device cuda
-    python scripts/visualize_modality_gap.py --model-type mcdisp_align
 """
 
 import argparse
@@ -156,11 +151,11 @@ def extract_prolip(model, dataloader, device, num_samples):
 
 @torch.no_grad()
 def extract_mcdisp_align(model, dataloader, device, num_samples):
-    """Distribution Alignment: img_mu and text_mu, then normalize."""
+    """MCDisp_Align: extract img_mu and text_mu, then normalize."""
     model.eval()
     all_img, all_text, all_img_lv, all_text_lv = [], [], [], []
     for pv, ids, mask in _iterate_batches(dataloader, model, device, num_samples):
-        # Dist-Align expects (B, K, max_len), reshape to K=1
+        # Model expects (B, K, max_len); reshape to K=1.
         ids_3d = ids.unsqueeze(1)
         mask_3d = mask.unsqueeze(1)
         outputs = model(pv, ids_3d, mask_3d)

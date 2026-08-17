@@ -1,11 +1,11 @@
 """
-GaussianImageDistribution - Retrieval Metrics
+Retrieval Metrics
 
 Image-text retrieval Recall@K supporting both retrieval directions (I2T and T2I)
 and two similarity notions used by probabilistic models:
 
   - cosine : mean . mean (means are L2-normalized)
-  - CSD    : Contraction-SubSpace distance (ProLIP).
+  - CSD    : Contraction-SubSpace distance.
             score(image_i, text_j) = mu_i . mu_j - 0.5 * sigma^2_j
             I2T discounts by the *text* uncertainty, T2I by the *image* uncertainty
             (i.e. the uncertainty of the gallery side).

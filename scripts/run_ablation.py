@@ -1,17 +1,16 @@
 """
-GaussianImageDistribution - Exp5: Ablation Study Script
+Exp5: Ablation Study Script
 
 Quantifies the contribution of each MCDisp_Align loss component by training mcdisp_align
 with different configurations and evaluating retrieval.
 
-Each ablation variant is trained by the SAME code as the real model
-(:func:`utils.mcdisp_align_trainer.run_mcdisp_align_training`) — staged schedule,
+Each ablation variant is trained by the SAME code as the real model — staged schedule,
 grad clipping, recall/loss best-checkpoint selection, early stopping — differing
 only in the loss weights / ``cov_rank`` / ``num_captions`` overrides, the
 ``--dataset`` (coco or flickr), and the per-variant checkpoint path. So ablation
 results are directly comparable to a full training run.
 
-Ablation configurations (see config.ABLATION_CONFIGS):
+Ablation configurations:
     - Full MCDisp_Align (set-NCE + mu + var + cover + cov + reg)
     - w/o L_var (variance semantic consistency)
     - w/o L_cover (multi-caption coverage)
@@ -23,11 +22,6 @@ Ablation configurations (see config.ABLATION_CONFIGS):
     - lambda_var sensitivity: 0.1 / 0.5 / 1.0 / 2.0 / 5.0
     - lambda_cover sensitivity: 0.1 / 0.5 / 1.0 / 2.0
     - tau sensitivity: 0.05 / 0.07 / 0.1 / 0.2
-
-Usage:
-    python scripts/run_ablation.py --config all --dataset coco
-    python scripts/run_ablation.py --config no_var --dataset flickr
-    python main.py --task run_ablation --config all --dataset flickr
 """
 
 import argparse

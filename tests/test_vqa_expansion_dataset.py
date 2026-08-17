@@ -1,8 +1,5 @@
 """
-Tests for data/vqa_expansion_dataset.py
-
-Runnable without pytest:
-    python tests/test_vqa_expansion_dataset.py
+Tests for the VQA expansion dataset loader.
 """
 
 import json
