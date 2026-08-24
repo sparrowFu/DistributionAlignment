@@ -156,3 +156,138 @@ def write_report(results, out_dir=ABLATION_OUT_DIR):
         for row in rows:
             w.writerow(row)
     return md_path
+
+
+def _get_logger():
+    from utils.logger import get_logger
+    return get_logger("run_ablation", config.LOG_DIR / "run_ablation_v2.log")
+
+
+def cmd_train(args):
+    from utils.cpu_affinity import apply_cpu_affinity
+    from utils.mcdisp_align_trainer import run_mcdisp_align_training
+
+    apply_cpu_affinity()
+    logger = _get_logger()
+    ABLATION_CKPT_DIR.mkdir(parents=True, exist_ok=True)
+    cfg = build_variant_config(
+        args.variant, epochs=args.epochs, batch_size=args.batch_size,
+        device=args.device or "cuda")
+    logger.info(f"=== ablation_v2 train {args.variant} (seed={SEED}) ===")
+    run_mcdisp_align_training(cfg, logger)
+
+
+def cmd_eval(args):
+    import torch
+
+    from models.mcdisp_align_model import MCDispAlignModel
+    from utils.eval_common import build_eval_dataloader
+    from utils.retrieval import compute_multicaption_recall
+
+    logger = _get_logger()
+    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    ckpt = ABLATION_CKPT_DIR / f"{args.variant}_coco_best.pt"
+    if not ckpt.exists():
+        raise FileNotFoundError(
+            f"{ckpt} 不存在——先运行: "
+            f"python scripts/run_ablation.py train --variant {args.variant}")
+
+    model = MCDispAlignModel()   # load() 按 checkpoint 的 cov_rank 自动重建协方差头
+    model.load(str(ckpt))
+    model = model.to(device).eval()
+
+    loader, n_eval = build_eval_dataloader(
+        "coco",
+        batch_size=args.batch_size or config.MCDISP_ALIGN_BATCH_SIZE,
+        num_workers=config.NUM_WORKERS,
+        num_samples=args.num_samples,   # None = 数据集全量（COCO val 5000）
+    )
+
+    feats = {k: [] for k in ("img_mu", "img_logvar", "text_mus", "text_logvars")}
+    with torch.no_grad():
+        for batch in loader:
+            if batch is None:
+                continue
+            pil_images, caption_lists = batch["image"], batch["captions"]
+            B, K = len(pil_images), len(caption_lists[0])
+            pixel_values = model.process_images(pil_images).to(device)
+            flat = [c for cs in caption_lists for c in cs]
+            ti = model.process_text(flat)
+            outputs = model(
+                pixel_values,
+                ti["input_ids"].view(B, K, -1).to(device),
+                ti["attention_mask"].view(B, K, -1).to(device),
+            )
+            feats["img_mu"].append(outputs["img_mu"].cpu())
+            feats["img_logvar"].append(outputs["img_logvar"].cpu())
+            feats["text_mus"].append(outputs["text_mus"].cpu())
+            feats["text_logvars"].append(outputs["text_logvars"].cpu())
+
+    img_mu = torch.cat(feats["img_mu"])
+    img_lv = torch.cat(feats["img_logvar"])
+    t_mus = torch.cat(feats["text_mus"])
+    t_lvs = torch.cat(feats["text_logvars"])
+
+    metrics = compute_multicaption_recall(
+        img_mu, img_lv, t_mus, t_lvs, list(K_VALUES), tau=config.MCDISP_ALIGN_TAU)
+    mr = sum(metrics[f"mc_recall@{k}"] for k in K_VALUES) / len(K_VALUES)
+    cos_mr = sum(metrics[f"mc_cos_recall@{k}"] for k in K_VALUES) / len(K_VALUES)
+
+    result = {
+        "variant": args.variant,
+        "desc": VARIANTS[args.variant]["desc"],
+        "checkpoint": str(ckpt),
+        "num_samples": n_eval,
+        "tau": config.MCDISP_ALIGN_TAU,
+        "seed": SEED,
+        "mR": mr,
+        "cos_mR": cos_mr,
+        "metrics": metrics,
+    }
+    ABLATION_OUT_DIR.mkdir(parents=True, exist_ok=True)
+    out = ABLATION_OUT_DIR / f"{args.variant}.json"
+    out.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+    logger.info(f"{args.variant}: mR={mr:.4f} cos_mR={cos_mr:.4f} (N={n_eval}) -> {out}")
+
+
+def cmd_report(args):
+    logger = _get_logger()
+    results = {}
+    for name in VARIANTS:
+        p = ABLATION_OUT_DIR / f"{name}.json"
+        if p.exists():
+            results[name] = json.loads(p.read_text(encoding="utf-8"))
+        else:
+            logger.warning(f"缺少 {p}，报告中跳过 {name}")
+    md_path = write_report(results)
+    logger.info(f"report -> {md_path}")
+
+
+def cmd_all(args):
+    for name in VARIANTS:
+        args.variant = name
+        cmd_train(args)
+        cmd_eval(args)
+    cmd_report(args)
+
+
+def main():
+    ap = argparse.ArgumentParser(description="MCDisp_Align 消融实验 v2（检索判据）")
+    ap.add_argument("command", choices=["train", "eval", "report", "all"])
+    ap.add_argument(
+        "--variant", "--config", dest="variant", default="full",
+        choices=list(VARIANTS),
+        help="消融变体（--config 为 main.py 兼容别名）")
+    ap.add_argument("--epochs", type=int, default=None)
+    ap.add_argument("--batch-size", type=int, default=None)
+    ap.add_argument(
+        "--num-samples", type=int, default=None,
+        help="eval 评测图像数上限（默认数据集全量，COCO val 5000）")
+    ap.add_argument("--device", default=None)
+    args = ap.parse_args()
+    {"train": cmd_train, "eval": cmd_eval,
+     "report": cmd_report, "all": cmd_all}[args.command](args)
+
+
+if __name__ == "__main__":
+    main()

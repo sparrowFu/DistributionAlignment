@@ -83,3 +83,16 @@ def test_markdown_table_full_coverage():
 
 def test_markdown_table_empty():
     assert format_markdown_table([]).startswith("（暂无")
+
+
+def test_write_report_smoke(tmp_path):
+    from scripts.run_ablation import write_report
+
+    results = {v: _fake_eval(v, 0.6 - 0.02 * i) for i, v in enumerate(VARIANTS)}
+    md_path = write_report(results, out_dir=tmp_path)
+    assert md_path.exists() and md_path.name == "report.md"
+    csv_path = tmp_path / "report.csv"
+    assert csv_path.exists()
+    lines = csv_path.read_text(encoding="utf-8").splitlines()
+    assert lines[0].startswith("variant") and "desc" not in lines[0]
+    assert len(lines) == 1 + len(VARIANTS)
