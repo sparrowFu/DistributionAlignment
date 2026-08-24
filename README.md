@@ -64,7 +64,7 @@ GaussianImageDistribution/
 │   ├── build_vqa_expansions.py      # Stage-2: build gemma caption expansions
 │   ├── eval_vqa_retrieval.py        # Stage-2: VQA-as-retrieval evaluation
 │   ├── eval_ood.py                  # Exp4: OOD detection
-│   ├── run_ablation.py              # Exp5: Ablation study
+│   ├── run_ablation.py              # Exp5: Ablation v2 (train/eval/report/all 子命令 + --variant)
 │   ├── eval_flickr30k.py            # Exp6: Flickr30K generalization
 │   ├── eval_sigma_analysis.py       # Exp7: σ semantic analysis
 │   ├── visualize_modality_gap.py    # Exp8: Modality gap visualization
@@ -164,7 +164,7 @@ python main.py --task eval_vqa_retrieval --model mcdisp_align
 
 ```bash
 python main.py --task eval_ood                         # Exp4: OOD detection (sigma-based)
-python main.py --task run_ablation --config all        # Exp5: ablation study
+python scripts/run_ablation.py all                      # Exp5: ablation v2 (或: python main.py --task run_ablation --command train --variant full)
 python main.py --task eval_flickr30k --model-type mcdisp_align   # Exp6: cross-dataset generalization
 python main.py --task eval_sigma_analysis              # Exp7: σ semantic analysis
 python main.py --task visualize_gap                    # Exp8: modality gap visualization

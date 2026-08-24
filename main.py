@@ -42,7 +42,7 @@ Available tasks:
     eval_vqa_retrieval     VQA-as-retrieval eval (gemma caption, 5 models)
 
   Experiment Tasks:
-    run_ablation           Ablation v2 (--variant full|no_var|no_dir|no_cover ...)
+    run_ablation           Ablation v2 (--command train --variant full|no_var|no_dir|no_cover)
     eval_ood               Exp4: OOD detection (sigma-based anomaly scoring)
     eval_sigma_analysis    Exp7: sigma semantic analysis
     visualize_gap          Exp8: Modality gap visualization
@@ -58,7 +58,7 @@ Examples:
   python main.py --task eval_mcdisp_align
   python main.py --task build_vqa_expansions --split test --limit 0 --no-batch
   python main.py --task eval_vqa_retrieval --model mcdisp_align
-  python main.py --task run_ablation --variant full
+  python main.py --task run_ablation --command train --variant full
   python main.py --task eval_sigma_analysis
   python main.py --task eval_flickr30k --model-type mcdisp_align
         """
@@ -136,8 +136,10 @@ Examples:
     parser.add_argument("--output-path", type=str, default=None)
 
     # Experiment-specific arguments
-    parser.add_argument("--config", type=str, default=None,
-                        help="Configuration name for ablation study")
+    parser.add_argument("--config", "--variant", type=str, default=None,
+                        dest="config",
+                        help="Ablation variant: full|no_var|no_dir|no_cover "
+                             "(alias of --config)")
 
     # Caption-build arguments (build_vqa_expansions)
     parser.add_argument("--split", type=str, default=None,
@@ -160,12 +162,22 @@ Examples:
     parser.add_argument("--resume", type=str, default=None,
                         help="Path to checkpoint to resume training from")
 
+    # Ablation v2 subcommand (run_ablation only; ignored for other tasks)
+    parser.add_argument("--command", type=str, default=None,
+                        choices=["train", "eval", "report", "all"],
+                        help="Ablation v2 subcommand (train/eval/report/all) — "
+                             "required for run_ablation")
+
     return parser.parse_args()
 
 
 def run_python_script(script_path: Path, args: argparse.Namespace) -> int:
     """Run a Python script with the given arguments."""
     cmd = [sys.executable, str(script_path)]
+
+    # Ablation v2: subcommand must be the first positional argument
+    if args.task == "run_ablation" and getattr(args, "command", None):
+        cmd.append(args.command)
 
     if args.model_type:
         cmd.extend(["--model-type", args.model_type])
@@ -262,6 +274,11 @@ TASK_SCRIPTS = {
 def main():
     """Main entry point."""
     args = parse_args()
+
+    if args.task == "run_ablation" and not args.command:
+        logger.error("--task run_ablation requires --command "
+                     "(train|eval|report|all)")
+        return 1
 
     # Exclude faulty CPU cores (e.g. unstable CPU 2 on this server) before
     # spawning the task subprocess, which inherits this affinity.
