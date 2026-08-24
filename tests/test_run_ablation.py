@@ -7,7 +7,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
 
-from scripts.run_ablation import VARIANTS, build_variant_config
+from scripts.run_ablation import (
+    VARIANTS,
+    build_variant_config,
+    build_report_rows,
+    format_markdown_table,
+)
 
 
 def test_variant_set_and_overrides():
@@ -46,3 +51,35 @@ def test_unknown_variant_raises():
     except KeyError:
         return
     raise AssertionError("未知变体应抛 KeyError")
+
+
+def _fake_eval(variant, mr):
+    met = {}
+    for k in (1, 5, 10):
+        met[f"mc_recall_i2t@{k}"] = mr + 0.01 * k
+        met[f"mc_recall_t2i@{k}"] = mr
+    return {"variant": variant, "mR": mr, "cos_mR": mr - 0.01, "metrics": met}
+
+
+def test_report_rows_order_and_delta():
+    results = {
+        "full": _fake_eval("full", 0.60),
+        "no_var": _fake_eval("no_var", 0.55),
+    }  # no_dir / no_cover 缺失 -> 跳过
+    rows = build_report_rows(results)
+    assert [r["variant"] for r in rows] == ["full", "no_var"]
+    assert rows[0]["delta_mR"] is None                     # full 自身无 Δ
+    assert abs(rows[1]["delta_mR"] - (-0.05)) < 1e-9       # 0.55 - 0.60
+    assert rows[1]["i2t R@1"] == 0.55 + 0.01
+
+
+def test_markdown_table_full_coverage():
+    results = {v: _fake_eval(v, 0.6 - 0.02 * i) for i, v in enumerate(VARIANTS)}
+    md = format_markdown_table(build_report_rows(results))
+    assert "| variant" in md and "delta_mR" in md
+    assert all(f"| {v} " in md for v in VARIANTS)
+    assert "i2t R@1" in md and "t2i R@10" in md
+
+
+def test_markdown_table_empty():
+    assert format_markdown_table([]).startswith("（暂无")
