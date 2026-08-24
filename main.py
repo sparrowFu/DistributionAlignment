@@ -42,7 +42,7 @@ Available tasks:
     eval_vqa_retrieval     VQA-as-retrieval eval (gemma caption, 5 models)
 
   Experiment Tasks:
-    run_ablation           Exp5: Ablation study (--config all|no_consistency|...)
+    run_ablation           Ablation v2 (--variant full|no_var|no_dir|no_cover ...)
     eval_ood               Exp4: OOD detection (sigma-based anomaly scoring)
     eval_sigma_analysis    Exp7: sigma semantic analysis
     visualize_gap          Exp8: Modality gap visualization
@@ -58,7 +58,7 @@ Examples:
   python main.py --task eval_mcdisp_align
   python main.py --task build_vqa_expansions --split test --limit 0 --no-batch
   python main.py --task eval_vqa_retrieval --model mcdisp_align
-  python main.py --task run_ablation --config all
+  python main.py --task run_ablation --variant full
   python main.py --task eval_sigma_analysis
   python main.py --task eval_flickr30k --model-type mcdisp_align
         """
