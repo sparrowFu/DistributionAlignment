@@ -223,10 +223,12 @@ def cmd_eval(args):
             feats["text_mus"].append(outputs["text_mus"].cpu())
             feats["text_logvars"].append(outputs["text_logvars"].cpu())
 
-    img_mu = torch.cat(feats["img_mu"])
-    img_lv = torch.cat(feats["img_logvar"])
-    t_mus = torch.cat(feats["text_mus"])
-    t_lvs = torch.cat(feats["text_logvars"])
+    # 打分在 GPU 上做（与主实验 eval 一致）；累积时用 CPU 控制
+    # 显存，cat 完整表后一次性搬回 device（5000×25000 相似度 CPU 上会慢数分钟）。
+    img_mu = torch.cat(feats["img_mu"]).to(device)
+    img_lv = torch.cat(feats["img_logvar"]).to(device)
+    t_mus = torch.cat(feats["text_mus"]).to(device)
+    t_lvs = torch.cat(feats["text_logvars"]).to(device)
 
     metrics = compute_multicaption_recall(
         img_mu, img_lv, t_mus, t_lvs, list(K_VALUES), tau=config.MCDISP_ALIGN_TAU)
