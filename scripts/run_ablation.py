@@ -1,207 +1,84 @@
-"""
-Exp5: Ablation Study Script
+"""MCDisp_Align 消融实验 v2。
 
-Quantifies the contribution of each MCDisp_Align loss component by training mcdisp_align
-with different configurations and evaluating retrieval.
+设计文档: docs/superpowers/specs/2026-08-24-ablation-v2-design.md
 
-Each ablation variant is trained by the SAME code as the real model — staged schedule,
-grad clipping, recall/loss best-checkpoint selection, early stopping — differing
-only in the loss weights / ``cov_rank`` / ``num_captions`` overrides, the
-``--dataset`` (coco or flickr), and the per-variant checkpoint path. So ablation
-results are directly comparable to a full training run.
+4 个变体，每个 = 完整方法拿掉一个创新模块，以多描述检索协议
+（N 图像 vs N*5 描述，MCDisp_Align 打分器，与主实验 evaluate_mcdisp_align
+同口径）为唯一判据：
 
-Ablation configurations:
-    - Full MCDisp_Align (set-NCE + mu + var + cover + cov + reg)
-    - w/o L_var (variance semantic consistency)
-    - w/o L_cover (multi-caption coverage)
-    - w/o L_cov (covariance direction)
-    - w/o L_mu (mean-center alignment)
-    - diagonal only (cov_rank=0)
-    - w/o uncertainty-discounted similarity (standard cosine)
-    - K = 1 / 3 / 5 captions
-    - lambda_var sensitivity: 0.1 / 0.5 / 1.0 / 2.0 / 5.0
-    - lambda_cover sensitivity: 0.1 / 0.5 / 1.0 / 2.0
-    - tau sensitivity: 0.05 / 0.07 / 0.1 / 0.2
+    full      完整方法（复刻主实验配置，λ_cov=0.01, r=4）
+    no_var    lambda_var=0             方差<-多描述离散度监督（核心创新）
+    no_dir    cov_rank=0, lambda_cov=0 低秩协方差<-主要变化方向（连头移除）
+    no_cover  lambda_cover_pos=0       逐描述覆盖
+
+用法:
+    python scripts/run_ablation.py train --variant full
+    python scripts/run_ablation.py eval  --variant no_var
+    python scripts/run_ablation.py report
+    python scripts/run_ablation.py all
 """
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
-import torch
-
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
-from utils.dataset_registry import VALID_DATASETS
-from utils.mcdisp_align_trainer import MCDispAlignTrainConfig, run_mcdisp_align_training
-from utils.logger import get_logger, log_exception
+
+SEED = config.SEED                    # 与主实验一致的划分种子（42）
+K_VALUES = (1, 5, 10)
+ABLATION_CKPT_DIR = config.CHECKPOINT_DIR / "ablation_v2"
+ABLATION_OUT_DIR = config.OUTPUT_DIR / "ablation"
+
+# 变体 -> 相对主配置的覆盖项。full 为空 dict = 全部取 config 默认
+# （即主实验实测超参 ctr1.0/mu0.5/var1.0/cover_pos0.5/cov0.01/reg0.01, r=4）。
+# 关闭一项损失就是权重清零，不做重新归一化。
+VARIANTS = {
+    "full": {
+        "desc": "完整方法（= 主实验配置）",
+        "overrides": {},
+    },
+    "no_var": {
+        "desc": "去掉 L_var：方差←多描述离散度监督（核心创新）",
+        "overrides": {"lambda_var": 0.0},
+    },
+    "no_dir": {
+        "desc": "去掉低秩模块：cov_rank=0 且 λ_cov=0（协方差与覆盖距离均退化为对角）",
+        "overrides": {"cov_rank": 0, "lambda_cov": 0.0},
+    },
+    "no_cover": {
+        "desc": "去掉 L_cover：逐描述覆盖",
+        "overrides": {"lambda_cover_pos": 0.0},
+    },
+}
 
 
-logger = get_logger("ablation", config.ABLATION_LOG_PATH)
+def build_variant_config(variant, epochs=None, batch_size=None, device="cuda"):
+    """变体名 -> MCDispAlignTrainConfig。
 
-# Exclude faulty CPU cores (e.g. unstable CPU 2) before DataLoader workers and
-# torch threads are created. Inherited by forked worker processes.
-from utils.cpu_affinity import apply_cpu_affinity
-apply_cpu_affinity()
+    未覆盖字段全部走 config 默认（= 主实验配置）；4 个变体共用同一 seed，
+    train/val random_split 划分完全一致。训练器 import 延迟到函数内，
+    保证单元测试导入本模块轻量（不拉 torch/CLIP 之外的重组件）。
+    """
+    from utils.mcdisp_align_trainer import MCDispAlignTrainConfig
 
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Exp5: Ablation Study")
-    parser.add_argument("--config", type=str, default="all",
-                        choices=list(config.ABLATION_CONFIGS.keys()) + ["all", "sensitivity"],
-                        help="Ablation configuration to run")
-    parser.add_argument("--dataset", type=str, default="coco",
-                        choices=list(VALID_DATASETS),
-                        help="Dataset to train/evaluate on (coco=MSCOCO, flickr=flickr30k)")
-    parser.add_argument("--epochs", type=int, default=config.MCDISP_ALIGN_EPOCHS)
-    parser.add_argument("--batch-size", type=int, default=config.MCDISP_ALIGN_BATCH_SIZE)
-    parser.add_argument("--lr", type=float, default=config.MCDISP_ALIGN_MLP_LR,
-                        help="Learning rate for the (non-frozen) MCDisp_Align heads")
-    parser.add_argument("--eval-samples", type=int, default=500,
-                        help="Number of eval samples for the final retrieval report "
-                             "(coco subset; flickr uses its full test split)")
-    parser.add_argument("--device", type=str,
-                        default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--output-dir", type=str, default=None)
-    parser.add_argument("--skip-training", action="store_true",
-                        help="Skip training, only evaluate existing checkpoints")
-    return parser.parse_args()
-
-
-def _config_from_ablation(config_name, ablation_config, args, best_path, last_path):
-    """Map an ABLATION_CONFIGS entry + CLI args to a MCDispAlignTrainConfig."""
+    if variant not in VARIANTS:
+        raise KeyError(f"未知变体 {variant!r}；可选: {list(VARIANTS)}")
+    kwargs = dict(VARIANTS[variant]["overrides"])
+    if epochs is not None:
+        kwargs["epochs"] = epochs
+    if batch_size is not None:
+        kwargs["batch_size"] = batch_size
     return MCDispAlignTrainConfig(
-        dataset=args.dataset,
-        tag=config_name,
-        epochs=args.epochs,
-        batch_size=args.batch_size,
-        # Ablation freezes CLIP and trains all heads at a single LR (legacy behavior).
-        freeze_clip=True,
-        clip_lr=args.lr,
-        mlp_lr=args.lr,
-        cov_rank=ablation_config.get("cov_rank", config.MCDISP_ALIGN_COV_RANK),
-        num_captions_override=ablation_config.get("num_captions"),
-        lambda_ctr=ablation_config.get("lambda_ctr", config.MCDISP_ALIGN_LAMBDA_CTR),
-        lambda_mu=ablation_config.get("lambda_mu", config.MCDISP_ALIGN_LAMBDA_MU),
-        lambda_var=ablation_config.get("lambda_var", config.MCDISP_ALIGN_LAMBDA_VAR),
-        lambda_cover_pos=ablation_config.get("lambda_cover_pos", ablation_config.get("lambda_cover", config.MCDISP_ALIGN_LAMBDA_COVER_POS)),
-        lambda_cover_neg=ablation_config.get("lambda_cover_neg", config.MCDISP_ALIGN_LAMBDA_COVER_NEG),
-        lambda_cov=ablation_config.get("lambda_cov", config.MCDISP_ALIGN_LAMBDA_COV),
-        lambda_reg=ablation_config.get("lambda_reg", config.MCDISP_ALIGN_LAMBDA_REG),
-        tau=ablation_config.get("temperature", config.MCDISP_ALIGN_TAU),
-        use_uncertainty_sim=ablation_config.get("use_uncertainty_sim", True),
-        device=args.device,
-        best_ckpt_path=best_path,
-        last_ckpt_path=last_path,
-        skip_training=args.skip_training,
-        eval_num_samples=args.eval_samples,
+        dataset="coco",
+        tag=f"abl2/{variant}",
+        seed=SEED,
+        select_by="recall",      # 与主实验同一 checkpoint 选择标准
+        no_early_stop=True,      # 固定预算
+        model_name=variant,      # -> {ABLATION_CKPT_DIR}/{variant}_coco_best.pt
+        checkpoint_dir=ABLATION_CKPT_DIR,
+        device=device,
+        **kwargs,
     )
-
-
-def train_ablation(config_name, ablation_config, args, output_dir):
-    """Train and evaluate a single ablation configuration via the shared trainer."""
-    logger.info("\n" + "=" * 60)
-    logger.info(f"Ablation: {config_name} (dataset={args.dataset})")
-    logger.info(f"Config: {ablation_config}")
-    logger.info("=" * 60)
-
-    ckpt_dir = output_dir / "checkpoints" / config_name
-    ckpt_dir.mkdir(parents=True, exist_ok=True)
-
-    cfg = _config_from_ablation(
-        config_name, ablation_config, args,
-        best_path=ckpt_dir / "best.pt", last_path=ckpt_dir / "last.pt",
-    )
-    res = run_mcdisp_align_training(cfg, logger)
-
-    return {
-        "config": config_name,
-        "description": ablation_config.get("description", ""),
-        "dataset": args.dataset,
-        "best_recall": res.get("best_recall"),
-        "best_val_loss": res.get("best_val_loss"),
-        "retrieval": res.get("retrieval"),
-    }
-
-
-def run_sensitivity_analysis(args, output_dir):
-    """Run lambda_var, lambda_cover, and tau sensitivity analysis."""
-    sensitivity_results = {}
-
-    for lam in config.ABLATION_LAMBDA_VAR_VALUES:
-        name = f"lambda_var_{lam}"
-        cfg = {**config.ABLATION_CONFIGS["full_model"],
-               "lambda_var": lam, "description": f"lambda_var={lam}"}
-        sensitivity_results[name] = train_ablation(name, cfg, args, output_dir)
-
-    for lam in config.ABLATION_LAMBDA_COVER_VALUES:
-        name = f"lambda_cover_{lam}"
-        cfg = {**config.ABLATION_CONFIGS["full_model"],
-               "lambda_cover": lam, "description": f"lambda_cover={lam}"}
-        sensitivity_results[name] = train_ablation(name, cfg, args, output_dir)
-
-    for tau in config.ABLATION_TAU_VALUES:
-        name = f"tau_{tau}"
-        cfg = {**config.ABLATION_CONFIGS["full_model"],
-               "temperature": tau, "description": f"tau={tau}"}
-        sensitivity_results[name] = train_ablation(name, cfg, args, output_dir)
-
-    return sensitivity_results
-
-
-def _retr(metrics, k):
-    """Pull R@k from an ablation result's retrieval block (mcdisp_align_recall primary)."""
-    if not metrics:
-        return 0.0
-    mcdisp = metrics.get("mcdisp_align_recall", {})
-    if f"R@{k}" in mcdisp:
-        return mcdisp[f"R@{k}"]
-    return metrics.get("cos_recall", {}).get(f"R@{k}", 0.0)
-
-
-def main():
-    args = parse_args()
-
-    output_dir = Path(args.output_dir) if args.output_dir else config.ABLATION_RESULTS_DIR
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    all_results = {}
-
-    if args.config == "all":
-        for name, cfg in config.ABLATION_CONFIGS.items():
-            all_results[name] = train_ablation(name, cfg, args, output_dir)
-    elif args.config == "sensitivity":
-        all_results = run_sensitivity_analysis(args, output_dir)
-    else:
-        cfg = config.ABLATION_CONFIGS[args.config]
-        all_results[args.config] = train_ablation(args.config, cfg, args, output_dir)
-
-    # Save results
-    output_path = output_dir / f"ablation_results_{args.dataset}.json"
-    with open(output_path, "w") as f:
-        json.dump(all_results, f, indent=2)
-    logger.info(f"Results saved to {output_path}")
-
-    # Print summary table
-    print("\n" + "=" * 70)
-    print(f"Table 4: Ablation Study Results (dataset={args.dataset})")
-    print("=" * 70)
-    print(f"{'Configuration':<45} {'R@1':>6} {'R@5':>6} {'R@10':>6}")
-    print("-" * 70)
-    for name, r in all_results.items():
-        ret = r.get("retrieval")
-        r1 = _retr(ret, 1)
-        r5 = _retr(ret, 5)
-        r10 = _retr(ret, 10)
-        print(f"{r.get('description', name):<45} {r1:>6.4f} {r5:>6.4f} {r10:>6.4f}")
-    print("=" * 70)
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        log_exception(logger, e, "Ablation study failed")
-        raise
