@@ -60,6 +60,9 @@ def compute_recall_bidirectional(
     """
     Bidirectional (I2T + T2I) Recall@K between aligned image/text feature sets.
 
+    Used by the CLIP baseline evaluations (single-feature models without
+    distribution parameters).
+
     Returns keys: ``recall_i2t@{k}``, ``recall_t2i@{k}``, ``recall@{k}`` (mean).
     """
     i2t = compute_recall_chunked(img_features, text_features, k_values, chunk_size, normalize)
@@ -70,131 +73,6 @@ def compute_recall_bidirectional(
         out[f"recall_i2t@{k}"] = i2t[k]
         out[f"recall_t2i@{k}"] = t2i[k]
         out[f"recall@{k}"] = (i2t[k] + t2i[k]) / 2
-    return out
-
-
-@torch.no_grad()
-def compute_recall_mcdisp_align_chunked(
-    img_mu: torch.Tensor,
-    img_logvar: torch.Tensor,
-    text_mu: torch.Tensor,
-    text_logvar: torch.Tensor,
-    k_values: List[int],
-    tau: float = 0.07,
-    chunk_size: int = 1000,
-) -> Dict[str, float]:
-    """
-    Bidirectional Recall@K under the MCDisp_Align uncertainty-discounted cosine score,
-    i.e. the same score used by the L_set contrastive loss (train and eval agree):
-
-        sim(x, y) = (mu_x . mu_y) / (tau * sqrt(1 + mean(sigma_x^2)) * sqrt(1 + mean(sigma_y^2)))
-
-    Means are L2-normalized internally; mean(sigma^2) averages over D.
-
-    Returns keys: ``mcdisp_align_recall_i2t@{k}``, ``mcdisp_align_recall_t2i@{k}``,
-    ``mcdisp_align_recall@{k}`` (mean of the two directions).
-    """
-    img_mu_n = F.normalize(img_mu, dim=-1)
-    text_mu_n = F.normalize(text_mu, dim=-1)
-    img_scale = torch.sqrt(1.0 + torch.exp(img_logvar).mean(dim=-1))    # (N,)
-    text_scale = torch.sqrt(1.0 + torch.exp(text_logvar).mean(dim=-1))  # (N,)
-    n = img_mu.shape[0]
-
-    def _direction(query_mu, gallery_mu, query_scale, gallery_scale, desc):
-        hits = {k: 0 for k in k_values}
-        for start in tqdm(range(0, n, chunk_size), desc=desc, leave=False):
-            end = min(start + chunk_size, n)
-            sim = torch.matmul(query_mu[start:end], gallery_mu.T)
-            scale = query_scale[start:end].unsqueeze(1) * gallery_scale.unsqueeze(0)
-            sim = sim / (tau * scale)
-            ranked = torch.argsort(sim, dim=1, descending=True)
-            gt = torch.arange(start, end, device=query_mu.device).unsqueeze(1)
-            for k in k_values:
-                hits[k] += (ranked[:, :k] == gt).any(dim=1).sum().item()
-        return {k: hits[k] / n for k in k_values}
-
-    i2t = _direction(img_mu_n, text_mu_n, img_scale, text_scale, "MCDisp_Align I2T chunks")
-    t2i = _direction(text_mu_n, img_mu_n, text_scale, img_scale, "MCDisp_Align T2I chunks")
-
-    out: Dict[str, float] = {}
-    for k in k_values:
-        out[f"mcdisp_align_recall_i2t@{k}"] = i2t[k]
-        out[f"mcdisp_align_recall_t2i@{k}"] = t2i[k]
-        out[f"mcdisp_align_recall@{k}"] = (i2t[k] + t2i[k]) / 2
-    return out
-
-
-@torch.no_grad()
-def compute_i2t_caption_pair_counts(
-    img_mu: torch.Tensor,
-    img_logvar: torch.Tensor,
-    text_mus: torch.Tensor,
-    text_logvars: torch.Tensor,
-    k_values: List[int],
-    tau: float = 0.07,
-    chunk_size: int = 1000,
-) -> Dict[str, float]:
-    """
-    Image->text retrieval against a per-caption gallery: for each image, count
-    how many of its K captions land in the top-K retrieved, averaged over images.
-
-    Unlike :func:`compute_recall_mcdisp_align_chunked` (1:1 against the single merged
-    text mean), the gallery here is ALL N*K per-caption means, and image i has K
-    positives -- its own captions at the flattened (image-major) indices
-    ``[i*K, i*K+K)``. The reported value is the mean per-image hit count
-    (range ``0..K``), under both the cosine and the MCDisp_Align uncertainty-discounted
-    scores.
-
-    Args:
-        img_mu:        (N, D) image means
-        img_logvar:    (N, D) image log-variances (MCDisp_Align scorer only)
-        text_mus:      (N, K, D) per-caption means
-        text_logvars:  (N, K, D) per-caption log-variances (MCDisp_Align scorer only)
-        k_values:      top-K cutoffs for the hit count (e.g. [5, 10])
-        tau:           MCDisp_Align score temperature
-        chunk_size:    query (image) chunk size to bound the sim-matrix memory
-
-    Returns:
-        ``{cos_pair_count@{k}, mcdisp_align_pair_count@{k}}`` for each k in ``k_values``.
-    """
-    N, K, _ = text_mus.shape
-    gallery_mu = text_mus.reshape(N * K, -1)             # (N*K, D)
-    gallery_logvar = text_logvars.reshape(N * K, -1)     # (N*K, D)
-
-    img_mu_n = F.normalize(img_mu, dim=-1)               # (N, D)
-    gallery_mu_n = F.normalize(gallery_mu, dim=-1)       # (N*K, D)
-    img_scale = torch.sqrt(1.0 + torch.exp(img_logvar).mean(dim=-1))          # (N,)
-    gallery_scale = torch.sqrt(1.0 + torch.exp(gallery_logvar).mean(dim=-1))  # (N*K,)
-
-    def _count(scorer, desc):
-        hits = {k: 0 for k in k_values}
-        for start in tqdm(range(0, N, chunk_size), desc=desc, leave=False):
-            end = min(start + chunk_size, N)
-            sim = scorer(img_mu_n[start:end], gallery_mu_n,
-                         img_scale[start:end], gallery_scale)   # (chunk, N*K)
-            ranked = torch.argsort(sim, dim=1, descending=True)
-            rows = torch.arange(start, end, device=sim.device).unsqueeze(1)   # (chunk, 1) global img idx
-            pos_lo = rows * K
-            pos_hi = pos_lo + K
-            for k in k_values:
-                in_range = (ranked[:, :k] >= pos_lo) & (ranked[:, :k] < pos_hi)
-                hits[k] += in_range.sum().item()
-        return {k: hits[k] / N for k in k_values}
-
-    def _cos(q, g, _qs, _gs):
-        return torch.matmul(q, g.T)
-
-    def _mcdisp_align(q, g, qs, gs):
-        sim = torch.matmul(q, g.T)
-        return sim / (tau * qs.unsqueeze(1) * gs.unsqueeze(0))
-
-    cos = _count(_cos, "I2T pair-count (cos)")
-    mcdisp_align = _count(_mcdisp_align, "I2T pair-count (mcdisp_align)")
-
-    out: Dict[str, float] = {}
-    for k in k_values:
-        out[f"cos_pair_count@{k}"] = cos[k]
-        out[f"mcdisp_align_pair_count@{k}"] = mcdisp_align[k]
     return out
 
 
@@ -210,7 +88,11 @@ def compute_multicaption_recall(
 ) -> Dict[str, float]:
     """Standard multi-caption bidirectional Recall@K (N images vs N*K captions).
 
-    This is the canonical MS-COCO/Flickr30k retrieval protocol (evaluating on the merged text mean would collapse the one-to-many structure at eval time and is not comparable to published baselines):
+    THE evaluation protocol for MCDisp_Align: checkpoint selection during
+    training (``select_by="recall"`` / ``"mr"``) and test-time evaluation both
+    use it. This is the canonical MS-COCO/Flickr30k retrieval protocol
+    (evaluating on the merged text mean would collapse the one-to-many
+    structure at eval time and is not comparable to published baselines):
 
       I2T: query = N image means, gallery = N*K per-caption means. Image i has K
            positives -- its own captions at flattened indices [i*K, i*K+K). A hit
@@ -218,15 +100,14 @@ def compute_multicaption_recall(
       T2I: query = N*K per-caption means, gallery = N image means. Each caption's
            ONLY positive is its own image (single-positive per query).
 
-    Reported under BOTH the MCDisp_Align uncertainty-discounted score (primary) and plain
-    cosine (for baseline comparison). Means are L2-normalized internally;
-    mean(sigma^2) averages over D. Uses torch.topk (not a full argsort) since the
-    N*K gallery is large and only the top max(k_values) are needed.
+    Score = the MCDisp_Align uncertainty-discounted cosine (the same score the
+    L_set contrastive loss optimizes). Means are L2-normalized internally;
+    mean(sigma^2) averages over D. Uses torch.topk (not a full argsort) since
+    the N*K gallery is large and only the top max(k_values) are needed.
 
     Returns keys (per k in k_values)::
 
-        mc_recall_i2t@{k}, mc_recall_t2i@{k}, mc_recall@{k}          (MCDisp_Align score)
-        mc_cos_recall_i2t@{k}, mc_cos_recall_t2i@{k}, mc_cos_recall@{k} (cosine)
+        mc_recall_i2t@{k}, mc_recall_t2i@{k}, mc_recall@{k} (mean of the two)
     """
     N, K, _ = text_mus.shape
     cap_mu = text_mus.reshape(N * K, -1)              # (N*K, D)
@@ -239,53 +120,46 @@ def compute_multicaption_recall(
 
     maxk = max(k_values)
 
-    def _cos(q, g, _qs, _gs):
-        return torch.matmul(q, g.T)
-
     def _mcdisp_align(q, g, qs, gs):
         return torch.matmul(q, g.T) / (tau * qs.unsqueeze(1) * gs.unsqueeze(0))
 
-    def _i2t(scorer, desc):
+    def _i2t():
         """N image queries vs N*K caption gallery; any-of-K-own-caption hit."""
         hits = {k: 0 for k in k_values}
-        for start in tqdm(range(0, N, chunk_size), desc=desc, leave=False):
+        for start in tqdm(range(0, N, chunk_size), desc="MC I2T", leave=False):
             end = min(start + chunk_size, N)
-            sim = scorer(img_mu_n[start:end], cap_mu_n,
-                         img_scale[start:end], cap_scale)           # (chunk, N*K)
+            sim = _mcdisp_align(img_mu_n[start:end], cap_mu_n,
+                                img_scale[start:end], cap_scale)        # (chunk, N*K)
             mk = min(maxk, sim.size(1))
-            top = torch.topk(sim, mk, dim=1).indices               # (chunk, mk)
+            top = torch.topk(sim, mk, dim=1).indices                   # (chunk, mk)
             rows = torch.arange(start, end, device=sim.device).unsqueeze(1)
-            in_range = (top >= rows * K) & (top < rows * K + K)     # (chunk, mk)
+            in_range = (top >= rows * K) & (top < rows * K + K)        # (chunk, mk)
             for k in k_values:
-                hits[k] += in_range[:, :k].any(dim=1).sum().item()  # :k clamps to mk
+                hits[k] += in_range[:, :k].any(dim=1).sum().item()     # :k clamps to mk
         return {k: hits[k] / N for k in k_values}
 
-    def _t2i(scorer, desc):
+    def _t2i():
         """N*K caption queries vs N image gallery; single-positive per query."""
         Q = N * K
         hits = {k: 0 for k in k_values}
-        for start in tqdm(range(0, Q, chunk_size), desc=desc, leave=False):
+        for start in tqdm(range(0, Q, chunk_size), desc="MC T2I", leave=False):
             end = min(start + chunk_size, Q)
-            sim = scorer(cap_mu_n[start:end], img_mu_n,
-                         cap_scale[start:end], img_scale)           # (chunk_q, N)
+            sim = _mcdisp_align(cap_mu_n[start:end], img_mu_n,
+                                cap_scale[start:end], img_scale)        # (chunk_q, N)
             mk = min(maxk, sim.size(1))
-            top = torch.topk(sim, mk, dim=1).indices               # (chunk_q, mk)
+            top = torch.topk(sim, mk, dim=1).indices                   # (chunk_q, mk)
             q_idx = torch.arange(start, end, device=sim.device)
-            gt_img = (q_idx // K).unsqueeze(1)                      # (chunk_q, 1)
-            match = top == gt_img                                   # (chunk_q, mk)
+            gt_img = (q_idx // K).unsqueeze(1)                         # (chunk_q, 1)
+            match = top == gt_img                                      # (chunk_q, mk)
             for k in k_values:
                 hits[k] += match[:, :k].any(dim=1).sum().item()
         return {k: hits[k] / Q for k in k_values}
 
-    i2t_cos, t2i_cos = _i2t(_cos, "MC I2T (cos)"), _t2i(_cos, "MC T2I (cos)")
-    i2t_mcdisp_align, t2i_mcdisp_align = _i2t(_mcdisp_align, "MC I2T (mcdisp_align)"), _t2i(_mcdisp_align, "MC T2I (mcdisp_align)")
+    i2t, t2i = _i2t(), _t2i()
 
     out: Dict[str, float] = {}
     for k in k_values:
-        out[f"mc_recall_i2t@{k}"] = i2t_mcdisp_align[k]
-        out[f"mc_recall_t2i@{k}"] = t2i_mcdisp_align[k]
-        out[f"mc_recall@{k}"] = (i2t_mcdisp_align[k] + t2i_mcdisp_align[k]) / 2
-        out[f"mc_cos_recall_i2t@{k}"] = i2t_cos[k]
-        out[f"mc_cos_recall_t2i@{k}"] = t2i_cos[k]
-        out[f"mc_cos_recall@{k}"] = (i2t_cos[k] + t2i_cos[k]) / 2
+        out[f"mc_recall_i2t@{k}"] = i2t[k]
+        out[f"mc_recall_t2i@{k}"] = t2i[k]
+        out[f"mc_recall@{k}"] = (i2t[k] + t2i[k]) / 2
     return out

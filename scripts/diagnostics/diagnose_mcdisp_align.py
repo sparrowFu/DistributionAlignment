@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader, Subset
 import config
 from data.caption_dataset import ImageCaptionDataset, filter_none_collate
 from models.mcdisp_align_model import MCDispAlignModel
-from utils.retrieval import compute_recall_chunked, compute_recall_mcdisp_align_chunked
+from utils.retrieval import compute_recall_chunked
 
 
 @torch.no_grad()
@@ -118,10 +118,6 @@ def main():
     print("\n===== RETRIEVAL R@1/5/10 =====")
     r_cos = compute_recall_chunked(img_mu, text_mu, K, normalize=True)
     print(f"  mcdisp_align COSINE   : {[round(r_cos[k],3) for k in K]}   <- mean-only retrieval mode")
-    r_mcdisp_align = compute_recall_mcdisp_align_chunked(img_mu, img_lv, text_mu, text_lv, K, tau=config.MCDISP_ALIGN_TAU)
-    print(f"  mcdisp_align MCDisp_Align     : mean={[round(r_mcdisp_align[f'mcdisp_align_recall@{k}'],3) for k in K]}  "
-          f"i2t={[round(r_mcdisp_align[f'mcdisp_align_recall_i2t@{k}'],3) for k in K]}  "
-          f"t2i={[round(r_mcdisp_align[f'mcdisp_align_recall_t2i@{k}'],3) for k in K]}  <- L_set objective")
     r_clip = compute_recall_chunked(img_feat, text_feat, K, normalize=True)
     print(f"  raw CLIP COSINE     : {[round(r_clip[k],3) for k in K]}   <- sanity baseline")
 

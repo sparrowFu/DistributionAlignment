@@ -58,7 +58,7 @@ def _fake_eval(variant, mr):
     for k in (1, 5, 10):
         met[f"mc_recall_i2t@{k}"] = mr + 0.01 * k
         met[f"mc_recall_t2i@{k}"] = mr
-    return {"variant": variant, "mR": mr, "cos_mR": mr - 0.01, "metrics": met}
+    return {"variant": variant, "mR": mr, "metrics": met}
 
 
 def test_report_rows_order_and_delta():

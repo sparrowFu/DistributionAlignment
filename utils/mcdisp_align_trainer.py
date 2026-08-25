@@ -18,11 +18,7 @@ from models.mcdisp_align_model import MCDispAlignModel
 from utils.dataset_factory import build_train_dataset
 from utils.eval_common import build_eval_dataloader
 from utils.lr_scheduler import apply_lr_for_epoch
-from utils.retrieval import (
-    compute_multicaption_recall,
-    compute_recall_bidirectional,
-    compute_recall_mcdisp_align_chunked,
-)
+from utils.retrieval import compute_multicaption_recall
 
 
 # ---------------------------------------------------------------------------
@@ -36,27 +32,34 @@ def create_optimizer(
     mlp_lr: float,
     weight_decay: float,
 ) -> optim.Optimizer:
-    """Create optimizer with different learning rates for CLIP and MLP/cov heads."""
+    """Create optimizer with different learning rates for CLIP and MLP/cov heads.
+
+    The image covariance head gets its own param group with ``weight_decay=0``:
+    in schedule stages where neither L_cov nor L_cover is active it receives no
+    loss gradient at all, and under Adam an L2-only gradient normalizes to a
+    constant-magnitude ``sign(w)`` step that drives the 1e-2-scale init weights
+    to EXACTLY zero within ~|w|/lr steps (observed: a dead U head at
+    evaluation despite non-zero init). Exempting it from weight decay keeps U
+    at its init until L_cov takes over."""
     head_params = (
         list(model.img_mu_head.parameters())
         + list(model.img_logvar_head.parameters())
         + list(model.text_mu_head.parameters())
         + list(model.text_logvar_head.parameters())
     )
+    groups = [{"params": head_params, "lr": mlp_lr, "weight_decay": weight_decay}]
     if getattr(model, "cov_rank", 0) > 0:
-        head_params += list(model.img_cov_head.parameters())
+        groups.append({"params": list(model.img_cov_head.parameters()),
+                       "lr": mlp_lr, "weight_decay": 0.0})
 
     if freeze_clip:
         # Only train distribution + image covariance heads
-        return optim.Adam(head_params, lr=mlp_lr, weight_decay=weight_decay)
+        return optim.Adam(groups)
 
-    # CLIP and heads with different learning rates
+    # CLIP and heads with different learning rates (CLIP keeps weight decay)
     return optim.Adam(
-        [
-            {"params": model.clip_model.parameters(), "lr": clip_lr},
-            {"params": head_params, "lr": mlp_lr},
-        ],
-        weight_decay=weight_decay,
+        [{"params": model.clip_model.parameters(),
+          "lr": clip_lr, "weight_decay": weight_decay}] + groups,
     )
 
 
@@ -329,25 +332,23 @@ def evaluate(
     device: torch.device,
     compute_recall: bool = False,
     recall_k_values=None,
-    multicaption: bool = False,
 ) -> Dict[str, float]:
     """Evaluate the model (loss + optional retrieval Recall@K).
 
-    ``multicaption=True`` additionally computes the standard multi-caption
-    protocol (N images vs N*K captions, any-hit I2T / per-caption T2I, plan
-    §3.3) and its mR (mean of the 6 recall values, plan §6.1). This is the
-    ablation study's checkpoint-selection metric (``select_by="mr"``); the
-    merged-center recall stays available as a diagnostic.
+    Retrieval is ALWAYS the standard multi-caption protocol (N images vs N*K
+    captions, any-hit I2T / per-caption T2I) under the MCDisp_Align
+    uncertainty-discounted score -- the same protocol serves checkpoint
+    selection (``select_by="recall"`` uses ``mc_recall@1``; ``"mr"`` uses the
+    mean over K of ``mc_recall@k``) and final evaluation, so train-time
+    selection and test-time reporting are the same yardstick.
     """
     model.eval()
 
     totals = {k: 0.0 for k in
               ("loss", "set_nce", "mu", "var", "cover_pos", "cover_neg", "cov", "reg", "img_var_avg")}
     processed_batches = 0
-    feats = {k: [] for k in ("img_mu", "text_mu", "img_logvar", "text_logvar")} \
+    feats = {k: [] for k in ("img_mu", "img_logvar", "text_mus", "text_logvars")} \
         if compute_recall else None
-    cap_feats = {k: [] for k in ("text_mus", "text_logvars")} \
-        if (compute_recall and multicaption) else None
 
     pbar = tqdm(dataloader, desc="Evaluating")
 
@@ -382,44 +383,27 @@ def evaluate(
 
         if feats is not None:
             feats["img_mu"].append(outputs['img_mu'].cpu())
-            feats["text_mu"].append(outputs['text_mu'].cpu())
             feats["img_logvar"].append(outputs['img_logvar'].cpu())
-            feats["text_logvar"].append(outputs['text_logvar'].cpu())
-        if cap_feats is not None:
-            cap_feats["text_mus"].append(outputs['text_mus'].cpu())
-            cap_feats["text_logvars"].append(outputs['text_logvars'].cpu())
+            feats["text_mus"].append(outputs['text_mus'].cpu())
+            feats["text_logvars"].append(outputs['text_logvars'].cpu())
 
         pbar.set_postfix({'loss': f"{loss_dict['total']:.4f}"})
 
     num_batches = max(processed_batches, 1)
     metrics = {k: v / num_batches for k, v in totals.items()}
 
-    # Retrieval Recall@K (image<->text, diagonal pairing). The val loader uses
-    # shuffle=False, so concatenated img_mu[i] stays aligned with its own
-    # caption-set text_mu[i] -> the diagonal is the positive pair.
-    # Primary score: MCDisp_Align uncertainty-discounted cosine (= what L_set optimizes).
-    # Secondary: plain cosine-on-means (mean-only retrieval mode).
+    # Standard multi-caption retrieval (N vs N*K) under the MCDisp_Align score.
+    # The val loader uses shuffle=False, so concatenated img_mu[i] stays aligned
+    # with its own per-caption block text_mus[i] (flattened [i*K, i*K+K)).
     if compute_recall and recall_k_values and feats and feats["img_mu"]:
         img_mu = torch.cat(feats["img_mu"], dim=0).to(device)
-        text_mu = torch.cat(feats["text_mu"], dim=0).to(device)
         img_lv = torch.cat(feats["img_logvar"], dim=0).to(device)
-        text_lv = torch.cat(feats["text_logvar"], dim=0).to(device)
-        mcdisp_align = compute_recall_mcdisp_align_chunked(
-            img_mu, img_lv, text_mu, text_lv, recall_k_values, tau=criterion.tau)
-        metrics.update(mcdisp_align)
-        cos = compute_recall_bidirectional(img_mu, text_mu, recall_k_values, normalize=True)
-        for k in recall_k_values:
-            metrics[f"cos_recall@{k}"] = (cos[f"recall_i2t@{k}"] + cos[f"recall_t2i@{k}"]) / 2
-
-        # Standard multi-caption protocol (plan §3.3) + mR (plan §6.1).
-        if cap_feats is not None and cap_feats["text_mus"]:
-            text_mus = torch.cat(cap_feats["text_mus"], dim=0).to(device)
-            text_lvs = torch.cat(cap_feats["text_logvars"], dim=0).to(device)
-            mc = compute_multicaption_recall(
-                img_mu, img_lv, text_mus, text_lvs, recall_k_values, tau=criterion.tau)
-            for k in recall_k_values:
-                metrics[f"mc_recall@{k}"] = mc[f"mc_recall@{k}"]
-            metrics["mr"] = sum(mc[f"mc_recall@{k}"] for k in recall_k_values) / len(recall_k_values)
+        text_mus = torch.cat(feats["text_mus"], dim=0).to(device)
+        text_lvs = torch.cat(feats["text_logvars"], dim=0).to(device)
+        mc = compute_multicaption_recall(
+            img_mu, img_lv, text_mus, text_lvs, recall_k_values, tau=criterion.tau)
+        metrics.update(mc)
+        metrics["mr"] = sum(mc[f"mc_recall@{k}"] for k in recall_k_values) / len(recall_k_values)
 
     return metrics
 
@@ -481,7 +465,7 @@ class MCDispAlignTrainConfig:
     lr_scheduler: str = field(default_factory=lambda: config.LR_SCHEDULER)
     warmup_epochs: int = field(default_factory=lambda: config.LR_WARMUP_EPOCHS)
     min_lr_ratio: float = field(default_factory=lambda: config.LR_MIN_LR_RATIO)
-    select_by: str = "recall"                     # "recall" (MCDisp_Align R@1) or "loss"
+    select_by: str = "recall"                     # "recall" (multi-caption mc_recall@1) or "loss"
     early_stop_patience: int = 3
     no_early_stop: bool = False
     seed: int = field(default_factory=lambda: config.SEED)
@@ -689,7 +673,6 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
                 model, val_loader, criterion, cfg.device,
                 compute_recall=(cfg.select_by in ("recall", "mr")),
                 recall_k_values=list(cfg.recall_k_values),
-                multicaption=(cfg.select_by == "mr"),
             )
 
             log.info(
@@ -702,11 +685,9 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
                 f"FloorR: {train_metrics.get('floor_ratio', 0):.3f} | "
                 f"Val Loss: {val_metrics['loss']:.4f}, NCE: {val_metrics['set_nce']:.4f}, "
                 f"σ²img: {val_metrics['img_var_avg']:.4f}, "
-                f"MCDisp_Align R@1/5/10: {val_metrics.get('mcdisp_align_recall@1', 0):.3f}/"
-                f"{val_metrics.get('mcdisp_align_recall@5', 0):.3f}/{val_metrics.get('mcdisp_align_recall@10', 0):.3f}, "
-                f"mR(mc): {val_metrics.get('mr', 0):.3f}, "
-                f"Cos R@1/5/10: {val_metrics.get('cos_recall@1', 0):.3f}/"
-                f"{val_metrics.get('cos_recall@5', 0):.3f}/{val_metrics.get('cos_recall@10', 0):.3f}"
+                f"mc R@1/5/10: {val_metrics.get('mc_recall@1', 0):.3f}/"
+                f"{val_metrics.get('mc_recall@5', 0):.3f}/{val_metrics.get('mc_recall@10', 0):.3f}, "
+                f"mR: {val_metrics.get('mr', 0):.3f}"
             )
 
             if train_metrics.get("floor_severe", 0) > 0:
@@ -737,18 +718,28 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
                 f"gnorm[{train_metrics['global_grad_norm_before_clip']:.2f}->{train_metrics['global_grad_norm_after_clip']:.2f}]"
             )
 
-            # Best-checkpoint selection
-            if cfg.select_by == "recall" and "mcdisp_align_recall@1" in val_metrics:
-                current_score = val_metrics["mcdisp_align_recall@1"]
+            # Best-checkpoint selection. "recall" = multi-caption mc_recall@1
+            # (standard N vs N*K protocol, same as final evaluation).
+            if cfg.select_by == "recall" and "mc_recall@1" in val_metrics:
+                current_score = val_metrics["mc_recall@1"]
                 improved = current_score > best_recall
                 if improved:
                     best_recall = current_score
             elif cfg.select_by == "mr" and "mr" in val_metrics:
                 # Ablation study: unified multi-caption development mR (plan §8).
-                current_score = val_metrics["mr"]
-                improved = current_score > best_recall
-                if improved:
-                    best_recall = current_score
+                # ELIGIBILITY GATE: only Full-stage epochs may become best. With
+                # the staged schedule, mid-schedule checkpoints (before L_cover /
+                # L_cov ever train) can transiently peak on mR and win the whole
+                # trajectory (observed: a var_bootstrap epoch-4 checkpoint selected
+                # while coverage/cov heads were still untrained). For no_staged
+                # configs stage is "full" from epoch 0, so the gate is a no-op.
+                if mult.get("stage") == "full":
+                    current_score = val_metrics["mr"]
+                    improved = current_score > best_recall
+                    if improved:
+                        best_recall = current_score
+                else:
+                    improved = False
             else:
                 current_score = val_metrics["loss"]
                 improved = current_score < best_val_loss
@@ -756,12 +747,16 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
                     best_val_loss = current_score
 
             if improved:
-                model.save(str(best_path))
-                score_str = (f"mcdisp_align_recall@1: {best_recall:.4f}" if cfg.select_by == "recall"
-                             else f"val_loss: {best_val_loss:.4f}")
+                model.save(str(best_path), epoch=epoch + 1)
+                if cfg.select_by == "loss":
+                    score_str = f"val_loss: {best_val_loss:.4f}"
+                else:
+                    score_str = f"{cfg.select_by}: {best_recall:.4f}"
                 log.info(f"{prefix}Best model saved ({score_str}) -> {best_path}")
                 patience_counter = 0
-            else:
+            elif cfg.select_by != "mr" or mult.get("stage") == "full":
+                # Ineligible (non-Full-stage) mr epochs were never candidates;
+                # they must not count against early-stopping patience either.
                 patience_counter += 1
                 log.info(f"{prefix}No improvement. Patience: {patience_counter}/{cfg.early_stop_patience}")
 
@@ -783,7 +778,7 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
         }
         torch.save(final_state, str(last_path))
         log.info(f"{prefix}Final model saved to {last_path}")
-        log.info(f"{prefix}Best val loss: {best_val_loss:.4f} | Best MCDisp_Align recall@1: {best_recall:.4f} "
+        log.info(f"{prefix}Best val loss: {best_val_loss:.4f} | Best mc_recall@1: {best_recall:.4f} "
                  f"(selected by: {cfg.select_by})")
 
     results = {
@@ -813,15 +808,13 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
         )
         results["retrieval"] = {
             "num_samples": n_eval,
-            "mcdisp_align_recall": {f"R@{k}": eval_metrics.get(f"mcdisp_align_recall@{k}", 0.0)
-                            for k in cfg.recall_k_values},
-            "cos_recall": {f"R@{k}": eval_metrics.get(f"cos_recall@{k}", 0.0)
-                           for k in cfg.recall_k_values},
+            "mc_recall": {f"R@{k}": eval_metrics.get(f"mc_recall@{k}", 0.0)
+                          for k in cfg.recall_k_values},
         }
-        log.info(f"{prefix}Final MCDisp_Align R@1/5/10: "
-                 f"{eval_metrics.get('mcdisp_align_recall@1', 0):.3f}/"
-                 f"{eval_metrics.get('mcdisp_align_recall@5', 0):.3f}/"
-                 f"{eval_metrics.get('mcdisp_align_recall@10', 0):.3f}")
+        log.info(f"{prefix}Final mc R@1/5/10: "
+                 f"{eval_metrics.get('mc_recall@1', 0):.3f}/"
+                 f"{eval_metrics.get('mc_recall@5', 0):.3f}/"
+                 f"{eval_metrics.get('mc_recall@10', 0):.3f}")
 
     log.info(f"{prefix}Training completed!")
     return results

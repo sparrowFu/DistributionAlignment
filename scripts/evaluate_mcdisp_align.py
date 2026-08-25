@@ -32,10 +32,7 @@ from utils.eval_common import build_eval_dataloader, resolve_checkpoint, VALID_D
 from utils.eval_results import append_eval_results, groups_to_flat, print_recall_groups
 from utils.logger import get_logger, log_exception
 from utils.retrieval import (
-    compute_i2t_caption_pair_counts,
     compute_multicaption_recall,
-    compute_recall_bidirectional,
-    compute_recall_mcdisp_align_chunked,
 )
 from utils.seed import set_seed
 
@@ -183,73 +180,29 @@ def main():
     )
 
     img_mu_d = img_mu.to(args.device)
-    text_mu_d = text_mu.to(args.device)
     img_lv_d = img_logvar.to(args.device)
-    text_lv_d = text_logvar.to(args.device)
     text_mus_d = text_mus.to(args.device)
     text_logvars_d = text_logvars.to(args.device)
 
-    # Primary: standard multi-caption bidirectional Recall (N images vs N*K
-    # captions) -- the canonical MS-COCO/Flickr one-image-many-captions protocol.
-    # Reported under both the MCDisp_Align
-    # uncertainty-discounted score (= L_set score) and plain cosine.
+    # Primary (and only) metric: standard multi-caption bidirectional Recall
+    # (N images vs N*K captions) under the MCDisp_Align uncertainty-discounted
+    # score (= L_set score) -- the canonical MS-COCO/Flickr one-image-many-
+    # captions protocol, comparable to published baselines. Train-time
+    # checkpoint selection uses the same protocol (trainer evaluate()).
     mc = compute_multicaption_recall(
         img_mu_d, img_lv_d, text_mus_d, text_logvars_d,
         args.recall_at_k, tau=args.tau,
     )
 
-    # Auxiliary: set-level Recall on the merged text mean (N vs N). This measures
-    # whether the moment-matched caption-set distribution is well-centered; it is
-    # NOT standard benchmark retrieval and is kept for diagnostics only.
-    mcdisp_align_metrics = compute_recall_mcdisp_align_chunked(
-        img_mu_d, img_lv_d, text_mu_d, text_lv_d, args.recall_at_k, tau=args.tau)
-    cos = compute_recall_bidirectional(img_mu_d, text_mu_d, args.recall_at_k, normalize=True)
-
     groups = [
         {
             "family": "mc_recall",
-            "label": "Multi-caption Recall@K (MCDisp_Align score, primary; N vs N*K)",
+            "label": "Multi-caption Recall@K (MCDisp_Align score; N vs N*K)",
             "per_k": {
                 k: {
                     "i2t": mc[f"mc_recall_i2t@{k}"],
                     "t2i": mc[f"mc_recall_t2i@{k}"],
                     "mean": mc[f"mc_recall@{k}"],
-                }
-                for k in args.recall_at_k
-            },
-        },
-        {
-            "family": "mc_cos_recall",
-            "label": "Multi-caption Recall@K (cosine; N vs N*K)",
-            "per_k": {
-                k: {
-                    "i2t": mc[f"mc_cos_recall_i2t@{k}"],
-                    "t2i": mc[f"mc_cos_recall_t2i@{k}"],
-                    "mean": mc[f"mc_cos_recall@{k}"],
-                }
-                for k in args.recall_at_k
-            },
-        },
-        {
-            "family": "mcdisp_align_recall",
-            "label": "Set-level Recall@K (MCDisp_Align score, merged text -- auxiliary)",
-            "per_k": {
-                k: {
-                    "i2t": mcdisp_align_metrics[f"mcdisp_align_recall_i2t@{k}"],
-                    "t2i": mcdisp_align_metrics[f"mcdisp_align_recall_t2i@{k}"],
-                    "mean": mcdisp_align_metrics[f"mcdisp_align_recall@{k}"],
-                }
-                for k in args.recall_at_k
-            },
-        },
-        {
-            "family": "cos_recall",
-            "label": "Set-level Recall@K (cosine, merged text -- auxiliary)",
-            "per_k": {
-                k: {
-                    "i2t": cos[f"recall_i2t@{k}"],
-                    "t2i": cos[f"recall_t2i@{k}"],
-                    "mean": cos[f"recall@{k}"],
                 }
                 for k in args.recall_at_k
             },
@@ -267,36 +220,6 @@ def main():
         'num_samples': num_eval_samples,
         'tau': args.tau,
         'metrics': recall_metrics,
-    }, logger)
-
-    # --- Extra metric: I2T per-caption pair-count (separate result file) -------
-    # Image->text retrieval over the full per-caption gallery (all N*K captions);
-    # for each image, the mean # of its K captions found in top-5 / top-10, under
-    # both the cosine and MCDisp_Align scores. Saved to its own file, never mixed into the
-    # main recall results above.
-    pair_counts = compute_i2t_caption_pair_counts(
-        img_mu_d, img_lv_d, text_mus_d, text_logvars_d,
-        k_values=[5, 10], tau=args.tau,
-    )
-    logger.info(
-        "I2T caption pair-count (mean # of an image's %d captions in top-K): %s",
-        text_mus.shape[1],
-        ", ".join(f"{name}={val:.3f}" for name, val in pair_counts.items()),
-    )
-
-    if args.output_path is None:
-        pair_output = str(config.MCDISP_ALIGN_I2T_PAIR_COUNTS_PATH)
-    else:
-        _p = Path(args.output_path)
-        pair_output = str(_p.with_name(f"{_p.stem}_i2t_pair_counts{_p.suffix}"))
-    append_eval_results(pair_output, {
-        'checkpoint': str(checkpoint_path),
-        'dataset': args.dataset,
-        'num_samples': num_eval_samples,
-        'tau': args.tau,
-        'metric': 'i2t_caption_pair_counts',
-        'K_per_image': int(text_mus.shape[1]),
-        'metrics': pair_counts,
     }, logger)
 
     logger.info("Evaluation completed!")

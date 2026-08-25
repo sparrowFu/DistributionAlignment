@@ -84,7 +84,7 @@ def build_variant_config(variant, epochs=None, batch_size=None, device="cuda"):
     )
 
 
-_REPORT_COLS = ["variant", "desc", "mR", "delta_mR", "cos_mR"] + [
+_REPORT_COLS = ["variant", "desc", "mR", "delta_mR"] + [
     f"{d} R@{k}" for k in K_VALUES for d in ("i2t", "t2i")
 ]
 
@@ -104,7 +104,6 @@ def build_report_rows(results):
             "variant": name,
             "desc": VARIANTS[name]["desc"],
             "mR": r["mR"],
-            "cos_mR": r.get("cos_mR"),
             "delta_mR": (r["mR"] - full_mr)
             if full_mr is not None and name != "full" else None,
         }
@@ -143,7 +142,7 @@ def write_report(results, out_dir=ABLATION_OUT_DIR):
     md = (
         "# MCDisp_Align 消融实验（多描述检索协议，N vs N×5）\n\n"
         "主指标 mR = 6 个多描述 Recall（i2t 任一命中 + t2i，K=1/5/10）的均值；"
-        "delta_mR = 该变体 − full（预期为负）。cos_mR 为余弦打分器参考列。\n\n"
+        "delta_mR = 该变体 − full（预期为负）。\n\n"
         + format_markdown_table(rows)
     )
     md_path = out_dir / "report.md"
@@ -234,7 +233,6 @@ def cmd_eval(args):
     metrics = compute_multicaption_recall(
         img_mu, img_lv, t_mus, t_lvs, list(K_VALUES), tau=config.MCDISP_ALIGN_TAU)
     mr = sum(metrics[f"mc_recall@{k}"] for k in K_VALUES) / len(K_VALUES)
-    cos_mr = sum(metrics[f"mc_cos_recall@{k}"] for k in K_VALUES) / len(K_VALUES)
 
     result = {
         "variant": args.variant,
@@ -244,13 +242,12 @@ def cmd_eval(args):
         "tau": config.MCDISP_ALIGN_TAU,
         "seed": SEED,
         "mR": mr,
-        "cos_mR": cos_mr,
         "metrics": metrics,
     }
     ABLATION_OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = ABLATION_OUT_DIR / f"{args.variant}.json"
     out.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
-    logger.info(f"{args.variant}: mR={mr:.4f} cos_mR={cos_mr:.4f} (N={n_eval}) -> {out}")
+    logger.info(f"{args.variant}: mR={mr:.4f} (N={n_eval}) -> {out}")
 
 
 def cmd_report(args):
