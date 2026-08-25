@@ -36,7 +36,6 @@ MODEL_CONFIGS = {
     "mcdisp_align": {
         "model_fn": lambda: MCDispAlignModel(
             freeze_clip=True,
-            distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
         ),
         "default_ckpt": config.MCDISP_ALIGN_BEST_CKPT,
         "output_path": config.OUTPUT_DIR / "flickr30k_mcdisp_align_results.json",

@@ -37,10 +37,6 @@ Available tasks:
     eval_prolip_zero_shot  Evaluate ProLIP Zero-Shot baseline (B3)
     eval_clip_zero_shot    Evaluate CLIP Zero-Shot baseline (B1)
 
-  Stage 2 (VQA Downstream):
-    build_vqa_expansions   Build VQA-as-retrieval caption dataset (local gemma/llama or API)
-    eval_vqa_retrieval     VQA-as-retrieval eval (gemma caption, 5 models)
-
   Experiment Tasks:
     run_ablation           Ablation v2 (--command train --variant full|no_var|no_dir|no_cover)
     eval_ood               Exp4: OOD detection (sigma-based anomaly scoring)
@@ -48,16 +44,12 @@ Available tasks:
     visualize_gap          Exp8: Modality gap visualization
     eval_flickr30k         Exp6: Flickr30K cross-dataset generalization
 
-Supported model types (--model-type): mcdisp_align, clip_baseline, clip_zero_shot,
-                                     prolip
-eval_vqa_retrieval --model: clip_zero_shot, clip_baseline, mcdisp_align,
-                            prolip_zero_shot, prolip, all
+Supported model types (--model-type, used by eval_flickr30k): mcdisp_align,
+                                     clip_baseline, clip_zero_shot, prolip
 
 Examples:
   python main.py --task train_mcdisp_align
   python main.py --task eval_mcdisp_align
-  python main.py --task build_vqa_expansions --split test --limit 0 --no-batch
-  python main.py --task eval_vqa_retrieval --model mcdisp_align
   python main.py --task run_ablation --command train --variant full
   python main.py --task eval_sigma_analysis
   python main.py --task eval_flickr30k --model-type mcdisp_align
@@ -74,9 +66,6 @@ Examples:
             "train_mcdisp_align", "eval_mcdisp_align",
             "train_prolip", "eval_prolip", "eval_prolip_zero_shot",
             "eval_clip_zero_shot",
-            # Stage 2: VQA-as-retrieval downstream (gemma caption)
-            "build_vqa_expansions",
-            "eval_vqa_retrieval",
             # Experiments
             "eval_ood",
             "run_ablation",
@@ -94,16 +83,7 @@ Examples:
         default=None,
         choices=["mcdisp_align", "clip_baseline", "clip_zero_shot",
                  "prolip"],
-        help="Base model type for VQA training"
-    )
-
-    parser.add_argument(
-        "--model",
-        type=str,
-        default=None,
-        choices=["clip_zero_shot", "clip_baseline", "mcdisp_align",
-                 "prolip_zero_shot", "prolip", "all"],
-        help="Model to evaluate for eval_vqa_retrieval ('all' = 全部 5 个)"
+        help="Model to evaluate for eval_flickr30k"
     )
 
     parser.add_argument("--captions-path", type=str, default=None,
@@ -141,23 +121,6 @@ Examples:
                         help="Ablation variant: full|no_var|no_dir|no_cover "
                              "(alias of --config)")
 
-    # Caption-build arguments (build_vqa_expansions)
-    parser.add_argument("--split", type=str, default=None,
-                        choices=["train", "test", "both"],
-                        help="VQA split for build_vqa_expansions")
-    parser.add_argument("--backend", type=str, default=None,
-                        choices=["local", "api"],
-                        help="Caption backend for build_vqa_expansions (local/api)")
-    parser.add_argument("--model-kind", type=str, default=None,
-                        choices=["gemma", "llama"],
-                        help="Local model family for build_vqa_expansions (gemma/llama)")
-    parser.add_argument("--no-batch", action="store_true",
-                        help="build_vqa_expansions: one caption at a time (required for local gemma)")
-    parser.add_argument("--limit", type=int, default=None,
-                        help="build_vqa_expansions: samples to process (0 = all)")
-    parser.add_argument("--no-resume", action="store_true",
-                        help="build_vqa_expansions: start from scratch (overwrite existing outputs)")
-
     # Resume training
     parser.add_argument("--resume", type=str, default=None,
                         help="Path to checkpoint to resume training from")
@@ -181,8 +144,6 @@ def run_python_script(script_path: Path, args: argparse.Namespace) -> int:
 
     if args.model_type:
         cmd.extend(["--model-type", args.model_type])
-    if args.model:
-        cmd.extend(["--model", args.model])
     if args.captions_path:
         cmd.extend(["--captions-path", args.captions_path])
     if args.images_dir:
@@ -219,18 +180,6 @@ def run_python_script(script_path: Path, args: argparse.Namespace) -> int:
         cmd.extend(["--output-path", args.output_path])
     if hasattr(args, 'config') and args.config:
         cmd.extend(["--config", args.config])
-    if hasattr(args, 'split') and args.split:
-        cmd.extend(["--split", args.split])
-    if hasattr(args, 'backend') and args.backend:
-        cmd.extend(["--backend", args.backend])
-    if hasattr(args, 'model_kind') and args.model_kind:
-        cmd.extend(["--model-kind", args.model_kind])
-    if hasattr(args, 'no_batch') and args.no_batch:
-        cmd.append("--no-batch")
-    if hasattr(args, 'limit') and args.limit is not None:
-        cmd.extend(["--limit", str(args.limit)])
-    if hasattr(args, 'no_resume') and args.no_resume:
-        cmd.append("--no-resume")
     if hasattr(args, 'resume') and args.resume:
         cmd.extend(["--resume", args.resume])
 
@@ -259,9 +208,6 @@ TASK_SCRIPTS = {
     "eval_prolip_zero_shot": "evaluate_prolip_zero_shot.py",
     # Stage 1: Zero-shot
     "eval_clip_zero_shot":   "evaluate_clip_zero_shot.py",
-    # Stage 2: VQA-as-retrieval downstream (gemma caption)
-    "build_vqa_expansions":  "build_vqa_expansions.py",
-    "eval_vqa_retrieval":    "eval_vqa_retrieval.py",
     # Experiments
     "eval_ood":              "eval_ood.py",
     "run_ablation":          "run_ablation.py",

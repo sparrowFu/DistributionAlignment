@@ -3,12 +3,10 @@
 import platform
 from pathlib import Path
 
-
 # =============================================================================
 # Platform Detection
 # =============================================================================
 IS_WINDOWS = platform.system() == "Windows"
-
 
 # =============================================================================
 # Project Root - MODIFY THIS when migrating to a new system
@@ -20,7 +18,6 @@ else:
     # Ubuntu/Linux default - modify "your_name" to your actual username
     PROJECT_ROOT = Path("/home/xpfu/WorkSpace/DistributionAlignment")
 
-
 # =============================================================================
 # Dataset Paths
 # =============================================================================
@@ -31,13 +28,11 @@ CAPTIONS_PATH = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "captions" 
 # Directory containing all images
 IMAGES_DIR = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "images"
 
-
 # =============================================================================
 # Pre-trained Model Paths (Local Only)
 # =============================================================================
 # CLIP ViT-Large-Patch14 model directory
 CLIP_VIT_L_14_PATH = PROJECT_ROOT / "PreTrainedModels" / "clip-vit-large-patch14"
-
 
 # =============================================================================
 # Output Directories
@@ -50,7 +45,6 @@ OUTPUT_DIR = PROJECT_ROOT / "outputs"
 
 # Log directory
 LOG_DIR = PROJECT_ROOT / "logs"
-
 
 # =============================================================================
 # Log File Paths
@@ -67,16 +61,11 @@ EVAL_CLIP_BASELINE_LOG_PATH = LOG_DIR / "evaluate_clip_baseline.log"
 # Evaluation log for CLIP zero-shot
 EVAL_CLIP_ZERO_SHOT_LOG_PATH = LOG_DIR / "evaluate_clip_zero_shot.log"
 
-
 # =============================================================================
 # Checkpoint Paths
 # =============================================================================
 # Best checkpoint (lowest validation loss)
 CLIP_BASELINE_BEST_CKPT = CHECKPOINT_DIR / "clip_baseline_coco_best.pt"
-
-# Last checkpoint (end of training)
-CLIP_BASELINE_LAST_CKPT = CHECKPOINT_DIR / "clip_baseline_coco_last.pt"
-
 
 # =============================================================================
 # Evaluation Results Paths
@@ -87,12 +76,10 @@ CLIP_BASELINE_EVAL_RESULTS_PATH = OUTPUT_DIR / "clip_baseline_eval_results.json"
 # JSON file for CLIP zero-shot evaluation results
 CLIP_ZERO_SHOT_EVAL_RESULTS_PATH = OUTPUT_DIR / "clip_zero_shot_eval_results.json"
 
-
 # =============================================================================
 # Random Seed
 # =============================================================================
 SEED = 42
-
 
 # =============================================================================
 # Learning-Rate Scheduling (shared across all training scripts)
@@ -104,7 +91,6 @@ SEED = 42
 LR_SCHEDULER = "cosine"
 LR_WARMUP_EPOCHS = 1
 LR_MIN_LR_RATIO = 0.02
-
 
 # =============================================================================
 # Dataset Settings
@@ -118,7 +104,6 @@ NUM_CAPTIONS = 5
 # Linux: 8 workers for parallel data loading; Windows: 0 to avoid fork issues
 NUM_WORKERS = 0 if IS_WINDOWS else 8
 
-
 # =============================================================================
 # CPU Affinity (server-specific)
 # =============================================================================
@@ -128,7 +113,6 @@ NUM_WORKERS = 0 if IS_WINDOWS else 8
 # Listed cores are removed from the process CPU affinity at startup via
 # utils.cpu_affinity.apply_cpu_affinity (no-op on Windows). Adjust per machine.
 EXCLUDED_CPUS = [2]
-
 
 # =============================================================================
 # CLIP Baseline Training Hyperparameters
@@ -154,7 +138,6 @@ CLIP_BASELINE_FREEZE_IMAGE = False
 # Whether to freeze the text encoder
 CLIP_BASELINE_FREEZE_TEXT = False
 
-
 # =============================================================================
 # Evaluation Settings
 # =============================================================================
@@ -163,7 +146,6 @@ RECALL_AT_K = [1, 5, 10]
 
 # Batch size for evaluation (can be larger than training)
 EVAL_BATCH_SIZE = 64
-
 
 # =============================================================================
 # MCDisp_Align Model Configuration
@@ -176,7 +158,6 @@ EVAL_MCDISP_ALIGN_LOG_PATH = LOG_DIR / "evaluate_mcdisp_align.log"
 
 # Checkpoint paths
 MCDISP_ALIGN_BEST_CKPT = CHECKPOINT_DIR / "mcdisp_align_coco_best.pt"
-MCDISP_ALIGN_LAST_CKPT = CHECKPOINT_DIR / "mcdisp_align_coco_last.pt"
 
 # Evaluation results path
 MCDISP_ALIGN_EVAL_RESULTS_PATH = OUTPUT_DIR / "mcdisp_align_eval_results.json"
@@ -191,8 +172,6 @@ MCDISP_ALIGN_FREEZE_CLIP = True  # Whether to freeze CLIP parameters
 
 # Distribution configuration
 MCDISP_ALIGN_DROPOUT_RATE = 0.1         # Dropout rate for MLP heads
-MCDISP_ALIGN_DISTRIBUTION_MERGING = "moment_matching"  # Method: "moment_matching", "poe", "simple"
-
 
 # =============================================================================
 # MCDisp_Align: Multi-Caption Semantic Dispersion Guided Distribution Alignment
@@ -231,61 +210,7 @@ MCDISP_ALIGN_PER_DIM_NORMALIZE = True     # deprecated: loglik-eval only
 
 # 3-stage training schedule (fraction of total epochs each stage spans)
 MCDISP_ALIGN_STAGE_WARMUP_FRAC = 0.2      # L_set + L_mu (+ L_reg always on)
-MCDISP_ALIGN_STAGE_MAIN_FRAC = 0.6        # + L_var + L_cover
 MCDISP_ALIGN_STAGE_FULL_FRAC = 0.2        # + L_cov (ramped 0 -> 1)
-
-
-# =============================================================================
-# VQA-as-Retrieval Dataset Paths
-# =============================================================================
-# Anchor path for the MSCOCO VQA questions split.
-VQA_TRAIN_QUESTIONS = PROJECT_ROOT / "TrainDatasets" / "mscoco_captions" / "train" / "questions.txt"
-
-# VQA images share the same directory as MSCOCO captions
-VQA_IMAGES_DIR = IMAGES_DIR
-
-
-# =============================================================================
-# Caption-Generation Configuration (build_vqa_expansions.py)
-# =============================================================================
-# API configuration file path (stores API keys, never commit this file)
-API_CONFIG_PATH = PROJECT_ROOT / "api_config.json"
-
-# API call settings (used by the --backend api caption path)
-LLM_API_DELAY = 0.5          # Delay between API calls (seconds)
-LLM_API_MAX_RETRIES = 5      # Maximum retries for failed API calls
-LLM_API_RETRY_WAIT = 5       # Base wait time for retries (seconds)
-LLM_API_TIMEOUT = 60         # Request timeout (seconds)
-
-# -----------------------------------------------------------------------------
-# Caption-generation backend selection (build_vqa_expansions.py)
-#   "local" -> transformers, load an open-source LLM from a local directory
-#   "api"   -> original OpenAI-compatible HTTP path (SiliconFlow, etc.)
-# All LLM_LOCAL_* settings are defaults; each can be overridden on the CLI:
-#   --backend --model-path --batch-size --dtype --device --no-batch
-# -----------------------------------------------------------------------------
-LLM_BACKEND = "local"                # "local" | "api"
-
-# Which local model family to load.
-#   "gemma" -> AutoProcessor + AutoModelForMultimodalLM (text-only generation)
-#   "llama" -> AutoTokenizer  + AutoModelForCausalLM
-LLM_LOCAL_MODEL_KIND = "gemma"       # "gemma" | "llama"
-
-# Default local paths for each family (override with --model-path or LLM_LOCAL_MODEL_PATH).
-LLM_LOCAL_GEMMA_PATH = "/home/xpfu/WorkSpace/OpenSourceLLM/gemma"
-LLM_LOCAL_LLAMA_PATH = "/home/xpfu/WorkSpace/OpenSourceLLM/llama"
-
-# Explicit override for any family. When non-empty, used regardless of model kind.
-LLM_LOCAL_MODEL_PATH = ""
-LLM_LOCAL_MODEL_NAME = ""            # display name for logs only (may be "")
-
-LLM_LOCAL_DTYPE = "bf16"             # "bf16" | "fp16" | "fp32"
-LLM_LOCAL_DEVICE = "cuda"            # "cuda" | "cuda:0" | "cpu" | "auto"
-LLM_LOCAL_BATCH_SIZE = 32            # captions per forward pass (batched mode)
-LLM_LOCAL_MAX_NEW_TOKENS = 96        # matches API max_tokens
-LLM_LOCAL_DO_SAMPLE = False          # greedy decode == API temperature 0 (reproducible)
-LLM_LOCAL_TRUST_REMOTE_CODE = False  # set True for models needing custom code
-
 
 # =============================================================================
 # Baseline B3: ProLIP Configuration (real ProLIP ViT-H/14 via the `prolip` lib)
@@ -302,7 +227,6 @@ PROLIP_CONTEXT_LENGTH = 77
 
 # ProLIP checkpoint and output paths
 PROLIP_BEST_CKPT = CHECKPOINT_DIR / "prolip_coco_best.pt"
-PROLIP_LAST_CKPT = CHECKPOINT_DIR / "prolip_coco_last.pt"
 PROLIP_EVAL_RESULTS_PATH = OUTPUT_DIR / "prolip_eval_results.json"
 PROLIP_ZERO_SHOT_EVAL_RESULTS_PATH = OUTPUT_DIR / "prolip_zero_shot_eval_results.json"
 TRAIN_PROLIP_LOG_PATH = LOG_DIR / "train_prolip.log"
@@ -324,7 +248,6 @@ PROLIP_PPCL_LAMBDA = 1.0        # probabilistic pairwise contrastive loss (alway
 PROLIP_INCLUSION_ALPHA = 1.0    # inclusion loss weight (image subset text); 0 disables
 PROLIP_VIB_BETA = 1.0e-5        # variational information bottleneck KL weight
 
-
 # =============================================================================
 # Flickr30K Dataset Configuration
 # =============================================================================
@@ -332,7 +255,6 @@ FLICKR30K_ROOT = PROJECT_ROOT / "TrainDatasets" / "flickr30k"
 FLICKR30K_IMAGES_DIR = FLICKR30K_ROOT / "flickr30k_images"
 FLICKR30K_CAPTIONS_PATH = FLICKR30K_ROOT / "captions.txt"
 FLICKR30K_NUM_CAPTIONS = 5
-
 
 # =============================================================================
 # Experiment 4: OOD Detection Configuration
@@ -343,22 +265,15 @@ OOD_LOG_PATH = LOG_DIR / "ood_detection.log"
 # OOD datasets: will be downloaded via torchvision if not present
 OOD_DATA_DIR = PROJECT_ROOT / "TrainDatasets" / "ood"
 
-
-
-
 # =============================================================================
 # Experiment 7: σ Semantic Analysis Configuration
 # =============================================================================
 SIGMA_ANALYSIS_RESULTS_DIR = OUTPUT_DIR / "sigma_analysis"
 SIGMA_ANALYSIS_LOG_PATH = LOG_DIR / "sigma_analysis.log"
 
-
 # =============================================================================
 # Experiment 8: Modality Gap Visualization Configuration
 # =============================================================================
-VIS_GAP_RESULTS_DIR = OUTPUT_DIR / "modality_gap"
-VIS_GAP_LOG_PATH = LOG_DIR / "visualize_gap.log"
-
 
 # =============================================================================
 # Utility Functions
@@ -379,7 +294,6 @@ def ensure_project_dirs() -> None:
 
     # Also ensure log directory exists for log files
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-
 
 def print_config() -> None:
     """Print current configuration for verification."""
@@ -410,7 +324,6 @@ def print_config() -> None:
     print(f"  Freeze Image: {CLIP_BASELINE_FREEZE_IMAGE}")
     print(f"  Freeze Text: {CLIP_BASELINE_FREEZE_TEXT}")
     print("=" * 60)
-
 
 if __name__ == "__main__":
     ensure_project_dirs()

@@ -242,7 +242,6 @@ def main():
 
     model = MCDispAlignModel(
         freeze_clip=config.MCDISP_ALIGN_FREEZE_CLIP,
-        distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
     )
     if Path(checkpoint_path).exists():
         model.load(checkpoint_path)

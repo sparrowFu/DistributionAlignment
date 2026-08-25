@@ -1,19 +1,16 @@
 """
 MCDisp_Align Evaluation Script
 
-Evaluates the MCDisp_Align (Multi-Caption Semantic Dispersion Guided Distribution Alignment) model using
-image-text retrieval. The PRIMARY protocol is standard multi-caption retrieval
-(N images vs N*K captions; I2T any-of-K-hit, T2I per-caption single-positive),
-reported under two scorers:
+Evaluates the MCDisp_Align (Multi-Caption Semantic Dispersion Guided Distribution
+Alignment) model with the standard multi-caption retrieval protocol
+(N images vs N*K captions; I2T any-of-K-hit, T2I per-caption single-positive)
+under the MCDisp_Align score -- the uncertainty-discounted cosine
 
-  - MCDisp_Align score (primary scorer): the uncertainty-discounted cosine
-        sim = (mu_v . mu_t) / (tau * sqrt(1+mean sigma_v^2) * sqrt(1+mean sigma_t^2))
-    i.e. the same score the L_set contrastive loss optimizes.
-  - Cosine-on-means: plain cosine (for baseline comparison).
+    sim = (mu_v . mu_t) / (tau * sqrt(1+mean sigma_v^2) * sqrt(1+mean sigma_t^2))
 
-The set-level Recall on the merged text mean (N vs N) is kept as an AUXILIARY
-diagnostic (it measures whether the moment-matched caption-set distribution is
-well-centered, and is NOT comparable to published MS-COCO/Flickr baselines).
+i.e. the same score the L_set contrastive loss optimizes and the same protocol
+the trainer uses for checkpoint selection. This is the canonical MS-COCO/
+Flickr30k protocol, comparable to published baselines.
 """
 
 import argparse
@@ -156,7 +153,6 @@ def main():
 
     model = MCDispAlignModel(
         freeze_clip=config.MCDISP_ALIGN_FREEZE_CLIP,
-        distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
         cov_rank=config.MCDISP_ALIGN_COV_RANK,
     )
 
@@ -174,7 +170,8 @@ def main():
     )
     logger.info(f"Dataset loaded ({args.dataset}): {num_eval_samples} samples")
 
-    # text_mus/text_logvars are the per-caption outputs used by the I2T pair-count metric.
+    # text_mus/text_logvars are the per-caption outputs used by the
+    # multi-caption retrieval protocol.
     img_mu, text_mu, img_logvar, text_logvar, text_mus, text_logvars = extract_features(
         model, dataloader, args.device, args.num_samples
     )

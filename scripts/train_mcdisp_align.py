@@ -96,9 +96,6 @@ def parse_args():
                         help="Freeze CLIP parameters")
     parser.add_argument("--no-freeze-clip", action="store_false", dest="freeze_clip",
                         help="Don't freeze CLIP parameters")
-    parser.add_argument("--distribution-merging", type=str, default=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
-                        choices=["moment_matching", "poe", "simple"],
-                        help="Method for merging multiple text distributions")
     parser.add_argument("--dropout-rate", type=float, default=config.MCDISP_ALIGN_DROPOUT_RATE,
                         help="Dropout rate for MLP heads")
     parser.add_argument("--no-staged", action="store_true",
@@ -152,7 +149,6 @@ def main():
         # model
         freeze_clip=args.freeze_clip,
         cov_rank=args.cov_rank,
-        distribution_merging=args.distribution_merging,
         dropout_rate=args.dropout_rate,
         # loss weights
         lambda_ctr=args.lambda_ctr,

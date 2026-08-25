@@ -424,15 +424,6 @@ class MCDispAlignTrainConfig:
     captions_path: Optional[str] = None           # coco override
     images_dir: Optional[str] = None              # coco override
 
-    # --- Manifest-backed data (ablation study, plan §3.1/§3.2) ---
-    # When both are set, train/dev loaders come from the image-exclusive audit
-    # manifests instead of the registry + random_split path (legacy default).
-    train_manifest: Optional[Path] = None
-    dev_manifest: Optional[Path] = None
-    manifest_num_captions: int = 5          # training K (random-sampled when mode="random")
-    manifest_sample_mode: str = "first"     # "first" | "random" (K=1/K=3 regimes)
-    dev_num_captions: int = 5               # uniform dev protocol for checkpoint selection
-
     # --- Training ---
     epochs: int = field(default_factory=lambda: config.MCDISP_ALIGN_EPOCHS)
     batch_size: int = field(default_factory=lambda: config.MCDISP_ALIGN_BATCH_SIZE)
@@ -443,7 +434,6 @@ class MCDispAlignTrainConfig:
     # --- Model ---
     freeze_clip: bool = field(default_factory=lambda: config.MCDISP_ALIGN_FREEZE_CLIP)
     cov_rank: int = field(default_factory=lambda: config.MCDISP_ALIGN_COV_RANK)
-    distribution_merging: str = field(default_factory=lambda: config.MCDISP_ALIGN_DISTRIBUTION_MERGING)
     dropout_rate: float = field(default_factory=lambda: config.MCDISP_ALIGN_DROPOUT_RATE)
 
     # --- MCDisp_Align loss weights ---
@@ -500,37 +490,7 @@ class MCDispAlignTrainConfig:
 
 
 def _build_loaders(cfg: MCDispAlignTrainConfig):
-    """Build train/val DataLoaders.
-
-    Manifest path (ablation study): image-exclusive audit manifests, no caption
-    repeat-padding; the dev loader is deterministic (first-K) with a UNIFORM
-    K for every config so checkpoint selection is comparable across variants
-    (plan §8: 不使用不同组成的 validation 指标).
-    """
-    if cfg.train_manifest is not None and cfg.dev_manifest is not None:
-        from data.manifest_caption_dataset import ManifestCaptionDataset
-
-        train_ds = ManifestCaptionDataset(
-            cfg.train_manifest, config.IMAGES_DIR,
-            num_captions=cfg.manifest_num_captions,
-            sample_mode=cfg.manifest_sample_mode,
-        )
-        dev_ds = ManifestCaptionDataset(
-            cfg.dev_manifest, config.IMAGES_DIR,
-            num_captions=cfg.dev_num_captions,
-            sample_mode="first",
-        )
-        train_loader = DataLoader(
-            train_ds, batch_size=cfg.batch_size, shuffle=True,
-            num_workers=cfg.num_workers, collate_fn=filter_none_collate,
-        )
-        val_loader = DataLoader(
-            dev_ds, batch_size=cfg.batch_size, shuffle=False,
-            num_workers=cfg.num_workers, collate_fn=filter_none_collate,
-        )
-        return train_loader, val_loader, len(train_ds), len(dev_ds)
-
-    # Legacy registry path (random_split of the full training pool).
+    """Build train/val DataLoaders (registry dataset + seeded random_split)."""
     full_dataset = build_train_dataset(
         dataset=cfg.dataset,
         num_captions=cfg.num_captions_override,
@@ -581,7 +541,6 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
     log.info(f"{prefix}Creating model...")
     model = MCDispAlignModel(
         freeze_clip=cfg.freeze_clip,
-        distribution_merging=cfg.distribution_merging,
         dropout_rate=cfg.dropout_rate,
         cov_rank=cfg.cov_rank,
     )

@@ -217,7 +217,6 @@ def main():
     logger.info(f"Loading model from {ckpt}")
     model = MCDispAlignModel(
         freeze_clip=config.MCDISP_ALIGN_FREEZE_CLIP,
-        distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
         cov_rank=config.MCDISP_ALIGN_COV_RANK,
     )
     if Path(ckpt).exists():

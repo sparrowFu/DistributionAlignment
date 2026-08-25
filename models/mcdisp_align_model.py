@@ -40,7 +40,6 @@ class MCDispAlignModel(nn.Module):
         model_path: Optional[str] = None,
         hidden_dim: int = 768,
         freeze_clip: bool = True,
-        distribution_merging: str = "moment_matching",
         dropout_rate: float = 0.1,
         cov_rank: Optional[int] = None,
     ):
@@ -52,8 +51,6 @@ class MCDispAlignModel(nn.Module):
                       (uses config.CLIP_VIT_L_14_PATH if None)
             hidden_dim: Hidden dimension for CLIP embeddings
             freeze_clip: Whether to freeze CLIP parameters
-            distribution_merging: Method to merge multiple text distributions
-                                 ("moment_matching", "poe", "simple")
             dropout_rate: Dropout rate for MLP heads
             cov_rank: Low-rank covariance rank r for the general Gaussian
                       Sigma = diag(sigma^2) + U U^T. Applied symmetrically to
@@ -64,7 +61,6 @@ class MCDispAlignModel(nn.Module):
         self.model_path = model_path or str(config.CLIP_VIT_L_14_PATH)
         self.hidden_dim = hidden_dim
         self.freeze_clip = freeze_clip
-        self.distribution_merging = distribution_merging
         self.dropout_rate = dropout_rate
         # Low-rank covariance rank r (0 = diagonal-only). Defaults to config.
         self.cov_rank = cov_rank if cov_rank is not None else config.MCDISP_ALIGN_COV_RANK
@@ -201,10 +197,10 @@ class MCDispAlignModel(nn.Module):
         mus: torch.Tensor,
         logvars: torch.Tensor,
         us: Optional[torch.Tensor] = None,
-        method: str = "moment_matching"
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Merge K per-caption Gaussians N(mu_k, Sigma_k) into a set distribution.
+        Merge K per-caption Gaussians N(mu_k, Sigma_k) into a set distribution
+        by moment matching (the method's only merging rule, eq:caption_set_variance).
 
         The merged diagonal variance diag(Sigma_bar) includes both the per-caption
         diagonal sigma_k^2 and the diagonal of U_k U_k^T, so it is the diagonal
@@ -214,21 +210,12 @@ class MCDispAlignModel(nn.Module):
             mus: Per-caption means of shape (B, K, D)
             logvars: Per-caption log variances of shape (B, K, D)
             us: Per-caption low-rank factors of shape (B, K, D, r) or None
-            method: Merging method. MCDisp_Align uses "moment_matching"; "poe" and
-                   "simple" are retained as diagonal-only compatibility stubs.
 
         Returns:
             Tuple of (combined_mu, combined_logvar), each of shape (B, D),
             where combined_logvar is log(diag(Sigma_bar) + eps).
         """
-        if method == "moment_matching":
-            return self._moment_matching(mus, logvars, us)
-        elif method == "poe":
-            return self._product_of_experts(mus, logvars)
-        elif method == "simple":
-            return mus.mean(dim=1), logvars.mean(dim=1)
-        else:
-            raise ValueError(f"Unknown merging method: {method}")
+        return self._moment_matching(mus, logvars, us)
 
     def _moment_matching(
         self,
@@ -265,40 +252,6 @@ class MCDispAlignModel(nn.Module):
             diag_cov = diag_cov + (us ** 2).sum(dim=-1)  # + diag(U U^T)
         combined_var = (weights.view(1, K, 1) * (diag_cov + mus ** 2)).sum(dim=1) - combined_mu ** 2
         combined_logvar = torch.log(combined_var + config.MCDISP_ALIGN_COV_EPS)  # (B, D)
-
-        return combined_mu, combined_logvar
-
-    def _product_of_experts(
-        self,
-        mus: torch.Tensor,
-        logvars: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Merge distributions using Product of Experts (PoE).
-
-        The product of multiple Gaussian distributions is still Gaussian.
-
-        Args:
-            mus: Distribution means of shape (B, K, D)
-            logvars: Distribution log variances of shape (B, K, D)
-
-        Returns:
-            Tuple of (combined_mu, combined_logvar), each of shape (B, D)
-        """
-        vars = torch.exp(logvars)  # (B, K, D)
-
-        # Precisions (inverse of variance)
-        precisions = 1.0 / (vars + 1e-6)  # (B, K, D)
-
-        # Combine precisions: τ = Σ τᵢ
-        combined_precision = precisions.sum(dim=1)  # (B, D)
-
-        # Combine means: μ = (Σ τᵢμᵢ) / τ
-        combined_mu = (precisions * mus).sum(dim=1) / (combined_precision + 1e-6)  # (B, D)
-
-        # Combine variances: σ² = 1/τ
-        combined_var = 1.0 / (combined_precision + 1e-6)  # (B, D)
-        combined_logvar = torch.log(combined_var + 1e-6)  # (B, D)
 
         return combined_mu, combined_logvar
 
@@ -367,7 +320,7 @@ class MCDispAlignModel(nn.Module):
 
         # Merge into caption-set distribution (moment matching, full-cov diagonal)
         text_mu, text_logvar = self.merge_distributions(
-            text_mus, text_logvars, us=text_Us, method=self.distribution_merging
+            text_mus, text_logvars, us=text_Us
         )
 
         # Compute sigma for downstream use
@@ -426,39 +379,6 @@ class MCDispAlignModel(nn.Module):
             max_length=77  # CLIP's max sequence length
         )
 
-    def encode_image(self, pixel_values: torch.Tensor) -> torch.Tensor:
-        """
-        Extract deterministic image features (distribution mean).
-
-        Args:
-            pixel_values: Image tensor (B, 3, 224, 224)
-
-        Returns:
-            Image mu features (B, hidden_dim)
-        """
-        clip_feat = self.clip_model.get_image_features(pixel_values)
-        clip_feat = clip_feat.pooler_output
-        return self.img_mu_head(clip_feat)
-
-    def encode_text(
-        self, input_ids: torch.Tensor, attention_mask: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Extract deterministic text features (distribution mean).
-
-        Args:
-            input_ids: Token IDs (B, seq_len)
-            attention_mask: Attention mask (B, seq_len)
-
-        Returns:
-            Text mu features (B, hidden_dim)
-        """
-        clip_feat = self.clip_model.get_text_features(
-            input_ids=input_ids, attention_mask=attention_mask,
-        )
-        clip_feat = clip_feat.pooler_output
-        return self.text_mu_head(clip_feat)
-
     def trainable_parameters(self) -> List[nn.Parameter]:
         """
         Get list of trainable parameters.
@@ -477,20 +397,23 @@ class MCDispAlignModel(nn.Module):
         """
         return sum(p.numel() for p in self.trainable_parameters())
 
-    def save(self, path: str) -> None:
+    def save(self, path: str, epoch: Optional[int] = None) -> None:
         """
         Save model state.
 
         Args:
             path: Path to save checkpoint
+            epoch: Optional training epoch this checkpoint was taken at (1-based;
+                recorded for traceability of checkpoint selection; load() ignores
+                it when absent, so older checkpoints stay loadable)
         """
         state = {
             "model_state_dict": self.state_dict(),
             "hidden_dim": self.hidden_dim,
             "freeze_clip": self.freeze_clip,
-            "distribution_merging": self.distribution_merging,
             "dropout_rate": self.dropout_rate,
             "cov_rank": self.cov_rank,
+            "epoch": epoch,
         }
         torch.save(state, path)
         logger.info(f"Model saved to: {path}")
@@ -523,8 +446,6 @@ class MCDispAlignModel(nn.Module):
             self.hidden_dim = state["hidden_dim"]
         if "freeze_clip" in state:
             self.freeze_clip = state["freeze_clip"]
-        if "distribution_merging" in state:
-            self.distribution_merging = state["distribution_merging"]
         if "dropout_rate" in state:
             self.dropout_rate = state["dropout_rate"]
         if "cov_rank" in state:
@@ -543,7 +464,6 @@ if __name__ == "__main__":
 
     model = MCDispAlignModel(
         freeze_clip=config.MCDISP_ALIGN_FREEZE_CLIP,
-        distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
         dropout_rate=config.MCDISP_ALIGN_DROPOUT_RATE
     )
 
@@ -583,7 +503,6 @@ if __name__ == "__main__":
     # Verify diagonal-only mode (cov_rank=0) returns None for U
     diag_model = MCDispAlignModel(
         freeze_clip=config.MCDISP_ALIGN_FREEZE_CLIP,
-        distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
         dropout_rate=config.MCDISP_ALIGN_DROPOUT_RATE,
         cov_rank=0,
     )

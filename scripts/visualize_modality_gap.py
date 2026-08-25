@@ -194,7 +194,6 @@ METHOD_CONFIGS = {
     "Ours": {
         "model_fn": lambda: MCDispAlignModel(
             freeze_clip=config.MCDISP_ALIGN_FREEZE_CLIP,
-            distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
         ),
         "checkpoint": str(config.MCDISP_ALIGN_BEST_CKPT),
         "extract_fn": extract_mcdisp_align,

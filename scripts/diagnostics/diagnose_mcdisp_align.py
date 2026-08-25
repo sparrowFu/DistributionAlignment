@@ -2,7 +2,7 @@
 
 Loads checkpoints/mcdisp_align_best.pt and measures, on a fixed val subset:
   - raw CLIP feature R@1 (sanity baseline — should be ~0.3+ if data/pipeline OK)
-  - mcdisp_align mu R@1 under THREE scorers: cosine, uncertainty-calibrated, loglik
+  - mcdisp_align mu R@1 under mean cosine
   - positive-vs-negative similarity gap (what recall actually needs)
   - feature norms + sigma^2 (collapse / scale checks)
 """
@@ -68,7 +68,6 @@ def main():
 
     model = MCDispAlignModel(
         freeze_clip=config.MCDISP_ALIGN_FREEZE_CLIP,
-        distribution_merging=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
         cov_rank=config.MCDISP_ALIGN_COV_RANK,
     )
     model.load(args.checkpoint)
