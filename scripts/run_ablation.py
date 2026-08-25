@@ -200,7 +200,8 @@ def cmd_eval(args):
         "coco",
         batch_size=args.batch_size or config.MCDISP_ALIGN_BATCH_SIZE,
         num_workers=config.NUM_WORKERS,
-        num_samples=args.num_samples,   # None = 数据集全量（COCO val 5000）
+        num_samples=args.num_samples,   # 默认 5000：与主实验同口径（底层数据池是
+        # 全量 118k 图像，不传上限会得到与主表不可比的数字，见 spec §5）
     )
 
     feats = {k: [] for k in ("img_mu", "img_logvar", "text_mus", "text_logvars")}
@@ -283,8 +284,9 @@ def main():
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=None)
     ap.add_argument(
-        "--num-samples", type=int, default=None,
-        help="eval 评测图像数上限（默认数据集全量，COCO val 5000）")
+        "--num-samples", type=int, default=5000,
+        help="eval 评测图像数（默认 5000，与主实验同口径；底层数据池是全量 "
+             "118k 图像，不设上限的数字与主表不可比）")
     ap.add_argument("--device", default=None)
     args = ap.parse_args()
     {"train": cmd_train, "eval": cmd_eval,
