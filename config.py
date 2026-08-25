@@ -163,8 +163,13 @@ MCDISP_ALIGN_BEST_CKPT = CHECKPOINT_DIR / "mcdisp_align_coco_best.pt"
 MCDISP_ALIGN_EVAL_RESULTS_PATH = OUTPUT_DIR / "mcdisp_align_eval_results.json"
 
 # Training hyperparameters
-MCDISP_ALIGN_EPOCHS = 10
-MCDISP_ALIGN_BATCH_SIZE = 32
+# 15 epochs: with the 5-stage schedule the Full stage (last 20%, incl. L_cov)
+# needs ~3 epochs -- at 10 epochs + early stopping the run died at E7 and
+# L_cov never trained (traincoco.log 2026-08-25). Fixed budget, no early stop.
+MCDISP_ALIGN_EPOCHS = 15
+# 64: doubles the InfoNCE negatives; frozen backbone builds no CLIP graph, so
+# the memory cost is modest (fall back to 48/32 if the GPU is shared).
+MCDISP_ALIGN_BATCH_SIZE = 64
 MCDISP_ALIGN_CLIP_LR = 1e-6  # Learning rate for CLIP (if fine-tuning)
 MCDISP_ALIGN_MLP_LR = 5e-5   # Learning rate for MLP distribution heads (trained from scratch; balanced for convergence vs overfitting)
 MCDISP_ALIGN_WEIGHT_DECAY = 1e-4

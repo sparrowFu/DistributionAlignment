@@ -113,12 +113,16 @@ def parse_args():
                         help="Validation set ratio (default: 0.1)")
     parser.add_argument("--early-stop-patience", type=int, default=3,
                         help="Early stopping patience in epochs (default: 3)")
-    parser.add_argument("--no-early-stop", action="store_true",
-                        help="Disable early stopping")
+    parser.add_argument("--early-stop", action="store_true",
+                        help="Opt IN to early stopping. Default is a fixed budget: "
+                             "the staged schedule's Full stage (L_cov, last 20% of "
+                             "epochs) must be allowed to run -- early stopping on "
+                             "pre-Full recall killed it before (traincoco.log "
+                             "2026-08-25, stopped at E7 of 10)")
     parser.add_argument("--select-by", type=str, default="recall",
                         choices=["recall", "loss"],
                         help="Best-checkpoint selection metric: 'recall' "
-                             "(MCDisp_Align R@1, higher better) or 'loss' "
+                             "(multi-caption mc_recall@1, higher better) or 'loss' "
                              "(val loss, lower better). Default: recall")
 
     # Output arguments
@@ -170,7 +174,7 @@ def main():
         min_lr_ratio=args.min_lr_ratio,
         select_by=args.select_by,
         early_stop_patience=args.early_stop_patience,
-        no_early_stop=args.no_early_stop,
+        no_early_stop=not args.early_stop,
         seed=args.seed,
         num_workers=args.num_workers,
         device=args.device,
