@@ -127,6 +127,17 @@ def test_lambda_ctr_zero_no_contrast_grad():
     assert img_mu.grad is None or img_mu.grad.norm() == 0
 
 
+def test_b1_degenerates_to_zero():
+    """B=1 (reachable: no drop_last + filter_none_collate can shrink batches):
+    own set = entire gallery, single-image gallery -> both terms exactly 0."""
+    torch.manual_seed(4)
+    K, D = 5, 8
+    img_mu = torch.randn(1, D)
+    text_mus = torch.randn(1, K, D)
+    d = _forward_ctr(_ctr_only(), img_mu, text_mus)
+    assert d["ctr_i2t"] == 0.0 and d["ctr_t2i"] == 0.0 and d["ctr"] == 0.0
+
+
 def main():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

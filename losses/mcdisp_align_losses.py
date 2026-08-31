@@ -128,10 +128,10 @@ class MCDispAlignLoss(nn.Module):
         cap_n = F.normalize(text_mus.reshape(B * K, D), dim=-1)   # (B*K, D)
         logits = (img_n @ cap_n.T) / self.tau                     # (B, B*K)
 
-        # i2t: multi-positive, standard CE orientation: maximize
+        # i2t: multi-positive, softmax-ratio form: maximize
         # P(top-1 caption ∈ own set) = -log[ sum_own / sum_all ]
         #   = logsumexp(all B*K) - logsumexp(own K)
-        own = logits.view(B, B, K)                                # [i, j, k]
+        own = logits.reshape(B, B, K)                             # [i, j, k]
         pos = own[torch.arange(B, device=logits.device),
                   torch.arange(B, device=logits.device)]          # (B, K)
         loss_i2t = (torch.logsumexp(logits, dim=-1)
@@ -276,7 +276,6 @@ class MCDispAlignLoss(nn.Module):
             "var": var_loss.item(),
             "dir": dir_loss.item(),
             "cal": cal_loss.item(),
-            "contrastive": ctr_loss.item(),   # alias for training-loop compat
             "weighted_ctr": (self.lambda_ctr * ctr_loss).item(),
             "weighted_var": (self.lambda_var * var_loss).item(),
             "weighted_dir": (self.lambda_dir * dir_loss).item(),
