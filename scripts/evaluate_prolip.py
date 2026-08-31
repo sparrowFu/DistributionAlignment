@@ -20,7 +20,7 @@ from models.prolip_model import ProLIPModel
 from utils.eval_common import build_eval_dataloader, resolve_checkpoint, VALID_DATASETS
 from utils.eval_results import append_eval_results, groups_to_flat, print_recall_groups
 from utils.logger import get_logger, log_exception
-from utils.retrieval_metrics import compute_retrieval_metrics
+from utils.retrieval import compute_multicaption_recall
 from utils.seed import set_seed
 
 
@@ -58,14 +58,14 @@ def parse_args():
 
 @torch.no_grad()
 def extract_features(model, dataloader, device, num_samples=None):
-    """Extract ProLIP mean and log-variance features."""
+    """Extract ProLIP mean and log-variance features for ALL K captions."""
     model.eval()
 
     all_img_mu, all_text_mu = [], []
     all_img_logvar, all_text_logvar = [], []
     sample_count = 0
 
-    logger.info("Extracting features...")
+    logger.info("Extracting features (all K captions per image)...")
     for batch in tqdm(dataloader, desc="Extracting features"):
         if batch is None:
             continue
@@ -73,21 +73,24 @@ def extract_features(model, dataloader, device, num_samples=None):
         pil_images = batch["image"]
         caption_lists = batch["captions"]
 
-        pixel_values = model.process_images(pil_images)
+        batch_size = len(pil_images)
+        num_captions = len(caption_lists[0])
+        all_captions = []
+        for captions in caption_lists:
+            all_captions.extend(captions)
 
-        # Use first caption per image (1:1 retrieval, diagonal ground truth)
-        selected_captions = [captions[0] for captions in caption_lists]
-        text_inputs = model.process_text(selected_captions)
+        pixel_values = model.process_images(pil_images)
+        text_inputs = model.process_text(all_captions)
         input_ids = text_inputs["input_ids"].to(device)
 
         outputs = model(pixel_values, input_ids)
 
-        all_img_mu.append(outputs["img_mu"].cpu())
-        all_text_mu.append(outputs["text_mu"].cpu())
+        all_img_mu.append(outputs["img_mu"].cpu())          # (B, D)
+        all_text_mu.append(outputs["text_mu"].cpu())        # (B*K, D)
         all_img_logvar.append(outputs["img_logvar"].cpu())
         all_text_logvar.append(outputs["text_logvar"].cpu())
 
-        sample_count += len(pil_images)
+        sample_count += batch_size
         if num_samples and sample_count >= num_samples:
             break
 
@@ -98,11 +101,15 @@ def extract_features(model, dataloader, device, num_samples=None):
 
     if num_samples:
         img_mu = img_mu[:num_samples]
-        text_mu = text_mu[:num_samples]
         img_logvar = img_logvar[:num_samples]
-        text_logvar = text_logvar[:num_samples]
+        text_mu = text_mu[:num_samples * num_captions]
+        text_logvar = text_logvar[:num_samples * num_captions]
 
-    logger.info(f"Features shape: Images {img_mu.shape}, Texts {text_mu.shape}")
+    # (N, K, D): caption (i, k) at flattened index i*K + k
+    text_mu = text_mu.view(img_mu.shape[0], num_captions, -1)
+    text_logvar = text_logvar.view(img_logvar.shape[0], num_captions, -1)
+
+    logger.info(f"Features shape: Images {img_mu.shape}, Captions {text_mu.shape}")
     return img_mu, img_logvar, text_mu, text_logvar
 
 
@@ -133,22 +140,22 @@ def main():
         model, dataloader, args.device, args.num_samples,
     )
 
-    # Compute Recall@K (I2T + T2I, cosine + CSD)
-    metrics = compute_retrieval_metrics(
+    # Unified multi-caption protocol (N vs N*K), same as MCDisp_Align.
+    # ProLIP has distribution parameters, so use the full scorer (cosine + CSD).
+    mc = compute_multicaption_recall(
         img_mu, img_logvar, text_mu, text_logvar,
         args.recall_at_k, chunk_size=1000,
     )
 
-    # Group into cosine / csd families (each with i2t, t2i, mean) for unified
-    # printing and a flat metrics dict.
     groups = []
-    for metric_name, label in [("cosine", "Cosine Recall@K"), ("csd", "CSD Recall@K")]:
+    for prefix, label in [("mc_recall", "MC Cosine Recall@K"),
+                          ("mc_csd_recall", "MC CSD Recall@K")]:
         per_k = {}
         for k in args.recall_at_k:
-            i2t = metrics["i2t"][metric_name][f"recall@{k}"]
-            t2i = metrics["t2i"][metric_name][f"recall@{k}"]
-            per_k[k] = {"i2t": i2t, "t2i": t2i, "mean": (i2t + t2i) / 2}
-        groups.append({"family": f"{metric_name}_recall", "label": label, "per_k": per_k})
+            i2t = mc[f"{prefix}_i2t@{k}"]
+            t2i = mc[f"{prefix}_t2i@{k}"]
+            per_k[k] = {"i2t": i2t, "t2i": t2i, "mean": mc[f"{prefix}@{k}"]}
+        groups.append({"family": prefix, "label": label, "per_k": per_k})
 
     print_recall_groups(groups, logger)
 
