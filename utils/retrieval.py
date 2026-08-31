@@ -183,3 +183,63 @@ def compute_multicaption_recall(
         out[f"mc_csd_recall_t2i@{k}"] = csd_t2i[k]
         out[f"mc_csd_recall@{k}"] = (csd_i2t[k] + csd_t2i[k]) / 2
     return out
+
+
+@torch.no_grad()
+def compute_multicaption_recall_plain(
+    img_features: torch.Tensor,
+    text_features: torch.Tensor,
+    k_values: List[int],
+    chunk_size: int = 1000,
+) -> Dict[str, float]:
+    """Plain-cosine multi-caption bidirectional Recall@K (N images vs N*K
+    captions) for models WITHOUT distribution parameters (CLIP baseline,
+    ProLIP means) -- the unified protocol shared by ALL methods:
+
+      I2T: query = N image features, gallery = N*K caption features.
+           Image i has K positives (its own captions, flattened indices
+           [i*K, i*K+K)); a hit is ANY of them in the top-K (any-hit).
+      T2I: query = N*K caption features, gallery = N image features.
+           Each caption's ONLY positive is its own image.
+
+    Same semantics as the cosine family of compute_multicaption_recall;
+    features are L2-normalized internally. Returns keys (per k):
+    mc_recall_i2t@{k}, mc_recall_t2i@{k}, mc_recall@{k} (mean of the two).
+    """
+    N, K, _ = text_features.shape
+    img_n = F.normalize(img_features, dim=-1)                      # (N, D)
+    cap_n = F.normalize(text_features.reshape(N * K, -1), dim=-1)  # (N*K, D)
+    maxk = max(k_values)
+
+    hits_i2t = {k: 0 for k in k_values}
+    for start in range(0, N, chunk_size):
+        end = min(start + chunk_size, N)
+        sim = img_n[start:end] @ cap_n.T                          # (chunk, N*K)
+        mk = min(maxk, sim.size(1))
+        top = torch.topk(sim, mk, dim=1).indices
+        rows = torch.arange(start, end, device=sim.device).unsqueeze(1)
+        in_range = (top >= rows * K) & (top < rows * K + K)
+        for k in k_values:
+            hits_i2t[k] += in_range[:, :k].any(dim=1).sum().item()
+
+    Q = N * K
+    hits_t2i = {k: 0 for k in k_values}
+    for start in range(0, Q, chunk_size):
+        end = min(start + chunk_size, Q)
+        sim = cap_n[start:end] @ img_n.T                          # (chunk, N)
+        mk = min(maxk, sim.size(1))
+        top = torch.topk(sim, mk, dim=1).indices
+        q_idx = torch.arange(start, end, device=sim.device)
+        gt_img = (q_idx // K).unsqueeze(1)
+        match = top == gt_img
+        for k in k_values:
+            hits_t2i[k] += match[:, :k].any(dim=1).sum().item()
+
+    out: Dict[str, float] = {}
+    for k in k_values:
+        i2t = hits_i2t[k] / N
+        t2i = hits_t2i[k] / Q
+        out[f"mc_recall_i2t@{k}"] = i2t
+        out[f"mc_recall_t2i@{k}"] = t2i
+        out[f"mc_recall@{k}"] = (i2t + t2i) / 2
+    return out
