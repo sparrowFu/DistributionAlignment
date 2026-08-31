@@ -147,7 +147,7 @@ def train_epoch(
     floor_thresh = config.MCDISP_ALIGN_VAR_FLOOR * 2.0
 
     totals = {k: 0.0 for k in (
-        "loss", "ctr", "var", "dir", "cal", "img_var_avg",
+        "loss", "ctr", "ctr_i2t", "ctr_t2i", "var", "dir", "cal", "img_var_avg",
         # weighted contributions
         "weighted_ctr", "weighted_var", "weighted_dir", "weighted_cal",
         # variance statistics
@@ -249,6 +249,7 @@ def train_epoch(
         pbar.set_postfix({
             'loss': f"{loss_dict['total']:.4f}",
             'ctr': f"{loss_dict['ctr']:.4f}",
+            't2i': f"{loss_dict['ctr_t2i']:.4f}",
             'var': f"{loss_dict['var']:.3f}",
             'dir': f"{loss_dict['dir']:.3f}",
             'σ²i': f"{loss_dict['img_var_avg']:.3f}",

@@ -21,7 +21,7 @@ from utils.mcdisp_align_trainer import train_epoch, warmup_ramp
 # these in sync (regression: KeyError 'img_var_avg' on the first batch,
 # traincoco.log 2026-08-26).
 TRAINER_TOTALS_KEYS = (
-    "loss", "ctr", "var", "dir", "cal", "img_var_avg",
+    "loss", "ctr", "ctr_i2t", "ctr_t2i", "var", "dir", "cal", "img_var_avg",
     "weighted_ctr", "weighted_var", "weighted_dir", "weighted_cal",
     "img_var_min", "img_var_median", "img_var_mean", "img_var_max",
     "text_var_mean", "cap_var_mean", "caption_spread_mean",
