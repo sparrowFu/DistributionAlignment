@@ -19,7 +19,7 @@ from models.clip_baseline import CLIPFineTuneBaseline
 from utils.eval_common import build_eval_dataloader, resolve_checkpoint, VALID_DATASETS
 from utils.eval_results import append_eval_results, groups_to_flat, print_recall_groups
 from utils.logger import get_logger, log_exception
-from utils.retrieval import compute_recall_bidirectional
+from utils.retrieval import compute_multicaption_recall_plain
 from utils.seed import set_seed
 
 
@@ -68,7 +68,7 @@ def extract_features(
     all_text_features = []
     sample_count = 0
 
-    logger.info("Extracting features...")
+    logger.info("Extracting features (all K captions per image)...")
     for batch in tqdm(dataloader):
         if batch is None:
             continue
@@ -76,10 +76,15 @@ def extract_features(
         pil_images = batch["image"]
         caption_lists = batch["captions"]
 
-        selected_captions = [captions[0] for captions in caption_lists]
+        # Multi-caption protocol: encode ALL K captions per image
+        batch_size = len(pil_images)
+        num_captions = len(caption_lists[0])
+        all_captions = []
+        for captions in caption_lists:
+            all_captions.extend(captions)
 
         pixel_values = model.process_images(pil_images).to(device)
-        text_inputs = model.process_text(selected_captions)
+        text_inputs = model.process_text(all_captions)
         input_ids = text_inputs["input_ids"].to(device)
         attention_mask = text_inputs["attention_mask"].to(device)
 
@@ -90,9 +95,9 @@ def extract_features(
         )
 
         all_img_features.append(image_features.cpu())
-        all_text_features.append(text_features.cpu())
+        all_text_features.append(text_features.cpu())   # (batch*K, D)
 
-        sample_count += len(pil_images)
+        sample_count += batch_size
         if num_samples and sample_count >= num_samples:
             break
 
@@ -101,9 +106,13 @@ def extract_features(
 
     if num_samples:
         img_features = img_features[:num_samples]
-        text_features = text_features[:num_samples]
+        text_features = text_features[:num_samples * num_captions]
 
-    logger.info(f"Features shape: Images {img_features.shape}, Texts {text_features.shape}")
+    # (N, K, D): caption (i, k) at flattened index i*K + k
+    text_features = text_features.view(img_features.shape[0], num_captions, -1)
+
+    logger.info(f"Features shape: Images {img_features.shape}, "
+                f"Captions {text_features.shape}")
 
     return img_features, text_features
 
@@ -137,17 +146,18 @@ def main():
         model, dataloader, args.device, args.num_samples
     )
 
-    # Compute bidirectional Recall@K (image->text and text->image, cosine)
-    bidir = compute_recall_bidirectional(
-        img_features, text_features, args.recall_at_k, chunk_size=1000, normalize=True)
+    # Unified multi-caption protocol (N vs N*K): I2T any-of-K-own hit,
+    # T2I per caption -- the same protocol as MCDisp_Align.
+    mc = compute_multicaption_recall_plain(
+        img_features, text_features, args.recall_at_k, chunk_size=1000)
     groups = [{
-        "family": "recall",
-        "label": "Recall@K",
+        "family": "mc_recall",
+        "label": "Multi-caption Recall@K",
         "per_k": {
             k: {
-                "i2t": bidir[f"recall_i2t@{k}"],
-                "t2i": bidir[f"recall_t2i@{k}"],
-                "mean": bidir[f"recall@{k}"],
+                "i2t": mc[f"mc_recall_i2t@{k}"],
+                "t2i": mc[f"mc_recall_t2i@{k}"],
+                "mean": mc[f"mc_recall@{k}"],
             }
             for k in args.recall_at_k
         },
