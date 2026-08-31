@@ -2,14 +2,14 @@
 
 设计文档: docs/superpowers/specs/2026-08-24-ablation-v2-design.md
 
-4 个变体，每个 = 完整方法拿掉一个创新模块，以多描述检索协议
-（N 图像 vs N*5 描述，MCDisp_Align 打分器，与主实验 evaluate_mcdisp_align
-同口径）为唯一判据：
+4 个变体，每个 = 完整方法拿掉 §3.3 的一个对齐项，以多描述检索协议
+（N 图像 vs N*5 描述，纯余弦 MCDisp_Align 打分器，与主实验
+evaluate_mcdisp_align 同口径）为唯一判据：
 
-    full      完整方法（复刻主实验配置，λ_cov=0.01, r=4）
-    no_var    lambda_var=0             方差<-多描述离散度监督（核心创新）
-    no_dir    cov_rank=0, lambda_cov=0 低秩协方差<-主要变化方向（连头移除）
-    no_cover  lambda_cover_pos=0       逐描述覆盖
+    full      完整方法（复刻主实验配置，λ_dir=0.5, r=4）
+    no_var    lambda_var=0   去掉 L_var：图像方差←文本方差（含经验离散度）监督（核心创新）
+    no_dir    cov_rank=0, lambda_dir=0   去掉 L_dir：低秩方向←描述变化方向（连头移除）
+    no_ctr    lambda_ctr=0   去掉 L_ctr：纯参数级监督、无判别性的对照
 
 用法:
     python scripts/run_ablation.py train --variant full
@@ -33,7 +33,7 @@ ABLATION_CKPT_DIR = config.CHECKPOINT_DIR / "ablation_v2"
 ABLATION_OUT_DIR = config.OUTPUT_DIR / "ablation"
 
 # 变体 -> 相对主配置的覆盖项。full 为空 dict = 全部取 config 默认
-# （即主实验实测超参 ctr1.0/mu0.5/var1.0/cover_pos0.5/cov0.01/reg0.01, r=4）。
+# （即主实验超参 ctr1.0/var1.0/dir0.5/cal0.01, r=4）。
 # 关闭一项损失就是权重清零，不做重新归一化。
 VARIANTS = {
     "full": {
@@ -41,16 +41,16 @@ VARIANTS = {
         "overrides": {},
     },
     "no_var": {
-        "desc": "去掉 L_var：方差←多描述离散度监督（核心创新）",
+        "desc": "去掉 L_var：图像方差←文本方差（含经验离散度）监督（核心创新）",
         "overrides": {"lambda_var": 0.0},
     },
     "no_dir": {
-        "desc": "去掉低秩模块：cov_rank=0 且 λ_cov=0（协方差与覆盖距离均退化为对角）",
-        "overrides": {"cov_rank": 0, "lambda_cov": 0.0},
+        "desc": "去掉低秩模块：cov_rank=0 且 λ_dir=0（协方差退化为对角）",
+        "overrides": {"cov_rank": 0, "lambda_dir": 0.0},
     },
-    "no_cover": {
-        "desc": "去掉 L_cover：逐描述覆盖",
-        "overrides": {"lambda_cover_pos": 0.0},
+    "no_ctr": {
+        "desc": "去掉 L_ctr：纯参数级监督、无判别性对照（预期检索大幅退化）",
+        "overrides": {"lambda_ctr": 0.0},
     },
 }
 

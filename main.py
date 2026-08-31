@@ -38,7 +38,8 @@ Available tasks:
     eval_clip_zero_shot    Evaluate CLIP Zero-Shot baseline (B1)
 
   Experiment Tasks:
-    run_ablation           Ablation v2 (--command train --variant full|no_var|no_dir|no_cover)
+    run_ablation           Ablation v2 (--command train|eval|report|all
+                           --variant full|no_var|no_dir|no_ctr)
     eval_ood               Exp4: OOD detection (sigma-based anomaly scoring)
     eval_sigma_analysis    Exp7: sigma semantic analysis
     visualize_gap          Exp8: Modality gap visualization
@@ -47,8 +48,13 @@ Available tasks:
 Supported model types (--model-type, used by eval_flickr30k): mcdisp_align,
                                      clip_baseline, clip_zero_shot, prolip
 
+MCDisp_Align objective arguments (--lambda-ctr/var/dir/cal, --tau,
+--sigma0-sq, --warmup-frac, --cov-rank) are forwarded to
+train_mcdisp_align only (ablation variants use their fixed configs).
+
 Examples:
   python main.py --task train_mcdisp_align
+  python main.py --task train_mcdisp_align --lambda-var 0.5 --cov-rank 0
   python main.py --task eval_mcdisp_align
   python main.py --task run_ablation --command train --variant full
   python main.py --task eval_sigma_analysis
@@ -104,6 +110,28 @@ Examples:
     parser.add_argument("--freeze-image", action="store_true")
     parser.add_argument("--freeze-text", action="store_true")
 
+    # MCDisp_Align objective arguments (train_mcdisp_align / run_ablation only)
+    parser.add_argument("--lambda-ctr", type=float, default=None,
+                        help="Weight of L_ctr (mean alignment)")
+    parser.add_argument("--lambda-var", type=float, default=None,
+                        help="Weight of L_var (variance alignment, core)")
+    parser.add_argument("--lambda-dir", type=float, default=None,
+                        help="Weight of L_dir (direction alignment)")
+    parser.add_argument("--lambda-cal", type=float, default=None,
+                        help="Weight of L_cal (caption calibration)")
+    parser.add_argument("--tau", type=float, default=None,
+                        help="Fixed temperature in the L_ctr similarity")
+    parser.add_argument("--sigma0-sq", type=float, default=None,
+                        help="Caption-calibration prior sigma_0^2 for L_cal")
+    parser.add_argument("--warmup-frac", type=float, default=None,
+                        help="L_var/L_dir warmup fraction of total steps (0 = no ramp)")
+    parser.add_argument("--cov-rank", type=int, default=None,
+                        help="Low-rank covariance rank r for the image side (0 = diagonal only)")
+    parser.add_argument("--mlp-lr", type=float, default=None,
+                        help="Learning rate for the MLP distribution heads (train_mcdisp_align only)")
+    parser.add_argument("--clip-lr", type=float, default=None,
+                        help="Learning rate for CLIP when not frozen (train_mcdisp_align only)")
+
     # System arguments
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--num-workers", type=int, default=None)
@@ -118,7 +146,7 @@ Examples:
     # Experiment-specific arguments
     parser.add_argument("--config", "--variant", type=str, default=None,
                         dest="config",
-                        help="Ablation variant: full|no_var|no_dir|no_cover "
+                        help="Ablation variant: full|no_var|no_dir|no_ctr "
                              "(alias of --config)")
 
     # Resume training
@@ -164,6 +192,29 @@ def run_python_script(script_path: Path, args: argparse.Namespace) -> int:
         cmd.append("--freeze-image")
     if args.freeze_text:
         cmd.append("--freeze-text")
+    # MCDisp_Align objective knobs (train_mcdisp_align only; ablation
+    # variants keep their fixed configs, so they are never forwarded there)
+    if args.task == "train_mcdisp_align":
+        if args.lambda_ctr is not None:
+            cmd.extend(["--lambda-ctr", str(args.lambda_ctr)])
+        if args.lambda_var is not None:
+            cmd.extend(["--lambda-var", str(args.lambda_var)])
+        if args.lambda_dir is not None:
+            cmd.extend(["--lambda-dir", str(args.lambda_dir)])
+        if args.lambda_cal is not None:
+            cmd.extend(["--lambda-cal", str(args.lambda_cal)])
+        if args.tau is not None:
+            cmd.extend(["--tau", str(args.tau)])
+        if args.sigma0_sq is not None:
+            cmd.extend(["--sigma0-sq", str(args.sigma0_sq)])
+        if args.warmup_frac is not None:
+            cmd.extend(["--warmup-frac", str(args.warmup_frac)])
+        if args.cov_rank is not None:
+            cmd.extend(["--cov-rank", str(args.cov_rank)])
+        if args.mlp_lr is not None:
+            cmd.extend(["--mlp-lr", str(args.mlp_lr)])
+        if args.clip_lr is not None:
+            cmd.extend(["--clip-lr", str(args.clip_lr)])
     if args.seed is not None:
         cmd.extend(["--seed", str(args.seed)])
     if args.num_workers is not None:

@@ -163,13 +163,15 @@ MCDISP_ALIGN_BEST_CKPT = CHECKPOINT_DIR / "mcdisp_align_coco_best.pt"
 MCDISP_ALIGN_EVAL_RESULTS_PATH = OUTPUT_DIR / "mcdisp_align_eval_results.json"
 
 # Training hyperparameters
-# 15 epochs: with the 5-stage schedule the Full stage (last 20%, incl. L_cov)
-# needs ~3 epochs -- at 10 epochs + early stopping the run died at E7 and
-# L_cov never trained (traincoco.log 2026-08-25). Fixed budget, no early stop.
+# 15 epochs fixed budget (no early stop by default): all four loss terms are on
+# after a short warmup ramp, and the budget must let the from-scratch heads
+# converge on frozen CLIP features.
 MCDISP_ALIGN_EPOCHS = 15
-# 64: doubles the InfoNCE negatives; frozen backbone builds no CLIP graph, so
-# the memory cost is modest (fall back to 48/32 if the GPU is shared).
-MCDISP_ALIGN_BATCH_SIZE = 64
+# 32: UNIFIED training regime -- all methods (MCDisp_Align / CLIP baseline /
+# ProLIP) train at batch 32 for fair comparison. Note 64 gives more InfoNCE
+# negatives (Run1@64 -> test R@1 0.4470 vs the 2026-08-25 32-batch runs being
+# weaker); the absolute number is traded for a level playing field.
+MCDISP_ALIGN_BATCH_SIZE = 32
 MCDISP_ALIGN_CLIP_LR = 1e-6  # Learning rate for CLIP (if fine-tuning)
 MCDISP_ALIGN_MLP_LR = 5e-5   # Learning rate for MLP distribution heads (trained from scratch; balanced for convergence vs overfitting)
 MCDISP_ALIGN_WEIGHT_DECAY = 1e-4
@@ -181,41 +183,44 @@ MCDISP_ALIGN_DROPOUT_RATE = 0.1         # Dropout rate for MLP heads
 # =============================================================================
 # MCDisp_Align: Multi-Caption Semantic Dispersion Guided Distribution Alignment
 # =============================================================================
-# Method overview:
-# image and text are modeled as Gaussians. The image uses a general covariance
-# Sigma_v = diag(sigma_v^2) + U_v U_v^T (U_v in R^{D x r}); text is diagonal-only
-# (v1). The image variance is supervised toward the multi-caption semantic spread,
-# and the image low-rank directions toward the caption deviation directions.
+# Method overview (paper §3, docs/MCDisp_Align/iclr2027_conference.tex):
+# Each image and each of its K captions is encoded as a Gaussian through
+# lightweight heads. The K per-caption distributions form ONE text
+# distribution by moment matching (eq:caption_set_moments):
+#     Sigma_bar_t = S_t + (1/K) sum_k Sigma_k^t,
+#     diag(Sigma_bar_t) = s_t^2 + (1/K) sum_k sigma_k^2,
+# i.e. the text variance adds the empirical caption dispersion to the averaged
+# caption variance. The image distribution (Sigma_v = diag(sigma_v^2) +
+# U_v U_v^T) is aligned with the text distribution through its parameters:
 #
-# Total loss = lambda_ctr*L_set + lambda_mu*L_mu + lambda_var*L_var
-#            + lambda_cover*L_cover + lambda_cov*L_cov + lambda_reg*L_reg
-# where L_set is a bidirectional InfoNCE on the uncertainty-discounted cosine
-# similarity  sim = (mu_v . mu_t) / (tau * sqrt(1+mean sigma_v^2) * sqrt(1+mean sigma_t^2)).
+#     L = lambda_ctr*L_ctr + lambda_var*L_var + lambda_dir*L_dir
+#       + lambda_cal*L_cal
+#
+# L_ctr  : bidirectional InfoNCE on the PLAIN cosine of the image mean and the
+#          text mean (fixed tau). The similarity involves no variance, so the
+#          contrastive term sends no gradient to any variance.
+# L_var  : log-space regression of sigma_v^2 to the stop-gradient text
+#          variance diag(Sigma_bar_t) (encodes the empirical dispersion).
+# L_dir  : subspace alignment between U_v and the top-r eigenvectors of the
+#          between-caption covariance S_t (r capped at min(r, K-1, D)).
+# L_cal  : caption variances calibrated to the prior sigma_0^2 (the only
+#          supervisor of the caption-level variances).
 MCDISP_ALIGN_COV_RANK = 4                 # low-rank covariance rank r for the IMAGE side (0 = diagonal only)
-MCDISP_ALIGN_TAU = 0.07                   # FIXED temperature in the L_set similarity (not learnable)
-MCDISP_ALIGN_LAMBDA_CTR = 1.0             # weight for the set contrastive loss L_set
-MCDISP_ALIGN_LAMBDA_MU = 0.5              # weight for the mean-center alignment loss L_mu
-MCDISP_ALIGN_LAMBDA_VAR = 1.0             # weight for the variance semantic consistency loss L_var (core)
-MCDISP_ALIGN_LAMBDA_COVER_POS = 0.5       # weight for L_cover positive coverage
-MCDISP_ALIGN_LAMBDA_COVER_NEG = 0.0       # weight for L_cover negative repulsion (0 = off)
-MCDISP_ALIGN_LAMBDA_COV = 0.01            # weight for L_cov -- STABILITY-RUN value (Full-cov crash risk); official target 0.2 once Full stage verified stable
-MCDISP_ALIGN_LAMBDA_REG = 0.01            # weight for the variance regularization loss L_reg
-MCDISP_ALIGN_M_POS = 1.0                  # L_cover positive coverage margin (per-D normalized Mahalanobis)
-MCDISP_ALIGN_M_NEG = 2.0                  # L_cover negative repulsion margin
-MCDISP_ALIGN_TARGET_VAR = 0.04            # L_reg variance prior sigma_0^2 (= measured MSCOCO caption spread)
-MCDISP_ALIGN_USE_UNCERTAINTY_SIM = True   # L_set/retrieval use the uncertainty-discounted score (False = plain cosine)
-MCDISP_ALIGN_VAR_FLOOR = 1e-4             # numerical floor on sigma^2 (softplus positivity + div-by-zero guard; NOT a semantic floor -- the range is learned via L_var / L_reg)
+MCDISP_ALIGN_TAU = 0.07                   # FIXED temperature in the L_ctr similarity (not learnable)
+MCDISP_ALIGN_LAMBDA_CTR = 1.0             # weight for the mean alignment L_ctr (0 in the no_ctr ablation)
+MCDISP_ALIGN_LAMBDA_VAR = 1.0             # weight for the variance alignment L_var (core)
+MCDISP_ALIGN_LAMBDA_DIR = 0.5             # weight for the direction alignment L_dir
+MCDISP_ALIGN_LAMBDA_CAL = 0.01            # weight for the caption calibration L_cal
+MCDISP_ALIGN_SIGMA0_SQ = 0.04             # prior sigma_0^2 for caption calibration (= measured MSCOCO caption spread)
+MCDISP_ALIGN_WARMUP_FRAC = 0.1            # L_var/L_dir ramp linearly 0->1 over the first 10% of total steps (caption heads train from scratch; the dispersion statistics need a few steps to mature). L_ctr/L_cal are always on.
+MCDISP_ALIGN_VAR_FLOOR = 1e-4             # numerical floor on sigma^2 (softplus positivity guard; NOT a semantic floor -- the range is learned via L_var)
 MCDISP_ALIGN_VAR_FLOOR_NEAR_MULT = 10     # variance floor-collapse monitor: a dim is "near floor" if sigma^2 < MCDISP_ALIGN_VAR_FLOOR_NEAR_MULT * MCDISP_ALIGN_VAR_FLOOR
 MCDISP_ALIGN_VAR_FLOOR_RATIO_WARN = 0.5   # warn when >this fraction of dims are near-floor AND mean sigma^2 < 2*MCDISP_ALIGN_VAR_FLOOR
-MCDISP_ALIGN_COV_EPS = 1e-6               # numerical epsilon for Mahalanobis / log
-MCDISP_ALIGN_GRAD_CLIP_NORM = 1.0         # global grad-norm clip (clip_grad_norm_) -- guards against L_cov / cover spikes destabilizing the retrieval means
+MCDISP_ALIGN_COV_EPS = 1e-6               # numerical epsilon for log / eigh
+MCDISP_ALIGN_GRAD_CLIP_NORM = 1.0         # global grad-norm clip (clip_grad_norm_) -- guards against eigh/QR spikes destabilizing the retrieval means
 # Deprecated likelihood-rewrite knobs (no longer used by the training/loss path).
 MCDISP_ALIGN_USE_LOGDET = True            # deprecated: loglik-eval only
 MCDISP_ALIGN_PER_DIM_NORMALIZE = True     # deprecated: loglik-eval only
-
-# 3-stage training schedule (fraction of total epochs each stage spans)
-MCDISP_ALIGN_STAGE_WARMUP_FRAC = 0.2      # L_set + L_mu (+ L_reg always on)
-MCDISP_ALIGN_STAGE_FULL_FRAC = 0.2        # + L_cov (ramped 0 -> 1)
 
 # =============================================================================
 # Baseline B3: ProLIP Configuration (real ProLIP ViT-H/14 via the `prolip` lib)
@@ -243,7 +248,9 @@ PROLIP_EMBED_DIM = 1024
 
 # Fine-tuning hyperparameters (full fine-tuning of the whole ProLIP model with the ProLIP inclusion loss).
 PROLIP_EPOCHS = 5
-PROLIP_BATCH_SIZE = 16          # ViT-H/14 is large; keep modest to fit GPU
+PROLIP_BATCH_SIZE = 32          # unified training regime (was 16); ViT-H/14 full
+                                # fine-tune at 32 fits the 85GB GPU when idle --
+                                # fall back to 16 if the card is shared
 PROLIP_LR = 1e-6                # full-backbone fine-tune -> small LR
 PROLIP_WEIGHT_DECAY = 1e-4
 PROLIP_TEMPERATURE = 0.07       # legacy alias (inclusion loss uses learned logit_scale)

@@ -4,13 +4,10 @@ MCDisp_Align Evaluation Script
 Evaluates the MCDisp_Align (Multi-Caption Semantic Dispersion Guided Distribution
 Alignment) model with the standard multi-caption retrieval protocol
 (N images vs N*K captions; I2T any-of-K-hit, T2I per-caption single-positive)
-under the MCDisp_Align score -- the uncertainty-discounted cosine
-
-    sim = (mu_v . mu_t) / (tau * sqrt(1+mean sigma_v^2) * sqrt(1+mean sigma_t^2))
-
-i.e. the same score the L_set contrastive loss optimizes and the same protocol
-the trainer uses for checkpoint selection. This is the canonical MS-COCO/
-Flickr30k protocol, comparable to published baselines.
+under the plain cosine of the means -- the same score the L_ctr contrastive
+loss optimizes (paper §3.3: the similarity involves no variance) and the same
+protocol the trainer uses for checkpoint selection. This is the canonical
+MS-COCO/Flickr30k protocol, comparable to published baselines.
 """
 
 import argparse
@@ -63,7 +60,8 @@ def parse_args():
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
                         help="Device to use")
     parser.add_argument("--tau", type=float, default=config.MCDISP_ALIGN_TAU,
-                        help="Temperature for the MCDisp_Align uncertainty-discounted similarity")
+                        help="Temperature of the L_ctr similarity (kept for record; the "
+                             "retrieval score is the plain cosine, on which tau has no effect)")
 
     return parser.parse_args()
 
@@ -182,8 +180,8 @@ def main():
     text_logvars_d = text_logvars.to(args.device)
 
     # Primary (and only) metric: standard multi-caption bidirectional Recall
-    # (N images vs N*K captions) under the MCDisp_Align uncertainty-discounted
-    # score (= L_set score) -- the canonical MS-COCO/Flickr one-image-many-
+    # (N images vs N*K captions) under the plain-cosine MCDisp_Align score
+    # (= the L_ctr score) -- the canonical MS-COCO/Flickr one-image-many-
     # captions protocol, comparable to published baselines. Train-time
     # checkpoint selection uses the same protocol (trainer evaluate()).
     mc = compute_multicaption_recall(
@@ -194,12 +192,24 @@ def main():
     groups = [
         {
             "family": "mc_recall",
-            "label": "Multi-caption Recall@K (MCDisp_Align score; N vs N*K)",
+            "label": "Multi-caption Recall@K (plain-cosine MCDisp_Align score; N vs N*K)",
             "per_k": {
                 k: {
                     "i2t": mc[f"mc_recall_i2t@{k}"],
                     "t2i": mc[f"mc_recall_t2i@{k}"],
                     "mean": mc[f"mc_recall@{k}"],
+                }
+                for k in args.recall_at_k
+            },
+        },
+        {
+            "family": "mc_csd_recall",
+            "label": "Multi-caption Recall@K (ProLIP-style CSD; gallery uncertainty discount)",
+            "per_k": {
+                k: {
+                    "i2t": mc.get(f"mc_csd_recall_i2t@{k}", 0.0),
+                    "t2i": mc.get(f"mc_csd_recall_t2i@{k}", 0.0),
+                    "mean": mc.get(f"mc_csd_recall@{k}", 0.0),
                 }
                 for k in args.recall_at_k
             },

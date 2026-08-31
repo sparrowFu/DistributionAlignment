@@ -52,9 +52,10 @@ class MCDispAlignModel(nn.Module):
             hidden_dim: Hidden dimension for CLIP embeddings
             freeze_clip: Whether to freeze CLIP parameters
             dropout_rate: Dropout rate for MLP heads
-            cov_rank: Low-rank covariance rank r for the general Gaussian
-                      Sigma = diag(sigma^2) + U U^T. Applied symmetrically to
-                      image and text. 0 = diagonal only. Defaults to config.
+            cov_rank: Low-rank covariance rank r for the IMAGE Gaussian
+                      Sigma_v = diag(sigma_v^2) + U_v U_v^T (image-side only;
+                      text distributions are diagonal, as in the paper).
+                      0 = diagonal only. Defaults to config.
         """
         super().__init__()
 
@@ -199,12 +200,13 @@ class MCDispAlignModel(nn.Module):
         us: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Merge K per-caption Gaussians N(mu_k, Sigma_k) into a set distribution
-        by moment matching (the method's only merging rule, eq:caption_set_variance).
+        Form the text distribution from the K per-caption Gaussians
+        N(mu_k, Sigma_k) by moment matching (paper §3.2, eq:caption_set_moments:
+        Sigma_bar_t = S_t + (1/K) sum_k Sigma_k^t).
 
-        The merged diagonal variance diag(Sigma_bar) includes both the per-caption
-        diagonal sigma_k^2 and the diagonal of U_k U_k^T, so it is the diagonal
-        of the full moment-matched covariance.
+        The text variance diag(Sigma_bar_t) includes both the averaged
+        per-caption diagonal sigma_k^2 and the between-caption dispersion
+        s_t^2, so it is the diagonal of the moment-matched covariance.
 
         Args:
             mus: Per-caption means of shape (B, K, D)
@@ -213,7 +215,8 @@ class MCDispAlignModel(nn.Module):
 
         Returns:
             Tuple of (combined_mu, combined_logvar), each of shape (B, D),
-            where combined_logvar is log(diag(Sigma_bar) + eps).
+            where combined_logvar is log(diag(Sigma_bar_t) + eps) -- the text
+            variance that L_var regresses the image variance to.
         """
         return self._moment_matching(mus, logvars, us)
 
@@ -224,10 +227,11 @@ class MCDispAlignModel(nn.Module):
         us: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Moment-match K Gaussians into a set distribution.
+        Moment-match the K per-caption Gaussians into the text distribution.
 
-        diag(Sigma_bar) = (1/K) sum_k [ sigma_k^2 + diag(U_k U_k^T) + mu_k^2 ]
+        diag(Sigma_bar_t) = (1/K) sum_k [ sigma_k^2 + diag(U_k U_k^T) + mu_k^2 ]
                           - mu_bar^2
+                          = s_t^2 + (1/K) sum_k sigma_k^2   (text variance)
 
         Args:
             mus: Per-caption means of shape (B, K, D)
@@ -264,8 +268,10 @@ class MCDispAlignModel(nn.Module):
         """
         Forward pass - encode images and K captions into distributions.
 
-        Image and text are both modeled as general Gaussians N(mu, Sigma) with
-        Sigma = diag(sigma^2) + U U^T (U may be None when cov_rank == 0).
+        The image is modeled as a general Gaussian N(mu_v, Sigma_v) with
+        Sigma_v = diag(sigma_v^2) + U_v U_v^T (U is None when cov_rank == 0);
+        each caption text distribution is diagonal Gaussian
+        N(mu_{i,k}^t, diag(sigma_{i,k}^{t 2})).
 
         Args:
             pixel_values: Image tensor of shape (B, C, H, W) from processor
@@ -277,11 +283,13 @@ class MCDispAlignModel(nn.Module):
             compatibility with eval scripts):
                 - img_features / text_features: CLIP features (B, D)
                 - img_mu / img_logvar / img_sigma: image distribution (B, D)
-                - text_mu / text_logvar / text_sigma: caption-set distribution (B, D)
+                - text_mu / text_logvar / text_sigma: text distribution formed
+                  from the K per-caption distributions by moment matching
+                  (text mean mu_bar_t and text variance diag(Sigma_bar_t)) (B, D)
                 - text_mus: per-caption means (B, K, D)
                 - text_logvars: per-caption log variances (B, K, D)
                 - img_U: image covariance factor (B, D, r) or None
-                - text_Us: always None (text is diagonal-only in v1)
+                - text_Us: always None (caption distributions are diagonal)
         """
         # CLIP encoding (keep features for contrastive loss)
         img_features = self.clip_model.get_image_features(pixel_values)
@@ -306,8 +314,8 @@ class MCDispAlignModel(nn.Module):
         img_logvar = self._floor_logvar(self.img_logvar_head(img_features))  # (B, hidden_dim)
         img_U = self._cov_factor(self.img_cov_head, img_features) if self.cov_rank > 0 else None
 
-        # Text distributions (K captions): mu, sigma^2. Text is diagonal-only
-        # (covariance is image-side), so there is no text_U.
+        # A distribution for each caption: mu, sigma^2. Caption distributions
+        # are diagonal (the low-rank covariance is image-side), so no text_U.
         text_mus, text_logvars = [], []
         for k in range(K):
             fk = text_features[:, k, :]
@@ -316,9 +324,10 @@ class MCDispAlignModel(nn.Module):
 
         text_mus = torch.stack(text_mus, dim=1)  # (B, K, hidden_dim)
         text_logvars = torch.stack(text_logvars, dim=1)  # (B, K, hidden_dim)
-        text_Us = None  # text is diagonal-only
+        text_Us = None  # caption distributions are diagonal
 
-        # Merge into caption-set distribution (moment matching, full-cov diagonal)
+        # Form the text distribution from the K per-caption distributions
+        # (moment matching; text variance = dispersion + averaged caption var)
         text_mu, text_logvar = self.merge_distributions(
             text_mus, text_logvars, us=text_Us
         )

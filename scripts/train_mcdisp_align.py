@@ -1,17 +1,22 @@
 """
 MCDisp_Align Training Script (CLI)
 
-Thin command-line wrapper that parses CLI args into a training config and invokes the shared trainer (staged loss schedule, grad clipping, recall/loss best-checkpoint selection, early stopping, best+last checkpointing, resume).
+Thin command-line wrapper that parses CLI args into a training config and invokes the shared trainer (warmup ramp, grad clipping, recall/loss best-checkpoint selection, opt-in early stopping, best+last checkpointing, resume).
 
-Trains the MCDisp_Align (Multi-Caption Semantic Dispersion Guided Distribution Alignment) model, which
-models image and text embeddings as Gaussians. The image uses a general
-covariance Sigma_v = diag(sigma_v^2) + U_v U_v^T; text is diagonal-only (v1).
-The image variance is supervised toward the multi-caption semantic spread, and
-the image low-rank directions toward the caption deviation directions.
+Trains the MCDisp_Align (Multi-Caption Semantic Dispersion Guided Distribution
+Alignment) model per the paper's §3 (docs/MCDisp_Align/iclr2027_conference.tex):
+each image and each of its K captions is encoded as a Gaussian; the K
+per-caption distributions form ONE text distribution by moment matching
+(Sigma_bar_t = S_t + mean Sigma_k^t); the image distribution
+(Sigma_v = diag(sigma_v^2) + U_v U_v^T) is aligned with it through the
+four-term objective  L_ctr + lambda_var*L_var + lambda_dir*L_dir
++ lambda_cal*L_cal  (plain-cosine InfoNCE on the means, log-space variance
+regression to the text variance, subspace alignment with the caption
+variation directions, caption-variance calibration).
 
-Checkpoint selection is by the MCDisp_Align uncertainty-discounted cosine Recall@1
-(the same score L_set optimizes), so the trained objective, the selection
-metric and the reported metric all agree.
+Checkpoint selection is by the multi-caption plain-cosine Recall@1 (the same
+score L_ctr optimizes), so the trained objective, the selection metric and
+the reported metric all agree.
 """
 
 import argparse
@@ -67,28 +72,20 @@ def parse_args():
     parser.add_argument("--min-lr-ratio", type=float, default=config.LR_MIN_LR_RATIO,
                         help="Cosine floor as a fraction of the base LR")
 
-    parser.add_argument("--lambda-ctr", type=float, default=config.MCDISP_ALIGN_LAMBDA_CTR)
-    parser.add_argument("--lambda-mu", type=float, default=config.MCDISP_ALIGN_LAMBDA_MU)
-    parser.add_argument("--lambda-var", type=float, default=config.MCDISP_ALIGN_LAMBDA_VAR)
-    parser.add_argument("--lambda-cover-pos", type=float, default=config.MCDISP_ALIGN_LAMBDA_COVER_POS)
-    parser.add_argument("--lambda-cover-neg", type=float, default=config.MCDISP_ALIGN_LAMBDA_COVER_NEG,
-                        help="weight of L_cover's optional negative-repulsion (0 = pos-only)")
-    parser.add_argument("--lambda-cov", type=float, default=config.MCDISP_ALIGN_LAMBDA_COV)
-    parser.add_argument("--lambda-reg", type=float, default=config.MCDISP_ALIGN_LAMBDA_REG)
+    parser.add_argument("--lambda-ctr", type=float, default=config.MCDISP_ALIGN_LAMBDA_CTR,
+                        help="weight of the mean alignment L_ctr (plain-cosine InfoNCE)")
+    parser.add_argument("--lambda-var", type=float, default=config.MCDISP_ALIGN_LAMBDA_VAR,
+                        help="weight of the variance alignment L_var (core)")
+    parser.add_argument("--lambda-dir", type=float, default=config.MCDISP_ALIGN_LAMBDA_DIR,
+                        help="weight of the direction alignment L_dir")
+    parser.add_argument("--lambda-cal", type=float, default=config.MCDISP_ALIGN_LAMBDA_CAL,
+                        help="weight of the caption calibration L_cal")
     parser.add_argument("--tau", type=float, default=config.MCDISP_ALIGN_TAU,
-                        help="Fixed temperature in the L_set similarity (not learnable)")
-    parser.add_argument("--m-pos", type=float, default=config.MCDISP_ALIGN_M_POS,
-                        help="L_cover positive coverage margin (per-D normalized Mahalanobis)")
-    parser.add_argument("--target-var", type=float, default=config.MCDISP_ALIGN_TARGET_VAR,
-                        help="L_reg variance prior sigma_0^2")
-    parser.add_argument("--m-neg", type=float, default=config.MCDISP_ALIGN_M_NEG,
-                        help="L_cover negative repulsion margin")
-    parser.add_argument("--use-uncertainty-sim", action="store_true",
-                        default=config.MCDISP_ALIGN_USE_UNCERTAINTY_SIM,
-                        help="L_set uses the uncertainty-discounted score (default)")
-    parser.add_argument("--no-uncertainty-sim", dest="use_uncertainty_sim",
-                        action="store_false",
-                        help="L_set uses plain cosine (ablation)")
+                        help="Fixed temperature in the L_ctr similarity (not learnable)")
+    parser.add_argument("--sigma0-sq", type=float, default=config.MCDISP_ALIGN_SIGMA0_SQ,
+                        help="caption-calibration prior sigma_0^2 for L_cal")
+    parser.add_argument("--warmup-frac", type=float, default=config.MCDISP_ALIGN_WARMUP_FRAC,
+                        help="L_var/L_dir ramp linearly 0->1 over this fraction of total steps")
 
     parser.add_argument("--cov-rank", type=int, default=config.MCDISP_ALIGN_COV_RANK,
                         help="Low-rank covariance rank r for the image side (0 = diagonal only)")
@@ -98,8 +95,6 @@ def parse_args():
                         help="Don't freeze CLIP parameters")
     parser.add_argument("--dropout-rate", type=float, default=config.MCDISP_ALIGN_DROPOUT_RATE,
                         help="Dropout rate for MLP heads")
-    parser.add_argument("--no-staged", action="store_true",
-                        help="Disable 3-stage schedule; use all losses from epoch 1")
 
     parser.add_argument("--seed", type=int, default=config.SEED,
                         help="Random seed")
@@ -154,21 +149,15 @@ def main():
         freeze_clip=args.freeze_clip,
         cov_rank=args.cov_rank,
         dropout_rate=args.dropout_rate,
-        # loss weights
+        # objective (paper §3.3)
         lambda_ctr=args.lambda_ctr,
-        lambda_mu=args.lambda_mu,
         lambda_var=args.lambda_var,
-        lambda_cover_pos=args.lambda_cover_pos,
-        lambda_cover_neg=args.lambda_cover_neg,
-        lambda_cov=args.lambda_cov,
-        lambda_reg=args.lambda_reg,
+        lambda_dir=args.lambda_dir,
+        lambda_cal=args.lambda_cal,
         tau=args.tau,
-        m_pos=args.m_pos,
-        m_neg=args.m_neg,
-        target_var=args.target_var,
-        use_uncertainty_sim=args.use_uncertainty_sim,
+        sigma0_sq=args.sigma0_sq,
+        warmup_frac=args.warmup_frac,
         # schedule / selection
-        no_staged=args.no_staged,
         lr_scheduler=args.lr_scheduler,
         warmup_epochs=args.warmup_epochs,
         min_lr_ratio=args.min_lr_ratio,

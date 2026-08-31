@@ -100,14 +100,29 @@ def compute_multicaption_recall(
       T2I: query = N*K per-caption means, gallery = N image means. Each caption's
            ONLY positive is its own image (single-positive per query).
 
-    Score = the MCDisp_Align uncertainty-discounted cosine (the same score the
-    L_set contrastive loss optimizes). Means are L2-normalized internally;
-    mean(sigma^2) averages over D. Uses torch.topk (not a full argsort) since
-    the N*K gallery is large and only the top max(k_values) are needed.
+    Two score families are computed:
+
+      cosine : the PLAIN cosine of the means -- the same score the L_ctr
+               contrastive loss optimizes (paper §3.3: the similarity involves
+               no variance). This is the primary/headline metric.
+      CSD    : the ProLIP-style Contraction-Subspace distance used by this
+               repo's ProLIP baselines (utils/retrieval_metrics.py):
+               score = cos(mu_q, mu_g) - 0.5 * sum_d sigma_g,d^2, i.e. the
+               GALLERY side is discounted by its uncertainty. NOTE the two
+               families use different uncertainty semantics: ProLIP's sigma
+               means "unreliability" (small, learned implicitly), whereas our
+               image variance means "semantic range" (dispersion-supervised,
+               ~caption-spread scale) -- see the CSD probe discussion before
+               using it as a headline number.
+
+    ``tau`` is accepted for API compatibility and unused. Means are
+    L2-normalized internally. Uses torch.topk (not a full argsort) since the
+    N*K gallery is large and only the top max(k_values) are needed.
 
     Returns keys (per k in k_values)::
 
         mc_recall_i2t@{k}, mc_recall_t2i@{k}, mc_recall@{k} (mean of the two)
+        mc_csd_recall_i2t@{k}, mc_csd_recall_t2i@{k}, mc_csd_recall@{k}
     """
     N, K, _ = text_mus.shape
     cap_mu = text_mus.reshape(N * K, -1)              # (N*K, D)
@@ -115,21 +130,20 @@ def compute_multicaption_recall(
 
     img_mu_n = F.normalize(img_mu, dim=-1)            # (N, D)
     cap_mu_n = F.normalize(cap_mu, dim=-1)            # (N*K, D)
-    img_scale = torch.sqrt(1.0 + torch.exp(img_logvar).mean(dim=-1))   # (N,)
-    cap_scale = torch.sqrt(1.0 + torch.exp(cap_lv).mean(dim=-1))       # (N*K,)
+    img_unc = torch.exp(img_logvar).sum(dim=-1)       # (N,) sum sigma_v^2
+    cap_unc = torch.exp(cap_lv).sum(dim=-1)           # (N*K,) sum sigma_k^2
 
     maxk = max(k_values)
 
-    def _mcdisp_align(q, g, qs, gs):
-        return torch.matmul(q, g.T) / (tau * qs.unsqueeze(1) * gs.unsqueeze(0))
-
-    def _i2t():
+    def _i2t(use_csd: bool):
         """N image queries vs N*K caption gallery; any-of-K-own-caption hit."""
         hits = {k: 0 for k in k_values}
-        for start in tqdm(range(0, N, chunk_size), desc="MC I2T", leave=False):
+        for start in tqdm(range(0, N, chunk_size),
+                          desc="MC I2T (csd)" if use_csd else "MC I2T", leave=False):
             end = min(start + chunk_size, N)
-            sim = _mcdisp_align(img_mu_n[start:end], cap_mu_n,
-                                img_scale[start:end], cap_scale)        # (chunk, N*K)
+            sim = img_mu_n[start:end] @ cap_mu_n.T                    # (chunk, N*K)
+            if use_csd:
+                sim = sim - 0.5 * cap_unc.unsqueeze(0)                # gallery-side discount
             mk = min(maxk, sim.size(1))
             top = torch.topk(sim, mk, dim=1).indices                   # (chunk, mk)
             rows = torch.arange(start, end, device=sim.device).unsqueeze(1)
@@ -138,14 +152,16 @@ def compute_multicaption_recall(
                 hits[k] += in_range[:, :k].any(dim=1).sum().item()     # :k clamps to mk
         return {k: hits[k] / N for k in k_values}
 
-    def _t2i():
+    def _t2i(use_csd: bool):
         """N*K caption queries vs N image gallery; single-positive per query."""
         Q = N * K
         hits = {k: 0 for k in k_values}
-        for start in tqdm(range(0, Q, chunk_size), desc="MC T2I", leave=False):
+        for start in tqdm(range(0, Q, chunk_size),
+                          desc="MC T2I (csd)" if use_csd else "MC T2I", leave=False):
             end = min(start + chunk_size, Q)
-            sim = _mcdisp_align(cap_mu_n[start:end], img_mu_n,
-                                cap_scale[start:end], img_scale)        # (chunk_q, N)
+            sim = cap_mu_n[start:end] @ img_mu_n.T                    # (chunk_q, N)
+            if use_csd:
+                sim = sim - 0.5 * img_unc.unsqueeze(0)                # gallery-side discount
             mk = min(maxk, sim.size(1))
             top = torch.topk(sim, mk, dim=1).indices                   # (chunk_q, mk)
             q_idx = torch.arange(start, end, device=sim.device)
@@ -155,11 +171,15 @@ def compute_multicaption_recall(
                 hits[k] += match[:, :k].any(dim=1).sum().item()
         return {k: hits[k] / Q for k in k_values}
 
-    i2t, t2i = _i2t(), _t2i()
+    i2t, t2i = _i2t(False), _t2i(False)
+    csd_i2t, csd_t2i = _i2t(True), _t2i(True)
 
     out: Dict[str, float] = {}
     for k in k_values:
         out[f"mc_recall_i2t@{k}"] = i2t[k]
         out[f"mc_recall_t2i@{k}"] = t2i[k]
         out[f"mc_recall@{k}"] = (i2t[k] + t2i[k]) / 2
+        out[f"mc_csd_recall_i2t@{k}"] = csd_i2t[k]
+        out[f"mc_csd_recall_t2i@{k}"] = csd_t2i[k]
+        out[f"mc_csd_recall@{k}"] = (csd_i2t[k] + csd_t2i[k]) / 2
     return out

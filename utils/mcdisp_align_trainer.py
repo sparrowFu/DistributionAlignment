@@ -1,4 +1,4 @@
-"""MCDisp_Align training orchestration: staged loss schedule, grad-norm clipping, recall/loss best-checkpoint selection, early stopping, best+last checkpointing, and resume. Full runs and ablation variants share one code path, differing only in the loss weights / ``cov_rank`` / ``num_captions`` / ``dataset`` / checkpoint paths passed via :class:`MCDispAlignTrainConfig`. The per-epoch functions are exported for direct unit testing."""
+"""MCDisp_Align training orchestration: warmup ramp for the dispersion terms, grad-norm clipping, recall/loss best-checkpoint selection, opt-in early stopping, best+last checkpointing, and resume. Full runs and ablation variants share one code path, differing only in the loss weights / ``cov_rank`` / ``num_captions`` / ``dataset`` / checkpoint paths passed via :class:`MCDispAlignTrainConfig`. The pure helper functions are exported for direct unit testing."""
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -63,87 +63,23 @@ def create_optimizer(
     )
 
 
-def _stage_bounds(total: int):
-    """5-stage epoch boundaries: (warmup_end, var_bootstrap_end, pos_coverage_end, full_start).
+def warmup_ramp(
+    epoch: int, step: int, steps_per_epoch: int, total_epochs: int, warmup_frac: float
+) -> float:
+    """Linear 0 -> 1 ramp for the dispersion terms (L_var / L_dir) over the
+    first ``warmup_frac`` of the total optimizer steps; 1.0 afterwards.
 
-    Warmup = WARMUP_FRAC; Full = FULL_FRAC; the middle is split into thirds for
-    Var-Bootstrap / Pos-Coverage / Neg-Repulsion.
+    The caption heads train from scratch on frozen CLIP features, so the
+    dispersion statistics (s_t^2, S_t) need a few steps to differentiate
+    before they supervise the image variance and directions. L_ctr and L_cal
+    are always on. ``warmup_frac=0`` disables the ramp.
     """
-    warmup_end = max(1, int(round(total * config.MCDISP_ALIGN_STAGE_WARMUP_FRAC)))
-    full_start = max(warmup_end + 3,
-                     total - max(1, int(round(total * config.MCDISP_ALIGN_STAGE_FULL_FRAC))))
-    middle = max(3, full_start - warmup_end)
-    third = max(1, middle // 3)
-    return warmup_end, warmup_end + third, warmup_end + 2 * third, full_start
-
-
-def stage_multipliers(epoch: int, total: int, no_staged: bool) -> Dict[str, float]:
-    """Per-loss multipliers for the 5-stage MCDisp_Align schedule.
-
-    Stages (by epoch fraction):
-      Mean-Warmup   : L_set + L_mu + L_reg                 (var/cover/cov off)
-      Var-Bootstrap : + L_var (ramped per-step via var_ramp)
-      Pos-Coverage  : + L_cover_pos
-      Neg-Repulsion : + L_cover_neg
-      Full          : + L_cov (per-epoch ramp 0 -> 1)
-
-    var & uncertainty_grad_alpha are RAMPED PER OPTIMIZER STEP in train_epoch
-    (var_ramp / alpha_schedule); the per-epoch "var" here just marks the stage
-    (0 in warmup, 1 once Var-Bootstrap begins). cover_pos/cover_neg/cov are gated
-    per-epoch. L_reg is always on.
-    """
-    base = {"ctr": 1.0, "mu": 1.0, "reg": 1.0,
-            "var": 1.0, "cover_pos": 1.0, "cover_neg": 1.0, "cov": 1.0}
-    if no_staged or total <= 0:
-        base["stage"] = "full"
-        return base
-    we, vb, pe, fs = _stage_bounds(total)
-    if epoch < we:
-        base.update(var=0.0, cover_pos=0.0, cover_neg=0.0, cov=0.0); base["stage"] = "warmup"
-    elif epoch < vb:
-        base.update(cover_pos=0.0, cover_neg=0.0, cov=0.0); base["stage"] = "var_bootstrap"
-    elif epoch < pe:
-        base.update(cover_neg=0.0, cov=0.0); base["stage"] = "pos_coverage"
-    elif epoch < fs:
-        base.update(cov=0.0); base["stage"] = "neg_repulsion"
-    else:
-        full_len = max(1, total - fs)
-        base["cov"] = min(1.0, (epoch - fs + 1) / full_len); base["stage"] = "full"
-    return base
-
-
-def var_ramp(epoch: int, step: int, steps_per_epoch: int, total: int) -> float:
-    """L_var multiplier ramped per optimizer step.
-
-    0 in Warmup; 0.05 -> 1.0 linearly across Var-Bootstrap; 1.0 afterwards. The
-    gradual ramp avoids the hard 0->1 step that collapsed sigma^2 at the Main
-    boundary (sigma^2 sat above the immature caption spread, so a full-strength
-    L_var yanked it to the floor).
-    """
-    we, vb, _pe, _fs = _stage_bounds(total)
-    if epoch < we:
-        return 0.0
-    if epoch < vb:
-        span = max(1, (vb - we) * steps_per_epoch)
-        progress = (epoch - we) * steps_per_epoch + step
-        return 0.05 + (1.0 - 0.05) * min(1.0, progress / span)
-    return 1.0
-
-
-def alpha_schedule(epoch: int, step: int, steps_per_epoch: int, total: int) -> float:
-    """uncertainty_grad_alpha schedule (straight-through L_set -> sigma^2 grad scale).
-
-    0 in Warmup (block L_set from pulling sigma^2 down); 0 -> 1 across
-    Var-Bootstrap (tied to var_ramp); 1.0 afterwards.
-    """
-    we, vb, _pe, _fs = _stage_bounds(total)
-    if epoch < we:
-        return 0.0
-    if epoch < vb:
-        span = max(1, (vb - we) * steps_per_epoch)
-        progress = (epoch - we) * steps_per_epoch + step
-        return min(1.0, progress / span)
-    return 1.0
+    if warmup_frac <= 0:
+        return 1.0
+    total_steps = max(1, total_epochs * max(1, steps_per_epoch))
+    warmup_steps = max(1, int(total_steps * warmup_frac))
+    progress = epoch * steps_per_epoch + step
+    return min(1.0, progress / warmup_steps)
 
 
 _HEAD_NAMES = ("img_mu_head", "img_logvar_head", "img_cov_head",
@@ -185,32 +121,40 @@ def train_epoch(
     desc_prefix: str = "",
     total_epochs: int = 1,
     base_lambda_var: Optional[float] = None,
+    base_lambda_dir: Optional[float] = None,
+    warmup_frac: float = 0.0,
 ) -> Dict[str, float]:
     """Train for one epoch.
 
-    L_var and uncertainty_grad_alpha are ramped PER OPTIMIZER STEP (var_ramp /
-    alpha_schedule) to avoid the hard Main-boundary step that collapsed sigma^2.
-    Also monitors a variance floor-collapse ratio.
+    L_var and L_dir are ramped per optimizer step by ``warmup_ramp`` (the
+    dispersion statistics need a few steps to mature); L_ctr and L_cal are
+    always on. Also monitors a variance floor-collapse ratio.
     """
+    # nn.Module.train() is recursive: it would also put the CLIP backbone
+    # into train mode (dropout on). A frozen backbone must stay deterministic
+    # -> reset it to eval. No-op for dropout=0.0 CLIP checkpoints; matters
+    # for any backbone with non-zero dropout.
     model.train()
-    if not model.freeze_clip:
-        model.clip_model.train()
+    if model.freeze_clip:
+        model.clip_model.eval()
 
     if base_lambda_var is None:
         base_lambda_var = criterion.lambda_var
+    if base_lambda_dir is None:
+        base_lambda_dir = criterion.lambda_dir
     steps_per_epoch = len(dataloader)
     var_near = config.MCDISP_ALIGN_VAR_FLOOR * config.MCDISP_ALIGN_VAR_FLOOR_NEAR_MULT
     floor_thresh = config.MCDISP_ALIGN_VAR_FLOOR * 2.0
 
     totals = {k: 0.0 for k in (
-        "loss", "set_nce", "mu", "var", "cover_pos", "cover_neg", "cov", "reg", "img_var_avg",
-        # weighted contributions (P1 #9)
-        "weighted_set_nce", "weighted_mu", "weighted_var", "weighted_cover_pos",
-        "weighted_cover_neg", "weighted_cov", "weighted_reg",
-        # variance statistics (P1 #10)
+        "loss", "ctr", "var", "dir", "cal", "img_var_avg",
+        # weighted contributions
+        "weighted_ctr", "weighted_var", "weighted_dir", "weighted_cal",
+        # variance statistics
         "img_var_min", "img_var_median", "img_var_mean", "img_var_max",
-        "text_var_mean", "caption_spread_mean", "caption_spread_median", "caption_spread_max",
-        # low-rank covariance statistics (P1 #11)
+        "text_var_mean", "cap_var_mean", "caption_spread_mean",
+        "caption_spread_median", "caption_spread_max", "var_over_spread",
+        # low-rank covariance statistics
         "u_energy", "diag_var_energy", "u_over_diag",
     )}
     grad_accum = {k: 0.0 for k in (
@@ -248,11 +192,10 @@ def train_epoch(
         input_ids = text_inputs["input_ids"].view(batch_size, num_captions, -1).to(device)
         attention_mask = text_inputs["attention_mask"].view(batch_size, num_captions, -1).to(device)
 
-        # Per-step L_var ramp + uncertainty_grad_alpha (anti-collapse scheduling)
-        criterion.lambda_var = base_lambda_var * var_ramp(
-            epoch, batch_idx, steps_per_epoch, total_epochs)
-        criterion.uncertainty_grad_alpha = alpha_schedule(
-            epoch, batch_idx, steps_per_epoch, total_epochs)
+        # Per-step warmup ramp for the dispersion terms (L_var / L_dir).
+        ramp = warmup_ramp(epoch, batch_idx, steps_per_epoch, total_epochs, warmup_frac)
+        criterion.lambda_var = base_lambda_var * ramp
+        criterion.lambda_dir = base_lambda_dir * ramp
 
         outputs = model(pixel_values, input_ids, attention_mask)
 
@@ -305,10 +248,9 @@ def train_epoch(
 
         pbar.set_postfix({
             'loss': f"{loss_dict['total']:.4f}",
-            'NCE': f"{loss_dict['set_nce']:.4f}",
-            'mu': f"{loss_dict['mu']:.3f}",
+            'ctr': f"{loss_dict['ctr']:.4f}",
             'var': f"{loss_dict['var']:.3f}",
-            'cov': f"{loss_dict['cov']:.3f}",
+            'dir': f"{loss_dict['dir']:.3f}",
             'σ²i': f"{loss_dict['img_var_avg']:.3f}",
             'flr': f"{floor_ratio:.2f}",
         })
@@ -336,16 +278,16 @@ def evaluate(
     """Evaluate the model (loss + optional retrieval Recall@K).
 
     Retrieval is ALWAYS the standard multi-caption protocol (N images vs N*K
-    captions, any-hit I2T / per-caption T2I) under the MCDisp_Align
-    uncertainty-discounted score -- the same protocol serves checkpoint
-    selection (``select_by="recall"`` uses ``mc_recall@1``; ``"mr"`` uses the
-    mean over K of ``mc_recall@k``) and final evaluation, so train-time
-    selection and test-time reporting are the same yardstick.
+    captions, any-hit I2T / per-caption T2I) under the plain-cosine MCDisp_Align
+    score -- the same protocol serves checkpoint selection (``select_by="recall"``
+    uses ``mc_recall@1``; ``"mr"`` uses the mean over K of ``mc_recall@k``) and
+    final evaluation, so train-time selection and test-time reporting are the
+    same yardstick.
     """
     model.eval()
 
     totals = {k: 0.0 for k in
-              ("loss", "set_nce", "mu", "var", "cover_pos", "cover_neg", "cov", "reg", "img_var_avg")}
+              ("loss", "ctr", "var", "dir", "cal", "img_var_avg")}
     processed_batches = 0
     feats = {k: [] for k in ("img_mu", "img_logvar", "text_mus", "text_logvars")} \
         if compute_recall else None
@@ -436,22 +378,16 @@ class MCDispAlignTrainConfig:
     cov_rank: int = field(default_factory=lambda: config.MCDISP_ALIGN_COV_RANK)
     dropout_rate: float = field(default_factory=lambda: config.MCDISP_ALIGN_DROPOUT_RATE)
 
-    # --- MCDisp_Align loss weights ---
+    # --- MCDisp_Align objective (paper §3.3) ---
     lambda_ctr: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_CTR)
-    lambda_mu: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_MU)
     lambda_var: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_VAR)
-    lambda_cover_pos: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_COVER_POS)
-    lambda_cover_neg: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_COVER_NEG)
-    lambda_cov: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_COV)
-    lambda_reg: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_REG)
+    lambda_dir: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_DIR)
+    lambda_cal: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_CAL)
     tau: float = field(default_factory=lambda: config.MCDISP_ALIGN_TAU)
-    m_pos: float = field(default_factory=lambda: config.MCDISP_ALIGN_M_POS)
-    m_neg: float = field(default_factory=lambda: config.MCDISP_ALIGN_M_NEG)
-    target_var: float = field(default_factory=lambda: config.MCDISP_ALIGN_TARGET_VAR)
-    use_uncertainty_sim: bool = field(default_factory=lambda: config.MCDISP_ALIGN_USE_UNCERTAINTY_SIM)
+    sigma0_sq: float = field(default_factory=lambda: config.MCDISP_ALIGN_SIGMA0_SQ)
+    warmup_frac: float = field(default_factory=lambda: config.MCDISP_ALIGN_WARMUP_FRAC)
 
     # --- Schedule / selection ---
-    no_staged: bool = False
     lr_scheduler: str = field(default_factory=lambda: config.LR_SCHEDULER)
     warmup_epochs: int = field(default_factory=lambda: config.LR_WARMUP_EPOCHS)
     min_lr_ratio: float = field(default_factory=lambda: config.LR_MIN_LR_RATIO)
@@ -531,9 +467,9 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
     log.info("=" * 60)
     log.info(f"{prefix}Dataset: {cfg.dataset} | Epochs: {cfg.epochs} | Batch: {cfg.batch_size}")
     log.info(f"{prefix}CLIP LR: {cfg.clip_lr} | MLP LR: {cfg.mlp_lr} | Freeze CLIP: {cfg.freeze_clip}")
-    log.info(f"{prefix}Cov rank r: {cfg.cov_rank} | Tau (fixed): {cfg.tau} | Staged: {not cfg.no_staged}")
-    log.info(f"{prefix}Loss weights: ctr={cfg.lambda_ctr} mu={cfg.lambda_mu} var={cfg.lambda_var} "
-             f"cover_pos={cfg.lambda_cover_pos} cover_neg={cfg.lambda_cover_neg} cov={cfg.lambda_cov} reg={cfg.lambda_reg}")
+    log.info(f"{prefix}Cov rank r: {cfg.cov_rank} | Tau (fixed): {cfg.tau} | Warmup frac: {cfg.warmup_frac}")
+    log.info(f"{prefix}Loss weights: ctr={cfg.lambda_ctr} var={cfg.lambda_var} "
+             f"dir={cfg.lambda_dir} cal={cfg.lambda_cal} | sigma_0^2={cfg.sigma0_sq}")
     log.info(f"{prefix}Select by: {cfg.select_by} | Device: {cfg.device}")
     log.info("=" * 60)
 
@@ -550,19 +486,13 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
     # Loss
     criterion = MCDispAlignLoss(
         lambda_ctr=cfg.lambda_ctr,
-        lambda_mu=cfg.lambda_mu,
         lambda_var=cfg.lambda_var,
-        lambda_cover_pos=cfg.lambda_cover_pos,
-        lambda_cover_neg=cfg.lambda_cover_neg,
-        lambda_cov=cfg.lambda_cov,
-        lambda_reg=cfg.lambda_reg,
+        lambda_dir=cfg.lambda_dir,
+        lambda_cal=cfg.lambda_cal,
         tau=cfg.tau,
-        m_pos=cfg.m_pos,
-        target_var=cfg.target_var,
-        m_neg=cfg.m_neg,
-        use_uncertainty_sim=cfg.use_uncertainty_sim,
+        sigma0_sq=cfg.sigma0_sq,
     )
-    log.info(f"{prefix}Using MCDisp_Align loss (uncertainty-discounted cosine L_set)")
+    log.info(f"{prefix}Using MCDisp_Align loss (paper §3.3: plain-cosine L_ctr + dispersion supervision)")
     criterion = criterion.to(cfg.device)
 
     # Optimizer
@@ -609,24 +539,15 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
         for epoch in range(start_epoch, cfg.epochs):
             last_epoch = epoch
 
-            # Staged loss schedule
-            mult = stage_multipliers(epoch, cfg.epochs, cfg.no_staged)
-            criterion.lambda_ctr = cfg.lambda_ctr * mult["ctr"]
-            criterion.lambda_mu = cfg.lambda_mu * mult["mu"]
-            # var & uncertainty_grad_alpha are ramped PER STEP in train_epoch (var_ramp / alpha_schedule)
-            criterion.lambda_cover_pos = cfg.lambda_cover_pos * mult["cover_pos"]
-            criterion.lambda_cover_neg = cfg.lambda_cover_neg * mult["cover_neg"]
-            criterion.lambda_cov = cfg.lambda_cov * mult["cov"]
-            criterion.lambda_reg = cfg.lambda_reg * mult["reg"]
-            log.info(f"{prefix}Epoch {epoch + 1} stage={mult.get('stage')} multipliers: {mult}")
-
             apply_lr_for_epoch(optimizer, base_lrs, epoch, cfg.epochs,
                                cfg.warmup_epochs, cfg.min_lr_ratio,
                                cfg.lr_scheduler, log)
 
             train_metrics = train_epoch(
                 model, train_loader, criterion, optimizer, cfg.device, epoch,
-                desc_prefix=cfg.tag, total_epochs=cfg.epochs, base_lambda_var=cfg.lambda_var,
+                desc_prefix=cfg.tag, total_epochs=cfg.epochs,
+                base_lambda_var=cfg.lambda_var, base_lambda_dir=cfg.lambda_dir,
+                warmup_frac=cfg.warmup_frac,
             )
             val_metrics = evaluate(
                 model, val_loader, criterion, cfg.device,
@@ -636,14 +557,11 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
 
             log.info(
                 f"{prefix}Epoch {epoch + 1}/{cfg.epochs} - "
-                f"Train Loss: {train_metrics['loss']:.4f}, NCE: {train_metrics['set_nce']:.4f}, "
-                f"mu: {train_metrics['mu']:.4f}, Var: {train_metrics['var']:.4f}, "
-                f"Cover+: {train_metrics['cover_pos']:.4f}, Cover-: {train_metrics['cover_neg']:.4f}, "
-                f"Cov: {train_metrics['cov']:.4f}, "
-                f"Reg: {train_metrics['reg']:.4f}, σ²img: {train_metrics['img_var_avg']:.4f}, "
+                f"Train Loss: {train_metrics['loss']:.4f}, Ctr: {train_metrics['ctr']:.4f}, "
+                f"Var: {train_metrics['var']:.4f}, Dir: {train_metrics['dir']:.4f}, "
+                f"Cal: {train_metrics['cal']:.4f}, σ²img: {train_metrics['img_var_avg']:.4f}, "
                 f"FloorR: {train_metrics.get('floor_ratio', 0):.3f} | "
-                f"Val Loss: {val_metrics['loss']:.4f}, NCE: {val_metrics['set_nce']:.4f}, "
-                f"σ²img: {val_metrics['img_var_avg']:.4f}, "
+                f"Val Loss: {val_metrics['loss']:.4f}, σ²img: {val_metrics['img_var_avg']:.4f}, "
                 f"mc R@1/5/10: {val_metrics.get('mc_recall@1', 0):.3f}/"
                 f"{val_metrics.get('mc_recall@5', 0):.3f}/{val_metrics.get('mc_recall@10', 0):.3f}, "
                 f"mR: {val_metrics.get('mr', 0):.3f}"
@@ -651,24 +569,24 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
 
             if train_metrics.get("floor_severe", 0) > 0:
                 log.warning(
-                    f"{prefix}SEVERE: variance floor collapse at epoch {epoch + 1} "
-                    f"(stage={mult.get('stage')}): {train_metrics['floor_severe']} batches had "
+                    f"{prefix}SEVERE: variance floor collapse at epoch {epoch + 1}: "
+                    f"{train_metrics['floor_severe']} batches had "
                     f">{config.MCDISP_ALIGN_VAR_FLOOR_RATIO_WARN:.0%} of dims near the floor "
                     f"(σ²img={train_metrics['img_var_avg']:.4f}, mean FloorR={train_metrics['floor_ratio']:.3f}). "
-                    f"Do NOT raise MCDISP_ALIGN_VAR_FLOOR -- it masks the collapse; check the loss schedule."
+                    f"Do NOT raise MCDISP_ALIGN_VAR_FLOOR -- it masks the collapse; check L_var / the warmup ramp."
                 )
 
-            # Per-epoch diagnostics (P1): weighted contributions, variance/cov stats, per-head grad norms
+            # Per-epoch diagnostics: weighted contributions, variance/cov stats, per-head grad norms
             log.info(
-                f"{prefix}  diag: weighted[NCE={train_metrics['weighted_set_nce']:.3f} "
-                f"mu={train_metrics['weighted_mu']:.3f} var={train_metrics['weighted_var']:.3f} "
-                f"c+={train_metrics['weighted_cover_pos']:.3f} c-={train_metrics['weighted_cover_neg']:.3f} "
-                f"cov={train_metrics['weighted_cov']:.3f} reg={train_metrics['weighted_reg']:.3f}] | "
+                f"{prefix}  diag: weighted[ctr={train_metrics['weighted_ctr']:.3f} "
+                f"var={train_metrics['weighted_var']:.3f} dir={train_metrics['weighted_dir']:.3f} "
+                f"cal={train_metrics['weighted_cal']:.3f}] | "
                 f"σ²[min/med/mean/max]={train_metrics['img_var_min']:.4f}/{train_metrics['img_var_median']:.4f}/"
                 f"{train_metrics['img_var_mean']:.4f}/{train_metrics['img_var_max']:.4f} | "
                 f"s²[mean/med/max]={train_metrics['caption_spread_mean']:.4f}/"
                 f"{train_metrics['caption_spread_median']:.4f}/{train_metrics['caption_spread_max']:.4f} "
-                f"txtσ²={train_metrics['text_var_mean']:.4f} | U/diag={train_metrics['u_over_diag']:.2f} | "
+                f"txtσ²={train_metrics['text_var_mean']:.4f} capσ²={train_metrics['cap_var_mean']:.4f} "
+                f"σ²/s²={train_metrics['var_over_spread']:.2f} | U/diag={train_metrics['u_over_diag']:.2f} | "
                 f"grad[μv={train_metrics['img_mu_head_grad_norm']:.3f} "
                 f"σ²v={train_metrics['img_logvar_head_grad_norm']:.3f} "
                 f"Uv={train_metrics.get('img_cov_head_grad_norm', 0):.3f} "
@@ -685,20 +603,11 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
                 if improved:
                     best_recall = current_score
             elif cfg.select_by == "mr" and "mr" in val_metrics:
-                # Ablation study: unified multi-caption development mR (plan §8).
-                # ELIGIBILITY GATE: only Full-stage epochs may become best. With
-                # the staged schedule, mid-schedule checkpoints (before L_cover /
-                # L_cov ever train) can transiently peak on mR and win the whole
-                # trajectory (observed: a var_bootstrap epoch-4 checkpoint selected
-                # while coverage/cov heads were still untrained). For no_staged
-                # configs stage is "full" from epoch 0, so the gate is a no-op.
-                if mult.get("stage") == "full":
-                    current_score = val_metrics["mr"]
-                    improved = current_score > best_recall
-                    if improved:
-                        best_recall = current_score
-                else:
-                    improved = False
+                # Ablation study: unified multi-caption development mR.
+                current_score = val_metrics["mr"]
+                improved = current_score > best_recall
+                if improved:
+                    best_recall = current_score
             else:
                 current_score = val_metrics["loss"]
                 improved = current_score < best_val_loss
@@ -713,9 +622,7 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
                     score_str = f"{cfg.select_by}: {best_recall:.4f}"
                 log.info(f"{prefix}Best model saved ({score_str}) -> {best_path}")
                 patience_counter = 0
-            elif cfg.select_by != "mr" or mult.get("stage") == "full":
-                # Ineligible (non-Full-stage) mr epochs were never candidates;
-                # they must not count against early-stopping patience either.
+            else:
                 patience_counter += 1
                 log.info(f"{prefix}No improvement. Patience: {patience_counter}/{cfg.early_stop_patience}")
 
