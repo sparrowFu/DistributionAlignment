@@ -4,10 +4,32 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import torch
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Subset, random_split
 
 import config
 from utils.dataset_registry import VALID_DATASETS, get_dataset_spec  # noqa: F401 (re-export)
+
+
+def heldout_val_indices(
+    n: int, val_split: float = 0.1, seed: Optional[int] = None
+) -> Tuple[list, list]:
+    """Indices (into the full dataset) of the held-out val slice that
+    training's random_split excludes -- the only pool eligible for COCO eval.
+
+    Mirrors the training scripts' split exactly (``val_size = int(n *
+    val_split)`` then ``random_split([n - val_size, val_size])`` under
+    ``manual_seed(seed)``): random_split permutes indices identically for any
+    dataset of the same length, so splitting a ``range`` yields the same
+    indices as splitting the actual dataset.
+
+    Returns ``(train_idx, val_idx)``, each sorted ascending.
+    """
+    g = torch.Generator().manual_seed(config.SEED if seed is None else seed)
+    val_size = int(n * val_split)
+    train_size = n - val_size
+    train_subset, val_subset = random_split(
+        range(n), [train_size, val_size], generator=g)
+    return sorted(train_subset.indices), sorted(val_subset.indices)
 
 
 def resolve_checkpoint(model_name: str, dataset: str, which: str = "best") -> Path:
@@ -47,7 +69,17 @@ def build_eval_dataloader(
 
     - ``image_caption`` -> MSCOCO via ``ImageCaptionDataset`` (config captions/
       images paths, or the optional ``captions_path``/``images_dir`` overrides),
-      with an optional deterministic random ``num_samples`` subset.
+      restricted to the held-out val slice that training EXCLUDED (R01):
+      locally only the TRAIN parquet exists, and every training script
+      (clip_baseline / prolip / mcdisp_align) splits it with seed=
+      ``config.SEED`` and ``val_split=0.1`` via ``random_split`` -- so this
+      branch mirrors that split (see ``heldout_val_indices``) and keeps only
+      the ~10% val slice, the one pool no model trained on. An optional
+      deterministic random ``num_samples`` subset is then drawn from that
+      held-out pool. COUPLED to the training scripts: any change to their
+      seed/val_split must be mirrored here or the pool is no longer
+      held-out. If a Karpathy test split becomes available, replace this
+      branch with it.
     - ``flickr_test`` -> Flickr30K test split via ``get_flickr30k_test_loader``
       (full test set; no subsetting).
 
@@ -64,6 +96,13 @@ def build_eval_dataloader(
             images_dir=images_dir or config.IMAGES_DIR,
             num_captions=num_captions or spec.num_captions,
         )
+
+        # R01: 本地 COCO 只有训练 parquet。三个训练脚本统一以
+        # seed=SEED、val_split=0.1 的 random_split 排除 10% 作为验证——
+        # 评测只用这个所有模型都没训练过的池，替代原先“训练池随机抽
+        # 5000”的泄漏协议。若改用 Karpathy test split，请替换此分支。
+        _, val_idx = heldout_val_indices(len(ds), seed=seed)
+        ds = Subset(ds, val_idx)
 
         if num_samples and num_samples < len(ds):
             g = torch.Generator().manual_seed(
