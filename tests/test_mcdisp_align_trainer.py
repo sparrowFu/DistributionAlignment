@@ -22,7 +22,7 @@ from utils.mcdisp_align_trainer import train_epoch, warmup_ramp
 # (`totals[k] += loss_dict[k]`; "loss" maps to loss_dict["total"]); a rename on
 # either side must keep these in sync (regression: KeyError 'img_var_avg' on
 # the first batch, traincoco.log 2026-08-26). Four-group keys only -- the
-# legacy aliases (ctr*, cal, img_var_*, u_*) are NOT consumed by the trainer.
+# legacy aliases (ctr*, cal, img_var_*, u_*) were removed from the loss in A04.
 TRAINER_TOTALS_KEYS = (
     "loss", "match", "match_i2t", "match_t2i", "mu", "var", "reg", "dir", "disp",
     "weighted_match", "weighted_mu", "weighted_var", "weighted_reg", "weighted_dir",

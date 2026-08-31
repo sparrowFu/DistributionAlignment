@@ -194,26 +194,35 @@ MCDISP_ALIGN_OBJECTIVE_VERSION = "four-group-v2"   # A13: checkpoint 兼容标�
 # caption variance. The image distribution (Sigma_v = diag(sigma_v^2) +
 # U_v U_v^T) is aligned with the text distribution through its parameters:
 #
-#     L = lambda_ctr*L_ctr + lambda_var*L_var + lambda_dir*L_dir
-#       + lambda_cal*L_cal
+#     L = lambda_match*L_match + lambda_mu*L_mu
+#       + (lambda_var*L_var + lambda_reg*R_prior) + lambda_dir*L_dir
 #
-# L_ctr  : bidirectional InfoNCE on the PLAIN cosine of the image mean and the
-#          text mean (fixed tau). The similarity involves no variance, so the
-#          contrastive term sends no gradient to any variance.
-# L_var  : log-space regression of sigma_v^2 to the stop-gradient text
-#          variance diag(Sigma_bar_t) (encodes the empirical dispersion).
-# L_dir  : subspace alignment between U_v and the top-r eigenvectors of the
-#          between-caption covariance S_t (r capped at min(r, K-1, D)).
-# L_cal  : caption variances calibrated to the prior sigma_0^2 (the only
-#          supervisor of the caption-level variances).
+# L_match : distribution-to-set bidirectional contrastive between the image
+#           Gaussian and the B*K caption Gaussians. Score switchable
+#           (MCDISP_ALIGN_MATCH_SCORE): "gaussian" pairwise overlap (default;
+#           the match itself supervises the variances) or plain cosine
+#           (cosine_match ablation baseline, means only).
+# L_mu    : explicit center alignment MSE(mu_v, sg[mu_t]) in RAW coordinates.
+# L_var   : log-space regression of the FULL image marginal variance
+#           d_v + sum_r U_r^2 to the stop-gradient text variance
+#           diag(Sigma_bar_t) (encodes the empirical dispersion).
+# R_prior : caption variances calibrated to the prior sigma_0^2 (weak prior;
+#           renamed from L_cal).
+# L_dir   : subspace alignment between U_v and the top-r eigenvectors of the
+#           between-caption covariance S_t (r capped at min(r, K-1, D)),
+#           guarded by the spectral rank check (MCDISP_ALIGN_DIR_EIG_REL_TOL).
 MCDISP_ALIGN_COV_RANK = 4                 # low-rank covariance rank r for the IMAGE side (0 = diagonal only)
-MCDISP_ALIGN_TAU = 0.07                   # FIXED temperature in the L_ctr similarity (not learnable)
-MCDISP_ALIGN_LAMBDA_CTR = 1.0             # weight for the mean alignment L_ctr (0 in the no_ctr ablation)
+MCDISP_ALIGN_MATCH_SCORE = "gaussian"     # "gaussian"(L_match overlap score) | "cosine"(消融对照, means only)
+MCDISP_ALIGN_TAU = 0.07                   # FIXED temperature in the COSINE match score / retrieval scoring (not learnable)
+MCDISP_ALIGN_TAU_MATCH = 1.0              # 重叠分数的固定温度（分数逐维归一, O(1) 温度即可）
+MCDISP_ALIGN_LAMBDA_MATCH = 1.0           # weight for L_match (0 in the no_match-style ablations)
+MCDISP_ALIGN_LAMBDA_MU = 0.5              # weight for the raw-coordinate center alignment L_mu (0 in the no_mu ablation)
 MCDISP_ALIGN_LAMBDA_VAR = 1.0             # weight for the variance alignment L_var (core)
+MCDISP_ALIGN_LAMBDA_REG = 0.01            # weight for the weak caption prior R_prior (原 LAMBDA_CAL 迁移)
 MCDISP_ALIGN_LAMBDA_DIR = 0.5             # weight for the direction alignment L_dir
-MCDISP_ALIGN_LAMBDA_CAL = 0.01            # weight for the caption calibration L_cal
 MCDISP_ALIGN_SIGMA0_SQ = 0.04             # prior sigma_0^2 for caption calibration (= measured MSCOCO caption spread)
-MCDISP_ALIGN_WARMUP_FRAC = 0.1            # L_var/L_dir ramp linearly 0->1 over the first 10% of total steps (caption heads train from scratch; the dispersion statistics need a few steps to mature). L_ctr/L_cal are always on.
+MCDISP_ALIGN_DIR_EIG_REL_TOL = 1e-3       # A05 实际谱秩相对阈值 (eigenvalue counts iff > max_eig*tol)
+MCDISP_ALIGN_WARMUP_FRAC = 0.1            # L_var/L_dir ramp linearly 0->1 over the first 10% of total steps (caption heads train from scratch; the dispersion statistics need a few steps to mature). L_match/L_mu/R_prior are always on.
 MCDISP_ALIGN_VAR_FLOOR = 1e-4             # numerical floor on sigma^2 (softplus positivity guard; NOT a semantic floor -- the range is learned via L_var)
 MCDISP_ALIGN_VAR_FLOOR_NEAR_MULT = 10     # variance floor-collapse monitor: a dim is "near floor" if sigma^2 < MCDISP_ALIGN_VAR_FLOOR_NEAR_MULT * MCDISP_ALIGN_VAR_FLOOR
 MCDISP_ALIGN_VAR_FLOOR_RATIO_WARN = 0.5   # warn when >this fraction of dims are near-floor AND mean sigma^2 < 2*MCDISP_ALIGN_VAR_FLOOR

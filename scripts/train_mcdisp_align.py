@@ -9,14 +9,14 @@ each image and each of its K captions is encoded as a Gaussian; the K
 per-caption distributions form ONE text distribution by moment matching
 (Sigma_bar_t = S_t + mean Sigma_k^t); the image distribution
 (Sigma_v = diag(sigma_v^2) + U_v U_v^T) is aligned with it through the
-four-term objective  L_ctr + lambda_var*L_var + lambda_dir*L_dir
-+ lambda_cal*L_cal  (plain-cosine InfoNCE on the means, log-space variance
-regression to the text variance, subspace alignment with the caption
-variation directions, caption-variance calibration).
+four-group objective  lambda_match*L_match + lambda_mu*L_mu +
+(lambda_var*L_var + lambda_reg*R_prior) + lambda_dir*L_dir
+(gaussian-overlap distribution-to-set contrastive, raw-coordinate center
+alignment, log-space full-marginal variance regression, weak caption-variance
+prior, subspace alignment with the caption variation directions).
 
-Checkpoint selection is by the multi-caption plain-cosine Recall@1 (the same
-score L_ctr optimizes), so the trained objective, the selection metric and
-the reported metric all agree.
+Checkpoint selection is by the multi-caption plain-cosine Recall@1, so the
+selection metric and the reported metric agree.
 """
 
 import argparse
@@ -72,18 +72,30 @@ def parse_args():
     parser.add_argument("--min-lr-ratio", type=float, default=config.LR_MIN_LR_RATIO,
                         help="Cosine floor as a fraction of the base LR")
 
-    parser.add_argument("--lambda-ctr", type=float, default=config.MCDISP_ALIGN_LAMBDA_CTR,
-                        help="weight of the mean alignment L_ctr (plain-cosine InfoNCE)")
+    parser.add_argument("--lambda-match", type=float, default=config.MCDISP_ALIGN_LAMBDA_MATCH,
+                        help="weight of L_match (distribution-to-set bidirectional contrastive)")
+    parser.add_argument("--lambda-mu", type=float, default=config.MCDISP_ALIGN_LAMBDA_MU,
+                        help="weight of L_mu (raw-coordinate center alignment)")
     parser.add_argument("--lambda-var", type=float, default=config.MCDISP_ALIGN_LAMBDA_VAR,
                         help="weight of the variance alignment L_var (core)")
+    parser.add_argument("--lambda-reg", type=float, default=config.MCDISP_ALIGN_LAMBDA_REG,
+                        help="weight of R_prior (weak caption-variance prior; ex --lambda-cal)")
     parser.add_argument("--lambda-dir", type=float, default=config.MCDISP_ALIGN_LAMBDA_DIR,
                         help="weight of the direction alignment L_dir")
-    parser.add_argument("--lambda-cal", type=float, default=config.MCDISP_ALIGN_LAMBDA_CAL,
-                        help="weight of the caption calibration L_cal")
     parser.add_argument("--tau", type=float, default=config.MCDISP_ALIGN_TAU,
-                        help="Fixed temperature in the L_ctr similarity (not learnable)")
+                        help="Fixed temperature in the cosine match score / retrieval scoring (not learnable)")
+    parser.add_argument("--tau-match", type=float, default=config.MCDISP_ALIGN_TAU_MATCH,
+                        help="Fixed temperature of the gaussian overlap match logits (per-dim normalized scores)")
+    parser.add_argument("--match-score", type=str, default=config.MCDISP_ALIGN_MATCH_SCORE,
+                        choices=["gaussian", "cosine"],
+                        help="L_match score: 'gaussian' pairwise overlap (default; also "
+                             "supervises the variances) or 'cosine' of the means (ablation baseline)")
+    parser.add_argument("--lambda-ctr", type=float, default=None, dest="lambda_ctr",
+                        help="[DEPRECATED] alias of --lambda-match; overrides it when given")
+    parser.add_argument("--lambda-cal", type=float, default=None, dest="lambda_cal",
+                        help="[DEPRECATED] alias of --lambda-reg; overrides it when given")
     parser.add_argument("--sigma0-sq", type=float, default=config.MCDISP_ALIGN_SIGMA0_SQ,
-                        help="caption-calibration prior sigma_0^2 for L_cal")
+                        help="caption-variance prior sigma_0^2 for R_prior")
     parser.add_argument("--warmup-frac", type=float, default=config.MCDISP_ALIGN_WARMUP_FRAC,
                         help="L_var/L_dir ramp linearly 0->1 over this fraction of total steps")
 
@@ -110,7 +122,7 @@ def parse_args():
                         help="Early stopping patience in epochs (default: 3)")
     parser.add_argument("--early-stop", action="store_true",
                         help="Opt IN to early stopping. Default is a fixed budget: "
-                             "the staged schedule's Full stage (L_cov, last 20% of "
+                             "the staged schedule's Full stage (L_cov, last 20%% of "
                              "epochs) must be allowed to run -- early stopping on "
                              "pre-Full recall killed it before (traincoco.log "
                              "2026-08-25, stopped at E7 of 10)")
@@ -134,6 +146,17 @@ def parse_args():
 def main():
     args = parse_args()
 
+    # Deprecated CLI aliases: --lambda-ctr -> lambda_match, --lambda-cal ->
+    # lambda_reg. An explicitly given alias overrides the new flag (same
+    # precedence the loss kwargs used before their removal).
+    lambda_match, lambda_reg = args.lambda_match, args.lambda_reg
+    if args.lambda_ctr is not None:
+        logger.warning("deprecated: --lambda-ctr -> --lambda-match (will be removed)")
+        lambda_match = args.lambda_ctr
+    if args.lambda_cal is not None:
+        logger.warning("deprecated: --lambda-cal -> --lambda-reg (will be removed)")
+        lambda_reg = args.lambda_cal
+
     cfg = MCDispAlignTrainConfig(
         # data
         dataset=args.dataset,
@@ -149,14 +172,16 @@ def main():
         freeze_clip=args.freeze_clip,
         cov_rank=args.cov_rank,
         dropout_rate=args.dropout_rate,
-        # objective (paper §3.3, four-group). CLI 标志沿用旧名（--lambda-ctr
-        # -> lambda_match, --lambda-cal -> lambda_reg）；下一提交统一改名。
-        lambda_match=args.lambda_ctr,
+        # objective (paper §3.3, four-group: match/mu/var/reg/dir)
+        lambda_match=lambda_match,
+        lambda_mu=args.lambda_mu,
         lambda_var=args.lambda_var,
+        lambda_reg=lambda_reg,
         lambda_dir=args.lambda_dir,
-        lambda_reg=args.lambda_cal,
         tau=args.tau,
+        tau_match=args.tau_match,
         sigma0_sq=args.sigma0_sq,
+        match_score=args.match_score,
         warmup_frac=args.warmup_frac,
         # schedule / selection
         lr_scheduler=args.lr_scheduler,

@@ -125,8 +125,6 @@ class MCDispAlignLoss(nn.Module):
         match_score: str = "gaussian",
         eps: float = 1e-6,
         dir_eig_rel_tol: float = 1e-3,
-        lambda_ctr: Optional[float] = None,
-        lambda_cal: Optional[float] = None,
     ):
         """MCDisp_Align four-group loss (paper §3.3).
 
@@ -148,20 +146,11 @@ class MCDispAlignLoss(nn.Module):
             dir_eig_rel_tol: relative tolerance of the L_dir spectral rank
                 guard: an eigenvalue counts toward the actual rank only if it
                 exceeds max_eig * dir_eig_rel_tol (floored at eps).
-            lambda_ctr / lambda_cal: DEPRECATED aliases of lambda_match /
-                lambda_reg (kept so the trainer keeps running across this
-                refactor; they override the new kwargs when given).
         """
         super().__init__()
         if match_score not in ("gaussian", "cosine"):
             raise ValueError(
                 f"match_score must be 'gaussian' or 'cosine', got {match_score!r}")
-        if lambda_ctr is not None:
-            logger.warning("deprecated: lambda_ctr -> lambda_match")
-            lambda_match = lambda_ctr
-        if lambda_cal is not None:
-            logger.warning("deprecated: lambda_cal -> lambda_reg")
-            lambda_reg = lambda_cal
         self.lambda_match = lambda_match
         self.lambda_mu = lambda_mu
         self.lambda_var = lambda_var
@@ -345,13 +334,12 @@ class MCDispAlignLoss(nn.Module):
             img_diag_var_median = img_diag.median()
             img_diag_var_min = img_diag.min()
             img_diag_var_max = img_diag.max()
-            # low-rank vs diagonal energy on the image side
+            # low-rank energy on the image side (the U/diag ratio is derived
+            # by the trainer from img_lowrank_var_mean / img_diag_var_mean)
             if img_U is not None:
                 img_lowrank_var_mean = (img_U ** 2).sum(dim=-1).mean()
-                u_over_diag = img_lowrank_var_mean / (img_diag_var_mean + self.eps)
             else:
                 img_lowrank_var_mean = img_diag.new_zeros(())
-                u_over_diag = img_diag.new_zeros(())
             img_marginal_var_mean = img_marginal.mean()
             img_marginal_var_median = img_marginal.median()
             img_marginal_var_min = img_marginal.min()
@@ -385,23 +373,11 @@ class MCDispAlignLoss(nn.Module):
             "weighted_dir": (self.lambda_dir * dir_loss).item(),
             # dispersion group contribution
             "disp": (self.lambda_var * var_loss + self.lambda_reg * reg_loss).item(),
-            # ---- legacy aliases (temporary, until the trainer is updated) ----
-            "ctr": match_loss.item(),
-            "ctr_i2t": match_i2t.item(),
-            "ctr_t2i": match_t2i.item(),
-            "cal": reg_loss.item(),
-            "weighted_ctr": (self.lambda_match * match_loss).item(),
-            "weighted_cal": (self.lambda_reg * reg_loss).item(),
             # variance statistics
             "img_diag_var_min": img_diag_var_min.item(),
             "img_diag_var_median": img_diag_var_median.item(),
             "img_diag_var_mean": img_diag_var_mean.item(),
             "img_diag_var_max": img_diag_var_max.item(),
-            "img_var_min": img_diag_var_min.item(),      # legacy name used by the trainer
-            "img_var_median": img_diag_var_median.item(),
-            "img_var_mean": img_diag_var_mean.item(),
-            "img_var_max": img_diag_var_max.item(),
-            "img_var_avg": img_diag_var_mean.item(),     # legacy alias used by the trainer
             # full-marginal statistics
             "img_lowrank_var_mean": img_lowrank_var_mean.item(),
             "img_marginal_var_min": img_marginal_var_min.item(),
@@ -416,10 +392,6 @@ class MCDispAlignLoss(nn.Module):
             "caption_spread_median": caption_spread_median.item(),
             "caption_spread_max": caption_spread_max.item(),
             "var_over_spread": var_over_spread.item(),
-            # low-rank covariance statistics (U vs diagonal energy; legacy names)
-            "u_energy": img_lowrank_var_mean.item(),
-            "diag_var_energy": img_diag_var_mean.item(),
-            "u_over_diag": u_over_diag.item(),
         }
         return total, loss_dict
 
@@ -497,10 +469,5 @@ if __name__ == "__main__":
                      collapsed, text_logvars)
     print(f"   dir: {d_coll['dir']}, dir_valid: {d_coll['dir_valid']}/{d_coll['dir_total']}")
     assert d_coll["dir"] == 0.0 and d_coll["dir_valid"] == 0
-
-    print("\n6. Deprecated aliases still map:")
-    crit_alias = MCDispAlignLoss(lambda_ctr=0.7, lambda_cal=0.05)
-    assert crit_alias.lambda_match == 0.7 and crit_alias.lambda_reg == 0.05
-    print("   lambda_ctr=0.7 -> lambda_match, lambda_cal=0.05 -> lambda_reg")
 
     print("\nAll MCDisp_Align loss self-tests passed.")

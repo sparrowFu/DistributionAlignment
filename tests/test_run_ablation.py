@@ -15,24 +15,43 @@ from scripts.run_ablation import (
 )
 
 
+# 变体可覆盖的目标字段（VARIANTS overrides 的键空间）——每个变体只允许翻转
+# 自己声明的键，其余字段必须与 full（= config 默认 = 主实验超参）一致。
+OBJECTIVE_FIELDS = ("lambda_match", "lambda_mu", "lambda_var", "lambda_reg",
+                    "lambda_dir", "match_score", "cov_rank", "tau_match")
+
+
 def test_variant_set_and_overrides():
-    assert list(VARIANTS) == ["full", "no_var", "no_dir", "no_ctr"]
+    assert list(VARIANTS) == ["full", "no_mu", "no_var", "no_dir_loss",
+                              "diagonal_only", "no_reg", "cosine_match"]
 
     # full 不覆盖任何字段 = config 默认 = 主实验超参
-    # （lambda_match 尚为字面默认 1.0；config 常量在下一提交接入）
     full = build_variant_config("full")
+    assert full.lambda_match == config.MCDISP_ALIGN_LAMBDA_MATCH
+    assert full.lambda_mu == config.MCDISP_ALIGN_LAMBDA_MU
     assert full.lambda_var == config.MCDISP_ALIGN_LAMBDA_VAR
+    assert full.lambda_reg == config.MCDISP_ALIGN_LAMBDA_REG
     assert full.lambda_dir == config.MCDISP_ALIGN_LAMBDA_DIR
-    assert full.lambda_match == 1.0
+    assert full.match_score == config.MCDISP_ALIGN_MATCH_SCORE
+    assert full.tau_match == config.MCDISP_ALIGN_TAU_MATCH
     assert full.cov_rank == config.MCDISP_ALIGN_COV_RANK
 
+    # 每个变体只翻转声明的 override 键，其余权重与 full 完全一致
+    for name, spec in VARIANTS.items():
+        cfg = build_variant_config(name)
+        declared = spec["overrides"]
+        for fld in OBJECTIVE_FIELDS:
+            expected = declared.get(fld, getattr(full, fld))
+            assert getattr(cfg, fld) == expected, (name, fld)
+
+    # 抽样验证各声明确实生效
+    assert build_variant_config("no_mu").lambda_mu == 0.0
     assert build_variant_config("no_var").lambda_var == 0.0
-
-    no_dir = build_variant_config("no_dir")
-    assert no_dir.cov_rank == 0
-    assert no_dir.lambda_dir == 0.0
-
-    assert build_variant_config("no_ctr").lambda_match == 0.0
+    assert build_variant_config("no_dir_loss").lambda_dir == 0.0
+    assert build_variant_config("no_reg").lambda_reg == 0.0
+    assert build_variant_config("cosine_match").match_score == "cosine"
+    diagonal_only = build_variant_config("diagonal_only")
+    assert diagonal_only.cov_rank == 0 and diagonal_only.lambda_dir == 0.0
 
 
 def test_shared_training_controls():
@@ -66,7 +85,7 @@ def test_report_rows_order_and_delta():
     results = {
         "full": _fake_eval("full", 0.60),
         "no_var": _fake_eval("no_var", 0.55),
-    }  # no_dir / no_cover 缺失 -> 跳过
+    }  # 其余变体缺失 -> 跳过
     rows = build_report_rows(results)
     assert [r["variant"] for r in rows] == ["full", "no_var"]
     assert rows[0]["delta_mR"] is None                     # full 自身无 Δ

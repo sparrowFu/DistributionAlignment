@@ -313,7 +313,6 @@ def test_prior_renamed_cal():
     lv = text_logvars.detach()
     expected = ((torch.log(torch.exp(lv) + 1e-6) - log_target) ** 2).mean()
     assert abs(d["reg"] - expected.item()) < 1e-9
-    assert d["cal"] == d["reg"]                     # legacy alias carries the value
     total.backward()
     assert text_logvars.grad is not None and text_logvars.grad.norm() > 0
 
@@ -370,6 +369,30 @@ def test_dir_rank_guard():
 
 
 # ---------------------------------------------------------------------- bookkeeping
+
+def test_legacy_aliases_removed():
+    """A04 cleanup: the temporary aliases are gone -- lambda_ctr / lambda_cal
+    are no longer accepted kwargs, and no ctr*/cal/img_var_*/u_* keys remain
+    in the loss dict (the trainer consumes the four-group keys only)."""
+    torch.manual_seed(13)
+    B, D, K = 2, 8, 3
+    try:
+        MCDispAlignLoss(lambda_ctr=0.7, lambda_cal=0.05)
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("lambda_ctr/lambda_cal kwargs must be removed")
+
+    crit = MCDispAlignLoss()
+    _, d = crit(torch.randn(B, D), torch.zeros(B, D), None,
+                torch.zeros(B, D), torch.zeros(B, D),
+                torch.randn(B, K, D), torch.zeros(B, K, D))
+    for legacy in ("ctr", "ctr_i2t", "ctr_t2i", "cal", "weighted_ctr",
+                   "weighted_cal", "img_var_avg", "img_var_min",
+                   "img_var_median", "img_var_mean", "img_var_max",
+                   "u_energy", "diag_var_energy", "u_over_diag"):
+        assert legacy not in d, legacy
+
 
 def test_match_uses_diag_not_marginal_in_scorer():
     """Wiring pin: the scorer must receive the DIAGONAL component (it adds

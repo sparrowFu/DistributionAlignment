@@ -1,15 +1,19 @@
-"""MCDisp_Align 消融实验 v2。
+"""MCDisp_Align 消融实验 v2（四组目标版）。
 
 设计文档: docs/superpowers/specs/2026-08-24-ablation-v2-design.md
 
-4 个变体，每个 = 完整方法拿掉 §3.3 的一个对齐项，以多描述检索协议
-（N 图像 vs N*5 描述，纯余弦 MCDisp_Align 打分器，与主实验
-evaluate_mcdisp_align 同口径）为唯一判据：
+7 个变体，以多描述检索协议（N 图像 vs N*5 描述，纯余弦 MCDisp_Align
+打分器，与主实验 evaluate_mcdisp_align 同口径）为唯一判据。
+主表报告 full/no_mu/no_var/no_dir_loss；diagonal_only/no_reg/cosine_match
+单列：
 
-    full      完整方法（复刻主实验配置，λ_dir=0.5, r=4）
-    no_var    lambda_var=0   去掉 L_var：图像方差←文本方差（含经验离散度）监督（核心创新）
-    no_dir    cov_rank=0, lambda_dir=0   去掉 L_dir：低秩方向←描述变化方向（连头移除）
-    no_ctr    lambda_ctr=0   去掉 L_ctr：纯参数级监督、无判别性的对照
+    full           完整方法（复刻主实验配置）
+    no_mu          lambda_mu=0        仅关中心项 L_mu
+    no_var         lambda_var=0       仅关方差对齐 L_var（保留弱先验 R_prior）
+    no_dir_loss    lambda_dir=0       仅关方向监督 L_dir（保留低秩头 U）
+    diagonal_only  cov_rank=0, lambda_dir=0   结构消融：移除低秩模块
+    no_reg         lambda_reg=0       仅关弱先验 R_prior
+    cosine_match   match_score=cosine 对照：匹配分数退化为纯余弦（无方差数据监督）
 
 用法:
     python scripts/run_ablation.py train --variant full
@@ -33,24 +37,36 @@ ABLATION_CKPT_DIR = config.CHECKPOINT_DIR / "ablation_v2"
 ABLATION_OUT_DIR = config.OUTPUT_DIR / "ablation"
 
 # 变体 -> 相对主配置的覆盖项。full 为空 dict = 全部取 config 默认
-# （即主实验超参 ctr1.0/var1.0/dir0.5/cal0.01, r=4）。
+# （即主实验超参 match1.0/mu0.5/var1.0/reg0.01/dir0.5, r=4, gaussian）。
 # 关闭一项损失就是权重清零，不做重新归一化。
 VARIANTS = {
     "full": {
-        "desc": "完整方法（= 主实验配置）",
+        "desc": "四组全开",
         "overrides": {},
     },
+    "no_mu": {
+        "desc": "仅关中心项 L_mu",
+        "overrides": {"lambda_mu": 0.0},
+    },
     "no_var": {
-        "desc": "去掉 L_var：图像方差←文本方差（含经验离散度）监督（核心创新）",
+        "desc": "仅关方差对齐（保留弱先验 R_prior）",
         "overrides": {"lambda_var": 0.0},
     },
-    "no_dir": {
-        "desc": "去掉低秩模块：cov_rank=0 且 λ_dir=0（协方差退化为对角）",
+    "no_dir_loss": {
+        "desc": "仅关方向监督（保留低秩头 U）",
+        "overrides": {"lambda_dir": 0.0},
+    },
+    "diagonal_only": {
+        "desc": "结构消融：cov_rank=0 且关方向（移除低秩模块）",
         "overrides": {"cov_rank": 0, "lambda_dir": 0.0},
     },
-    "no_ctr": {
-        "desc": "去掉 L_ctr（四组重构后=L_match）：纯参数级监督、无判别性对照（预期检索大幅退化）",
-        "overrides": {"lambda_match": 0.0},
+    "no_reg": {
+        "desc": "仅关弱先验 R_prior",
+        "overrides": {"lambda_reg": 0.0},
+    },
+    "cosine_match": {
+        "desc": "对照：匹配分数退化为纯余弦（无方差数据监督）",
+        "overrides": {"match_score": "cosine"},
     },
 }
 
@@ -58,7 +74,7 @@ VARIANTS = {
 def build_variant_config(variant, epochs=None, batch_size=None, device="cuda"):
     """变体名 -> MCDispAlignTrainConfig。
 
-    未覆盖字段全部走 config 默认（= 主实验配置）；4 个变体共用同一 seed，
+    未覆盖字段全部走 config 默认（= 主实验配置）；所有变体共用同一 seed，
     train/val random_split 划分完全一致。训练器 import 延迟到函数内，
     保证单元测试导入本模块轻量（不拉 torch/CLIP 之外的重组件）。
     """

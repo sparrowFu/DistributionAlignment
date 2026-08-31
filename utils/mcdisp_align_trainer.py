@@ -407,17 +407,16 @@ class MCDispAlignTrainConfig:
     dropout_rate: float = field(default_factory=lambda: config.MCDISP_ALIGN_DROPOUT_RATE)
 
     # --- MCDisp_Align objective (paper §3.3, four-group: match/mu/var/reg/dir) ---
-    # config 常量在下一提交接入（MCDISP_ALIGN_LAMBDA_MATCH / _MU / _REG /
-    # _TAU_MATCH / _MATCH_SCORE）；本提交用与损失默认一致的字面值。
-    lambda_match: float = 1.0
-    lambda_mu: float = 0.5
+    lambda_match: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_MATCH)
+    lambda_mu: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_MU)
     lambda_var: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_VAR)
-    lambda_reg: float = 0.01
+    lambda_reg: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_REG)
     lambda_dir: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_DIR)
     tau: float = field(default_factory=lambda: config.MCDISP_ALIGN_TAU)
-    tau_match: float = 1.0
+    tau_match: float = field(default_factory=lambda: config.MCDISP_ALIGN_TAU_MATCH)
     sigma0_sq: float = field(default_factory=lambda: config.MCDISP_ALIGN_SIGMA0_SQ)
-    match_score: str = "gaussian"
+    match_score: str = field(default_factory=lambda: config.MCDISP_ALIGN_MATCH_SCORE)
+    dir_eig_rel_tol: float = field(default_factory=lambda: config.MCDISP_ALIGN_DIR_EIG_REL_TOL)
     warmup_frac: float = field(default_factory=lambda: config.MCDISP_ALIGN_WARMUP_FRAC)
 
     # --- Schedule / selection ---
@@ -529,6 +528,7 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
         tau_match=cfg.tau_match,
         sigma0_sq=cfg.sigma0_sq,
         match_score=cfg.match_score,
+        dir_eig_rel_tol=cfg.dir_eig_rel_tol,
     )
     log.info(f"{prefix}Using MCDisp_Align loss (paper §3.3 four-group objective: "
              "match/mu/var/reg/dir)")
