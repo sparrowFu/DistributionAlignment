@@ -19,10 +19,11 @@ def test_variant_set_and_overrides():
     assert list(VARIANTS) == ["full", "no_var", "no_dir", "no_ctr"]
 
     # full 不覆盖任何字段 = config 默认 = 主实验超参
+    # （lambda_match 尚为字面默认 1.0；config 常量在下一提交接入）
     full = build_variant_config("full")
     assert full.lambda_var == config.MCDISP_ALIGN_LAMBDA_VAR
     assert full.lambda_dir == config.MCDISP_ALIGN_LAMBDA_DIR
-    assert full.lambda_ctr == config.MCDISP_ALIGN_LAMBDA_CTR
+    assert full.lambda_match == 1.0
     assert full.cov_rank == config.MCDISP_ALIGN_COV_RANK
 
     assert build_variant_config("no_var").lambda_var == 0.0
@@ -31,7 +32,7 @@ def test_variant_set_and_overrides():
     assert no_dir.cov_rank == 0
     assert no_dir.lambda_dir == 0.0
 
-    assert build_variant_config("no_ctr").lambda_ctr == 0.0
+    assert build_variant_config("no_ctr").lambda_match == 0.0
 
 
 def test_shared_training_controls():

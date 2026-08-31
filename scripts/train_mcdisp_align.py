@@ -149,11 +149,12 @@ def main():
         freeze_clip=args.freeze_clip,
         cov_rank=args.cov_rank,
         dropout_rate=args.dropout_rate,
-        # objective (paper §3.3)
-        lambda_ctr=args.lambda_ctr,
+        # objective (paper §3.3, four-group). CLI 标志沿用旧名（--lambda-ctr
+        # -> lambda_match, --lambda-cal -> lambda_reg）；下一提交统一改名。
+        lambda_match=args.lambda_ctr,
         lambda_var=args.lambda_var,
         lambda_dir=args.lambda_dir,
-        lambda_cal=args.lambda_cal,
+        lambda_reg=args.lambda_cal,
         tau=args.tau,
         sigma0_sq=args.sigma0_sq,
         warmup_frac=args.warmup_frac,

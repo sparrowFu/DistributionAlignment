@@ -371,6 +371,40 @@ def test_dir_rank_guard():
 
 # ---------------------------------------------------------------------- bookkeeping
 
+def test_match_uses_diag_not_marginal_in_scorer():
+    """Wiring pin: the scorer must receive the DIAGONAL component (it adds
+    U itself); passing the full marginal would double-count U U^T."""
+    torch.manual_seed(12)
+    B, K, D, r = 2, 1, 4, 2
+    img_mu = torch.randn(B, D)
+    img_logvar = -2 + 0.3 * torch.randn(B, D)
+    img_U = 0.5 * torch.randn(B, D, r)
+    text_mus = img_mu.unsqueeze(1) + 0.2 * torch.randn(B, K, D)
+    text_logvars = -2 + 0.3 * torch.randn(B, K, D)
+
+    crit = _gauss_match_only()
+    _, d = crit(img_mu, img_logvar, img_U,
+                torch.zeros(B, D), torch.zeros(B, D),
+                text_mus, text_logvars)
+
+    # independent rebuild with the DIAGONAL variance fed to the scorer
+    # (gaussian_overlap_scores adds the U U^T term itself)
+    logits = gaussian_overlap_scores(
+        img_mu, torch.exp(img_logvar), img_U,
+        text_mus.reshape(B * K, D),
+        torch.exp(text_logvars.reshape(B * K, D)),
+    ) / crit.tau_match
+    own = logits.reshape(B, B, K)
+    idx = torch.arange(B)
+    pos = own[idx, idx]                                       # (B, K) own captions
+    exp_i2t = (torch.logsumexp(logits, dim=-1)
+               - torch.logsumexp(pos, dim=-1)).mean()
+    labels = torch.arange(B * K) // K
+    exp_t2i = F.cross_entropy(logits.T, labels)
+    assert abs(d["match_i2t"] - exp_i2t.item()) < 1e-6, (d["match_i2t"], exp_i2t.item())
+    assert abs(d["match_t2i"] - exp_t2i.item()) < 1e-6, (d["match_t2i"], exp_t2i.item())
+
+
 def test_total_equals_weighted_atomic_sum():
     """total is exactly the sum of the five weighted atomics, and disp is the
     dispersion group's weighted sum (checked at non-default weights)."""

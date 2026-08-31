@@ -49,8 +49,8 @@ VARIANTS = {
         "overrides": {"cov_rank": 0, "lambda_dir": 0.0},
     },
     "no_ctr": {
-        "desc": "去掉 L_ctr：纯参数级监督、无判别性对照（预期检索大幅退化）",
-        "overrides": {"lambda_ctr": 0.0},
+        "desc": "去掉 L_ctr（四组重构后=L_match）：纯参数级监督、无判别性对照（预期检索大幅退化）",
+        "overrides": {"lambda_match": 0.0},
     },
 }
 

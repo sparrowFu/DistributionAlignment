@@ -18,7 +18,10 @@ from models.mcdisp_align_model import MCDispAlignModel
 from utils.dataset_factory import build_train_dataset
 from utils.eval_common import build_eval_dataloader
 from utils.lr_scheduler import apply_lr_for_epoch
+from utils.logger import get_logger
 from utils.retrieval import compute_multicaption_recall
+
+logger = get_logger("mcdisp_align_trainer")
 
 
 # ---------------------------------------------------------------------------
@@ -71,8 +74,8 @@ def warmup_ramp(
 
     The caption heads train from scratch on frozen CLIP features, so the
     dispersion statistics (s_t^2, S_t) need a few steps to differentiate
-    before they supervise the image variance and directions. L_ctr and L_cal
-    are always on. ``warmup_frac=0`` disables the ramp.
+    before they supervise the image variance and directions. L_match / L_mu /
+    R_prior are always on. ``warmup_frac=0`` disables the ramp.
     """
     if warmup_frac <= 0:
         return 1.0
@@ -127,8 +130,8 @@ def train_epoch(
     """Train for one epoch.
 
     L_var and L_dir are ramped per optimizer step by ``warmup_ramp`` (the
-    dispersion statistics need a few steps to mature); L_ctr and L_cal are
-    always on. Also monitors a variance floor-collapse ratio.
+    dispersion statistics need a few steps to mature); L_match / L_mu /
+    R_prior are always on. Also monitors a variance floor-collapse ratio.
     """
     # nn.Module.train() is recursive: it would also put the CLIP backbone
     # into train mode (dropout on). A frozen backbone must stay deterministic
@@ -147,25 +150,35 @@ def train_epoch(
     floor_thresh = config.MCDISP_ALIGN_VAR_FLOOR * 2.0
 
     totals = {k: 0.0 for k in (
-        "loss", "ctr", "ctr_i2t", "ctr_t2i", "var", "dir", "cal", "img_var_avg",
+        # four-group atomics (paper §3.3); "loss" maps to loss_dict["total"]
+        "loss", "match", "match_i2t", "match_t2i", "mu", "var", "reg", "dir", "disp",
         # weighted contributions
-        "weighted_ctr", "weighted_var", "weighted_dir", "weighted_cal",
-        # variance statistics
-        "img_var_min", "img_var_median", "img_var_mean", "img_var_max",
+        "weighted_match", "weighted_mu", "weighted_var", "weighted_reg", "weighted_dir",
+        # diagonal-variance statistics
+        "img_diag_var_mean", "img_diag_var_median", "img_diag_var_min", "img_diag_var_max",
+        # full-marginal statistics (d_v + sum_r U_r^2, A02)
+        "img_marginal_var_mean", "img_marginal_var_median", "img_marginal_var_min",
+        "img_marginal_var_max",
+        # low-rank energy statistics
+        "img_lowrank_var_mean",
+        # text-side statistics
         "text_var_mean", "cap_var_mean", "caption_spread_mean",
         "caption_spread_median", "caption_spread_max", "var_over_spread",
-        # low-rank covariance statistics
-        "u_energy", "diag_var_energy", "u_over_diag",
+        # raw readouts
+        "mu_mse_raw", "marginal_log_mse",
     )}
     grad_accum = {k: 0.0 for k in (
         "img_mu_head_grad_norm", "img_logvar_head_grad_norm", "img_cov_head_grad_norm",
         "text_mu_head_grad_norm", "text_logvar_head_grad_norm",
         "global_grad_norm_before_clip", "global_grad_norm_after_clip",
+        # A05/A06 stability accounting
+        "dir_skipped_frac", "nonfinite_grad_steps",
     )}
     floor_ratio_sum = 0.0
     floor_severe = 0
     clip_steps = 0
     nonfinite_steps = 0
+    nonfinite_grad_steps = 0
     processed_batches = 0
 
     desc = f"{desc_prefix}Epoch {epoch + 1}" if desc_prefix else f"Epoch {epoch + 1}"
@@ -215,15 +228,25 @@ def train_epoch(
 
         optimizer.zero_grad()
         loss.backward()
-        # Per-head grad norms BEFORE clip (who dominates at stage transitions?)
+        # A06: 前向有限 ≠ 反向有限（QR 等算子的反向在退化输入下可产生
+        # 非有限梯度）。裁剪返回的总范数若非有限，丢弃本步更新，防止
+        # NaN 梯度污染 Adam 动量。`continue` 同时跳过本批的指标累计
+        # （totals / grad norms / floor 监控）——被丢弃的步不进统计。
+        total_norm = torch.nn.utils.clip_grad_norm_(
+            model.parameters(), config.MCDISP_ALIGN_GRAD_CLIP_NORM)
+        if not math.isfinite(float(total_norm)):
+            optimizer.zero_grad(set_to_none=True)
+            nonfinite_grad_steps += 1
+            grad_accum["nonfinite_grad_steps"] += 1.0
+            logger.warning(f"Non-finite grad norm at batch {batch_idx}; "
+                           "update skipped.")
+            continue
+        # Per-head grad norms AFTER the guard (who dominates at stage transitions?)
         head_norms = head_grad_norms(model)
-        # Clip global grad norm (returns the pre-clip total norm over ALL params);
-        # protects against L_cov / cover spikes destabilizing the retrieval means.
-        total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.MCDISP_ALIGN_GRAD_CLIP_NORM)
         optimizer.step()
         grad_before = float(total_norm)
         grad_after = min(grad_before, config.MCDISP_ALIGN_GRAD_CLIP_NORM)
-        if math.isfinite(grad_before) and grad_before > config.MCDISP_ALIGN_GRAD_CLIP_NORM:
+        if grad_before > config.MCDISP_ALIGN_GRAD_CLIP_NORM:
             clip_steps += 1
 
         # Accumulate losses
@@ -231,12 +254,17 @@ def train_epoch(
             src = "total" if k == "loss" else k
             totals[k] += loss_dict[src]
 
+        # A05: fraction of samples dropped by the L_dir spectral rank guard
+        # (dir_valid / dir_total are ints in the loss dict).
+        grad_accum["dir_skipped_frac"] += (
+            1.0 - loss_dict["dir_valid"] / max(loss_dict["dir_total"], 1))
+
         # Variance floor-collapse monitor (do NOT raise the floor -- it masks collapse)
         with torch.no_grad():
             img_var = torch.exp(outputs['img_logvar'])
             floor_ratio = (img_var < var_near).float().mean().item()
             floor_ratio_sum += floor_ratio
-            if floor_ratio > config.MCDISP_ALIGN_VAR_FLOOR_RATIO_WARN and loss_dict['img_var_avg'] < floor_thresh:
+            if floor_ratio > config.MCDISP_ALIGN_VAR_FLOOR_RATIO_WARN and loss_dict['img_diag_var_mean'] < floor_thresh:
                 floor_severe += 1
 
         # Accumulate per-head grad norms + global before/after clip (P1 #12)
@@ -248,12 +276,11 @@ def train_epoch(
 
         pbar.set_postfix({
             'loss': f"{loss_dict['total']:.4f}",
-            'ctr': f"{loss_dict['ctr']:.4f}",
-            't2i': f"{loss_dict['ctr_t2i']:.4f}",
+            'match': f"{loss_dict['match']:.4f}",
+            't2i': f"{loss_dict['match_t2i']:.4f}",
+            'mu': f"{loss_dict['mu']:.3f}",
             'var': f"{loss_dict['var']:.3f}",
             'dir': f"{loss_dict['dir']:.3f}",
-            'σ²i': f"{loss_dict['img_var_avg']:.3f}",
-            'flr': f"{floor_ratio:.2f}",
         })
 
     num_batches = max(processed_batches, 1)
@@ -288,7 +315,7 @@ def evaluate(
     model.eval()
 
     totals = {k: 0.0 for k in
-              ("loss", "ctr", "var", "dir", "cal", "img_var_avg")}
+              ("loss", "match", "mu", "var", "reg", "dir", "img_marginal_var_mean")}
     processed_batches = 0
     feats = {k: [] for k in ("img_mu", "img_logvar", "text_mus", "text_logvars")} \
         if compute_recall else None
@@ -379,13 +406,18 @@ class MCDispAlignTrainConfig:
     cov_rank: int = field(default_factory=lambda: config.MCDISP_ALIGN_COV_RANK)
     dropout_rate: float = field(default_factory=lambda: config.MCDISP_ALIGN_DROPOUT_RATE)
 
-    # --- MCDisp_Align objective (paper §3.3) ---
-    lambda_ctr: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_CTR)
+    # --- MCDisp_Align objective (paper §3.3, four-group: match/mu/var/reg/dir) ---
+    # config 常量在下一提交接入（MCDISP_ALIGN_LAMBDA_MATCH / _MU / _REG /
+    # _TAU_MATCH / _MATCH_SCORE）；本提交用与损失默认一致的字面值。
+    lambda_match: float = 1.0
+    lambda_mu: float = 0.5
     lambda_var: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_VAR)
+    lambda_reg: float = 0.01
     lambda_dir: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_DIR)
-    lambda_cal: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_CAL)
     tau: float = field(default_factory=lambda: config.MCDISP_ALIGN_TAU)
+    tau_match: float = 1.0
     sigma0_sq: float = field(default_factory=lambda: config.MCDISP_ALIGN_SIGMA0_SQ)
+    match_score: str = "gaussian"
     warmup_frac: float = field(default_factory=lambda: config.MCDISP_ALIGN_WARMUP_FRAC)
 
     # --- Schedule / selection ---
@@ -469,8 +501,10 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
     log.info(f"{prefix}Dataset: {cfg.dataset} | Epochs: {cfg.epochs} | Batch: {cfg.batch_size}")
     log.info(f"{prefix}CLIP LR: {cfg.clip_lr} | MLP LR: {cfg.mlp_lr} | Freeze CLIP: {cfg.freeze_clip}")
     log.info(f"{prefix}Cov rank r: {cfg.cov_rank} | Tau (fixed): {cfg.tau} | Warmup frac: {cfg.warmup_frac}")
-    log.info(f"{prefix}Loss weights: ctr={cfg.lambda_ctr} var={cfg.lambda_var} "
-             f"dir={cfg.lambda_dir} cal={cfg.lambda_cal} | sigma_0^2={cfg.sigma0_sq}")
+    log.info(f"{prefix}Loss weights: match={cfg.lambda_match} mu={cfg.lambda_mu} "
+             f"var={cfg.lambda_var} reg={cfg.lambda_reg} dir={cfg.lambda_dir} "
+             f"| sigma_0^2={cfg.sigma0_sq} | match_score={cfg.match_score} "
+             f"tau_match={cfg.tau_match}")
     log.info(f"{prefix}Select by: {cfg.select_by} | Device: {cfg.device}")
     log.info("=" * 60)
 
@@ -486,14 +520,18 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
 
     # Loss
     criterion = MCDispAlignLoss(
-        lambda_ctr=cfg.lambda_ctr,
+        lambda_match=cfg.lambda_match,
+        lambda_mu=cfg.lambda_mu,
         lambda_var=cfg.lambda_var,
+        lambda_reg=cfg.lambda_reg,
         lambda_dir=cfg.lambda_dir,
-        lambda_cal=cfg.lambda_cal,
         tau=cfg.tau,
+        tau_match=cfg.tau_match,
         sigma0_sq=cfg.sigma0_sq,
+        match_score=cfg.match_score,
     )
-    log.info(f"{prefix}Using MCDisp_Align loss (paper §3.3: plain-cosine L_ctr + dispersion supervision)")
+    log.info(f"{prefix}Using MCDisp_Align loss (paper §3.3 four-group objective: "
+             "match/mu/var/reg/dir)")
     criterion = criterion.to(cfg.device)
 
     # Optimizer
@@ -524,6 +562,15 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
         best_recall = checkpoint.get("best_recall", -float('inf'))
         patience_counter = checkpoint.get("patience_counter", 0)
         base_lrs = checkpoint.get("base_lrs", base_lrs)
+        # A13: the checkpoint must come from the same objective; a missing tag
+        # means a legacy (pre four-group-v2) checkpoint.
+        if checkpoint.get("objective_version") != config.MCDISP_ALIGN_OBJECTIVE_VERSION:
+            log.warning(
+                f"{prefix}Checkpoint objective_version "
+                f"{checkpoint.get('objective_version')!r} != "
+                f"{config.MCDISP_ALIGN_OBJECTIVE_VERSION!r} (legacy objective; "
+                "resuming initializes weights only, not an equivalent-objective "
+                "continuation).")
         log.info(f"{prefix}Resumed from epoch {start_epoch}, best_val_loss: {best_val_loss:.4f}, "
                  f"best_recall: {best_recall:.4f}, patience_counter: {patience_counter}")
 
@@ -558,11 +605,13 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
 
             log.info(
                 f"{prefix}Epoch {epoch + 1}/{cfg.epochs} - "
-                f"Train Loss: {train_metrics['loss']:.4f}, Ctr: {train_metrics['ctr']:.4f}, "
-                f"Var: {train_metrics['var']:.4f}, Dir: {train_metrics['dir']:.4f}, "
-                f"Cal: {train_metrics['cal']:.4f}, σ²img: {train_metrics['img_var_avg']:.4f}, "
+                f"Train Loss: {train_metrics['loss']:.4f}, Match: {train_metrics['match']:.4f}, "
+                f"Mu: {train_metrics['mu']:.4f}, Var: {train_metrics['var']:.4f}, "
+                f"Reg: {train_metrics['reg']:.4f}, Dir: {train_metrics['dir']:.4f}, "
+                f"σ²diag: {train_metrics['img_diag_var_mean']:.4f}, "
                 f"FloorR: {train_metrics.get('floor_ratio', 0):.3f} | "
-                f"Val Loss: {val_metrics['loss']:.4f}, σ²img: {val_metrics['img_var_avg']:.4f}, "
+                f"Val Loss: {val_metrics['loss']:.4f}, "
+                f"σ²marg: {val_metrics['img_marginal_var_mean']:.4f}, "
                 f"mc R@1/5/10: {val_metrics.get('mc_recall@1', 0):.3f}/"
                 f"{val_metrics.get('mc_recall@5', 0):.3f}/{val_metrics.get('mc_recall@10', 0):.3f}, "
                 f"mR: {val_metrics.get('mr', 0):.3f}"
@@ -573,27 +622,34 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
                     f"{prefix}SEVERE: variance floor collapse at epoch {epoch + 1}: "
                     f"{train_metrics['floor_severe']} batches had "
                     f">{config.MCDISP_ALIGN_VAR_FLOOR_RATIO_WARN:.0%} of dims near the floor "
-                    f"(σ²img={train_metrics['img_var_avg']:.4f}, mean FloorR={train_metrics['floor_ratio']:.3f}). "
+                    f"(σ²diag={train_metrics['img_diag_var_mean']:.4f}, mean FloorR={train_metrics['floor_ratio']:.3f}). "
                     f"Do NOT raise MCDISP_ALIGN_VAR_FLOOR -- it masks the collapse; check L_var / the warmup ramp."
                 )
 
             # Per-epoch diagnostics: weighted contributions, variance/cov stats, per-head grad norms
+            u_over_diag = (train_metrics['img_lowrank_var_mean']
+                           / (train_metrics['img_diag_var_mean'] + 1e-12))
             log.info(
-                f"{prefix}  diag: weighted[ctr={train_metrics['weighted_ctr']:.3f} "
-                f"var={train_metrics['weighted_var']:.3f} dir={train_metrics['weighted_dir']:.3f} "
-                f"cal={train_metrics['weighted_cal']:.3f}] | "
-                f"σ²[min/med/mean/max]={train_metrics['img_var_min']:.4f}/{train_metrics['img_var_median']:.4f}/"
-                f"{train_metrics['img_var_mean']:.4f}/{train_metrics['img_var_max']:.4f} | "
+                f"{prefix}  diag: weighted[match={train_metrics['weighted_match']:.3f} "
+                f"mu={train_metrics['weighted_mu']:.3f} var={train_metrics['weighted_var']:.3f} "
+                f"reg={train_metrics['weighted_reg']:.3f} dir={train_metrics['weighted_dir']:.3f}] | "
+                f"σ²diag[min/med/mean/max]={train_metrics['img_diag_var_min']:.4f}/"
+                f"{train_metrics['img_diag_var_median']:.4f}/"
+                f"{train_metrics['img_diag_var_mean']:.4f}/{train_metrics['img_diag_var_max']:.4f} | "
                 f"s²[mean/med/max]={train_metrics['caption_spread_mean']:.4f}/"
                 f"{train_metrics['caption_spread_median']:.4f}/{train_metrics['caption_spread_max']:.4f} "
                 f"txtσ²={train_metrics['text_var_mean']:.4f} capσ²={train_metrics['cap_var_mean']:.4f} "
-                f"σ²/s²={train_metrics['var_over_spread']:.2f} | U/diag={train_metrics['u_over_diag']:.2f} | "
+                f"σ²/s²={train_metrics['var_over_spread']:.2f} | U/diag={u_over_diag:.2f} | "
                 f"grad[μv={train_metrics['img_mu_head_grad_norm']:.3f} "
                 f"σ²v={train_metrics['img_logvar_head_grad_norm']:.3f} "
                 f"Uv={train_metrics.get('img_cov_head_grad_norm', 0):.3f} "
                 f"μt={train_metrics['text_mu_head_grad_norm']:.3f} "
                 f"σ²t={train_metrics['text_logvar_head_grad_norm']:.3f}] "
-                f"gnorm[{train_metrics['global_grad_norm_before_clip']:.2f}->{train_metrics['global_grad_norm_after_clip']:.2f}]"
+                f"gnorm[{train_metrics['global_grad_norm_before_clip']:.2f}->"
+                f"{train_metrics['global_grad_norm_after_clip']:.2f}] "
+                f"dirSkip={train_metrics['dir_skipped_frac']:.2f} "
+                f"nonfinite[loss={train_metrics['nonfinite_steps']} "
+                f"grad={train_metrics['nonfinite_grad_steps']:.2f}]"
             )
 
             # Best-checkpoint selection. "recall" = multi-caption mc_recall@1
@@ -616,7 +672,8 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
                     best_val_loss = current_score
 
             if improved:
-                model.save(str(best_path), epoch=epoch + 1)
+                model.save(str(best_path), epoch=epoch + 1,
+                           objective_version=config.MCDISP_ALIGN_OBJECTIVE_VERSION)
                 if cfg.select_by == "loss":
                     score_str = f"val_loss: {best_val_loss:.4f}"
                 else:
@@ -642,6 +699,8 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             "patience_counter": patience_counter,
             "base_lrs": base_lrs,
             "select_by": cfg.select_by,
+            # A13: objective identity of the saved run
+            "objective_version": config.MCDISP_ALIGN_OBJECTIVE_VERSION,
         }
         torch.save(final_state, str(last_path))
         log.info(f"{prefix}Final model saved to {last_path}")

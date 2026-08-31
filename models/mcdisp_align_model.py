@@ -408,7 +408,8 @@ class MCDispAlignModel(nn.Module):
         """
         return sum(p.numel() for p in self.trainable_parameters())
 
-    def save(self, path: str, epoch: Optional[int] = None) -> None:
+    def save(self, path: str, epoch: Optional[int] = None,
+             objective_version: Optional[str] = None) -> None:
         """
         Save model state.
 
@@ -417,6 +418,10 @@ class MCDispAlignModel(nn.Module):
             epoch: Optional training epoch this checkpoint was taken at (1-based;
                 recorded for traceability of checkpoint selection; load() ignores
                 it when absent, so older checkpoints stay loadable)
+            objective_version: Optional objective identifier (A13,
+                config.MCDISP_ALIGN_OBJECTIVE_VERSION). Stored as a top-level
+                checkpoint key when not None; load() reads top-level keys
+                conditionally, so old checkpoints (without it) stay loadable.
         """
         state = {
             "model_state_dict": self.state_dict(),
@@ -426,6 +431,8 @@ class MCDispAlignModel(nn.Module):
             "cov_rank": self.cov_rank,
             "epoch": epoch,
         }
+        if objective_version is not None:
+            state["objective_version"] = objective_version
         torch.save(state, path)
         logger.info(f"Model saved to: {path}")
 

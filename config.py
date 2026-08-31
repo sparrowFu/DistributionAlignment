@@ -183,6 +183,7 @@ MCDISP_ALIGN_DROPOUT_RATE = 0.1         # Dropout rate for MLP heads
 # =============================================================================
 # MCDisp_Align: Multi-Caption Semantic Dispersion Guided Distribution Alignment
 # =============================================================================
+MCDISP_ALIGN_OBJECTIVE_VERSION = "four-group-v2"   # A13: checkpoint 兼容标识
 # Method overview (paper §3, docs/MCDisp_Align/iclr2027_conference.tex):
 # Each image and each of its K captions is encoded as a Gaussian through
 # lightweight heads. The K per-caption distributions form ONE text
