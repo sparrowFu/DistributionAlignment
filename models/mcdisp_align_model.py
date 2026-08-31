@@ -229,8 +229,8 @@ class MCDispAlignModel(nn.Module):
         """
         Moment-match the K per-caption Gaussians into the text distribution.
 
-        diag(Sigma_bar_t) = (1/K) sum_k [ sigma_k^2 + diag(U_k U_k^T) + mu_k^2 ]
-                          - mu_bar^2
+        diag(Sigma_bar_t) = (1/K) sum_k [ sigma_k^2 + diag(U_k U_k^T) ]
+                          + (1/K) sum_k (mu_k - mu_bar)^2
                           = s_t^2 + (1/K) sum_k sigma_k^2   (text variance)
 
         Args:
@@ -241,21 +241,23 @@ class MCDispAlignModel(nn.Module):
         Returns:
             Tuple of (combined_mu, combined_logvar), each of shape (B, D)
         """
-        B, K, D = mus.shape
-        device = mus.device
+        # Combine means: mu_bar = (1/K) sum_k mu_k
+        combined_mu = mus.mean(dim=1)  # (B, D)
 
-        # Uniform weights
-        weights = torch.ones(K, device=device) / K  # (K,)
-
-        # Combine means: mu_bar = sum_k w_k mu_k
-        combined_mu = (weights.view(1, K, 1) * mus).sum(dim=1)  # (B, D)
-
-        # Combine variances: diag(Sigma_bar) = sum_k w_k(sigma_k^2 + diag(UU^T) + mu_k^2) - mu_bar^2
+        # A07: centered second moment. The old form
+        # mean(var + mu^2) - mean(mu)^2 cancels effective digits when the
+        # shared center is large and the caption spread is small; the
+        # centered form is exact and matches the statistics the loss and
+        # diagnostics already compute from deviations.
         diag_cov = torch.exp(logvars)  # sigma_k^2, (B, K, D)
         if us is not None:
             diag_cov = diag_cov + (us ** 2).sum(dim=-1)  # + diag(U U^T)
-        combined_var = (weights.view(1, K, 1) * (diag_cov + mus ** 2)).sum(dim=1) - combined_mu ** 2
-        combined_logvar = torch.log(combined_var + config.MCDISP_ALIGN_COV_EPS)  # (B, D)
+        dev = mus - combined_mu.unsqueeze(1)                     # (B, K, D)
+        avg_caption_var = diag_cov.mean(dim=1)                   # a_t (B, D)
+        combined_var = avg_caption_var + (dev ** 2).mean(dim=1)  # a_t + s_t^2
+        # clamp (not +eps) so K=1 returns the caption's own variance unshifted;
+        # the floor is dead in practice since sigma_k^2 >= MCDISP_ALIGN_VAR_FLOOR.
+        combined_logvar = torch.log(combined_var.clamp_min(config.MCDISP_ALIGN_COV_EPS))  # (B, D)
 
         return combined_mu, combined_logvar
 
