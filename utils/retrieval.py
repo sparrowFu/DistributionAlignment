@@ -102,9 +102,8 @@ def compute_multicaption_recall(
 
     Two score families are computed:
 
-      cosine : the PLAIN cosine of the means -- the same score the L_ctr
-               contrastive loss optimizes (paper §3.3: the similarity involves
-               no variance). This is the primary/headline metric.
+      cosine : the PLAIN cosine of the means (no variance enters the
+               retrieval score). This is the primary/headline metric.
       CSD    : the ProLIP-style Contraction-Subspace distance used by this
                repo's ProLIP baselines (utils/retrieval_metrics.py):
                score = cos(mu_q, mu_g) - 0.5 * sum_d sigma_g,d^2, i.e. the

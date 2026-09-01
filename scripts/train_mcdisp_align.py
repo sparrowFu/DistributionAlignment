@@ -74,6 +74,12 @@ def parse_args():
 
     parser.add_argument("--lambda-match", type=float, default=config.MCDISP_ALIGN_LAMBDA_MATCH,
                         help="weight of L_match (distribution-to-set bidirectional contrastive)")
+    parser.add_argument("--lambda-cov", type=float, default=config.MCDISP_ALIGN_LAMBDA_COV,
+                        help="weight of L_cov (caption-mean containment in the image "
+                             "confidence ellipsoid; match group)")
+    parser.add_argument("--cov-alpha", type=float, default=config.MCDISP_ALIGN_COV_ALPHA,
+                        help="confidence level alpha of the L_cov ellipsoid "
+                             "(q_alpha = chi-square alpha-quantile with D dof)")
     parser.add_argument("--lambda-mu", type=float, default=config.MCDISP_ALIGN_LAMBDA_MU,
                         help="weight of L_mu (raw-coordinate center alignment)")
     parser.add_argument("--lambda-var", type=float, default=config.MCDISP_ALIGN_LAMBDA_VAR,
@@ -121,11 +127,8 @@ def parse_args():
     parser.add_argument("--early-stop-patience", type=int, default=3,
                         help="Early stopping patience in epochs (default: 3)")
     parser.add_argument("--early-stop", action="store_true",
-                        help="Opt IN to early stopping. Default is a fixed budget: "
-                             "the staged schedule's Full stage (L_cov, last 20%% of "
-                             "epochs) must be allowed to run -- early stopping on "
-                             "pre-Full recall killed it before (traincoco.log "
-                             "2026-08-25, stopped at E7 of 10)")
+                        help="Opt IN to early stopping. Default is a fixed "
+                             "budget: all epochs run, no early stopping.")
     parser.add_argument("--select-by", type=str, default="recall",
                         choices=["recall", "loss"],
                         help="Best-checkpoint selection metric: 'recall' "
@@ -172,8 +175,10 @@ def main():
         freeze_clip=args.freeze_clip,
         cov_rank=args.cov_rank,
         dropout_rate=args.dropout_rate,
-        # objective (paper §3.3, four-group: match/mu/var/reg/dir)
+        # objective (paper §3.3, four-group: match+cov/mu/var+reg/dir)
         lambda_match=lambda_match,
+        lambda_cov=args.lambda_cov,
+        cov_alpha=args.cov_alpha,
         lambda_mu=args.lambda_mu,
         lambda_var=args.lambda_var,
         lambda_reg=lambda_reg,

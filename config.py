@@ -183,7 +183,7 @@ MCDISP_ALIGN_DROPOUT_RATE = 0.1         # Dropout rate for MLP heads
 # =============================================================================
 # MCDisp_Align: Multi-Caption Semantic Dispersion Guided Distribution Alignment
 # =============================================================================
-MCDISP_ALIGN_OBJECTIVE_VERSION = "four-group-v2"   # A13: checkpoint 兼容标识
+MCDISP_ALIGN_OBJECTIVE_VERSION = "four-group-v3"   # A13: checkpoint 兼容标识 (v3 = 匹配组新增 L_cov 椭球包含约束; v2 = 四组目标重构)
 # Method overview (paper §3, docs/MCDisp_Align/iclr2027_conference.tex):
 # Each image and each of its K captions is encoded as a Gaussian through
 # lightweight heads. The K per-caption distributions form ONE text
@@ -194,7 +194,7 @@ MCDISP_ALIGN_OBJECTIVE_VERSION = "four-group-v2"   # A13: checkpoint 兼容标�
 # caption variance. The image distribution (Sigma_v = diag(sigma_v^2) +
 # U_v U_v^T) is aligned with the text distribution through its parameters:
 #
-#     L = lambda_match*L_match + lambda_mu*L_mu
+#     L = lambda_match*L_match + lambda_cov*L_cov + lambda_mu*L_mu
 #       + (lambda_var*L_var + lambda_reg*R_prior) + lambda_dir*L_dir
 #
 # L_match : distribution-to-set bidirectional contrastive between the image
@@ -202,6 +202,11 @@ MCDISP_ALIGN_OBJECTIVE_VERSION = "four-group-v2"   # A13: checkpoint 兼容标�
 #           (MCDISP_ALIGN_MATCH_SCORE): "gaussian" pairwise overlap (default;
 #           the match itself supervises the variances) or plain cosine
 #           (cosine_match ablation baseline, means only).
+# L_cov   : confidence-ellipsoid containment (match group): hinge on the
+#           Mahalanobis distance of each sg caption mean to the image
+#           Gaussian, charged only above the chi2_D(alpha) quantile. Zero
+#           loss certifies every caption mean inside the image's
+#           alpha-ellipsoid (cov_viol = violating fraction).
 # L_mu    : explicit center alignment MSE(mu_v, sg[mu_t]) in RAW coordinates.
 # L_var   : log-space regression of the FULL image marginal variance
 #           d_v + sum_r U_r^2 to the stop-gradient text variance
@@ -216,13 +221,15 @@ MCDISP_ALIGN_MATCH_SCORE = "gaussian"     # "gaussian"(L_match overlap score) | 
 MCDISP_ALIGN_TAU = 0.07                   # FIXED temperature in the COSINE match score / retrieval scoring (not learnable)
 MCDISP_ALIGN_TAU_MATCH = 1.0              # 重叠分数的固定温度（分数逐维归一, O(1) 温度即可）
 MCDISP_ALIGN_LAMBDA_MATCH = 1.0           # weight for L_match (0 in the no_match-style ablations)
+MCDISP_ALIGN_LAMBDA_COV = 0.01            # weight for the containment hinge L_cov (match group; 0 in the no_cov ablation)
+MCDISP_ALIGN_COV_ALPHA = 0.95             # confidence level alpha of the L_cov ellipsoid (q_alpha = chi2.ppf(alpha, D))
 MCDISP_ALIGN_LAMBDA_MU = 0.5              # weight for the raw-coordinate center alignment L_mu (0 in the no_mu ablation)
 MCDISP_ALIGN_LAMBDA_VAR = 1.0             # weight for the variance alignment L_var (core)
 MCDISP_ALIGN_LAMBDA_REG = 0.01            # weight for the weak caption prior R_prior (原 LAMBDA_CAL 迁移)
 MCDISP_ALIGN_LAMBDA_DIR = 0.5             # weight for the direction alignment L_dir
 MCDISP_ALIGN_SIGMA0_SQ = 0.04             # prior sigma_0^2 for caption calibration (= measured MSCOCO caption spread)
 MCDISP_ALIGN_DIR_EIG_REL_TOL = 1e-3       # A05 实际谱秩相对阈值 (eigenvalue counts iff > max_eig*tol)
-MCDISP_ALIGN_WARMUP_FRAC = 0.1            # L_var/L_dir ramp linearly 0->1 over the first 10% of total steps (caption heads train from scratch; the dispersion statistics need a few steps to mature). L_match/L_mu/R_prior are always on.
+MCDISP_ALIGN_WARMUP_FRAC = 0.1            # L_var/L_dir/L_cov ramp linearly 0->1 over the first 10% of total steps (caption heads train from scratch; the dispersion statistics and containment targets need a few steps to mature). L_match/L_mu/R_prior are always on.
 MCDISP_ALIGN_VAR_FLOOR = 1e-4             # numerical floor on sigma^2 (softplus positivity guard; NOT a semantic floor -- the range is learned via L_var)
 MCDISP_ALIGN_VAR_FLOOR_NEAR_MULT = 10     # variance floor-collapse monitor: a dim is "near floor" if sigma^2 < MCDISP_ALIGN_VAR_FLOOR_NEAR_MULT * MCDISP_ALIGN_VAR_FLOOR
 MCDISP_ALIGN_VAR_FLOOR_RATIO_WARN = 0.5   # warn when >this fraction of dims are near-floor AND mean sigma^2 < 2*MCDISP_ALIGN_VAR_FLOOR

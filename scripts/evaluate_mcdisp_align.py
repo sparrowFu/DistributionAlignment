@@ -4,10 +4,9 @@ MCDisp_Align Evaluation Script
 Evaluates the MCDisp_Align (Multi-Caption Semantic Dispersion Guided Distribution
 Alignment) model with the standard multi-caption retrieval protocol
 (N images vs N*K captions; I2T any-of-K-hit, T2I per-caption single-positive)
-under the plain cosine of the means -- the same score the L_ctr contrastive
-loss optimizes (paper §3.3: the similarity involves no variance) and the same
-protocol the trainer uses for checkpoint selection. This is the canonical
-MS-COCO/Flickr30k protocol, comparable to published baselines.
+under the plain cosine of the means and the same protocol the trainer uses
+for checkpoint selection. This is the canonical MS-COCO/Flickr30k protocol,
+comparable to published baselines.
 """
 
 import argparse
@@ -60,8 +59,8 @@ def parse_args():
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
                         help="Device to use")
     parser.add_argument("--tau", type=float, default=config.MCDISP_ALIGN_TAU,
-                        help="Temperature of the L_ctr similarity (kept for record; the "
-                             "retrieval score is the plain cosine, on which tau has no effect)")
+                        help="Kept for record only; the retrieval score is the "
+                             "plain cosine, on which tau has no effect")
 
     return parser.parse_args()
 
@@ -181,7 +180,7 @@ def main():
 
     # Primary (and only) metric: standard multi-caption bidirectional Recall
     # (N images vs N*K captions) under the plain-cosine MCDisp_Align score
-    # (= the L_ctr score) -- the canonical MS-COCO/Flickr one-image-many-
+    # -- the canonical MS-COCO/Flickr one-image-many-
     # captions protocol, comparable to published baselines. Train-time
     # checkpoint selection uses the same protocol (trainer evaluate()).
     mc = compute_multicaption_recall(

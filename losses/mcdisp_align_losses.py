@@ -4,7 +4,7 @@ MCDisp_Align Loss Functions
 Implements the four-group objective of the paper's §3.3 "Text--Image
 Distribution Alignment" (docs/MCDisp_Align/iclr2027_conference.tex):
 
-    L = lambda_match * L_match + lambda_mu * L_mu
+    L = lambda_match * L_match + lambda_cov * L_cov + lambda_mu * L_mu
       + (lambda_var * L_var + lambda_reg * R_prior) + lambda_dir * L_dir
 
 L_match : distribution-to-set bidirectional contrastive between the image
@@ -25,6 +25,18 @@ L_match : distribution-to-set bidirectional contrastive between the image
               the means with the fixed tau. NO gradient reaches any variance
               or covariance parameter in this branch -- the image variance is
               then supervised only by the dispersion statistics.
+L_cov   : confidence-ellipsoid containment (match group): hinge on the
+          Mahalanobis distance of each (stop-gradient) caption mean to the
+          image Gaussian, m_{i,k} = (sg(mu_k)-mu_v)^T (Diag(d_v)+U U^T)^-1
+          (sg(mu_k)-mu_v), penalized only above the chi-square_D(alpha)
+          quantile q_alpha (the alpha-confidence ellipsoid threshold).
+          L_cov = 0 <=> every caption mean lies inside the image's
+          alpha-ellipsoid, which makes per-caption coverage verifiable
+          during training (cov_viol reports the violating fraction). The
+          caption means are TARGETS: detaching them keeps the hinge from
+          collapsing the between-caption dispersion s_t that supervises
+          L_var/L_dir (the L_cover_pos failure). Certifies containment of
+          caption means only, NOT Sigma_v >= Sigma_k^t.
 L_mu    : explicit center alignment in RAW coordinates (A01):
           MSE(mu_v, sg[mu_t]). The center is no longer supervised only
           implicitly through the contrastive cosine, which discarded scale.
@@ -50,6 +62,7 @@ L_dir   : subspace alignment between the image covariance factor U_v and the
 Gradient scope per parameter (which term reaches what):
   gaussian L_match: mu_v, d_v, U_v, mu_{i,k}^t, sigma_k^2 -- all of them;
   cosine  L_match : the means only;
+  L_cov           : mu_v, d_v, U_v (the caption means are detached targets);
   L_mu            : mu_v only (the text target is detached);
   L_var           : d_v and U_v (the text target is detached);
   R_prior         : sigma_k^2 only;
@@ -81,13 +94,37 @@ from utils.logger import get_logger
 logger = get_logger("mcdisp_align_losses")
 
 
+_CHI2_Q_CACHE: Dict[Tuple[float, int], float] = {}
+
+
+def _chi2_quantile(alpha: float, D: int) -> float:
+    """q_alpha = chi2.ppf(alpha, D): the alpha-confidence ellipsoid threshold
+    of a D-dim Gaussian (paper §3.3, eq:cov_hinge_loss). Cached per
+    (alpha, D); falls back to the Wilson-Hilferty approximation (accurate to
+    <0.1% at CLIP-scale D) when scipy is unavailable.
+    """
+    key = (round(alpha, 6), D)
+    if key in _CHI2_Q_CACHE:
+        return _CHI2_Q_CACHE[key]
+    try:
+        from scipy.stats import chi2
+        q = float(chi2.ppf(alpha, D))
+    except Exception:
+        from statistics import NormalDist
+        z = NormalDist().inv_cdf(alpha)
+        q = D * (1.0 - 2.0 / (9.0 * D) + z * math.sqrt(2.0 / (9.0 * D))) ** 3
+    _CHI2_Q_CACHE[key] = q
+    return q
+
+
 class MCDispAlignLoss(nn.Module):
     """
     Multi-Caption Semantic Dispersion Guided Distribution Alignment (MCDisp_Align)
     loss -- the parameter-level alignment of the image distribution with the
     moment-matched text distribution (paper §3.3).
 
-    Total loss = lambda_match * L_match + lambda_mu * L_mu
+    Total loss = lambda_match * L_match + lambda_cov * L_cov
+               + lambda_mu * L_mu
                + (lambda_var * L_var + lambda_reg * R_prior)
                + lambda_dir * L_dir
 
@@ -97,6 +134,11 @@ class MCDispAlignLoss(nn.Module):
               sigma_k^2 (A16 -- the match itself supervises dispersion).
               Cosine score (match_score="cosine", ablation baseline):
               means only, no gradient to any variance.
+    L_cov   : confidence-ellipsoid containment hinge (match group): penalizes
+              the Mahalanobis distance of each detached caption mean to the
+              image Gaussian beyond the chi-square_D(alpha) quantile. Zero
+              loss <=> every caption mean is inside the image's
+              alpha-confidence ellipsoid (cov_viol = violating fraction).
     L_mu    : MSE(mu_v, sg[mu_t]) in raw coordinates (A01).
     L_var   : MSE(log(d_v + sum_r U_r^2), sg[log diag(Sigma_bar_t)]) -- the
               FULL image marginal variance, log space (A02).
@@ -115,6 +157,7 @@ class MCDispAlignLoss(nn.Module):
     def __init__(
         self,
         lambda_match: float = 1.0,
+        lambda_cov: float = 0.01,
         lambda_mu: float = 0.5,
         lambda_var: float = 1.0,
         lambda_reg: float = 0.01,
@@ -123,16 +166,18 @@ class MCDispAlignLoss(nn.Module):
         tau_match: float = 1.0,
         sigma0_sq: float = 0.04,
         match_score: str = "gaussian",
+        cov_alpha: float = 0.95,
         eps: float = 1e-6,
         dir_eig_rel_tol: float = 1e-3,
     ):
         """MCDisp_Align four-group loss (paper §3.3).
 
         Args:
-            lambda_match / lambda_mu / lambda_var / lambda_reg / lambda_dir:
-                weights of the five atomics (0 disables a term; the ablations
-                zero the corresponding one). lambda_var and lambda_reg form
-                the dispersion group ("disp" in the loss dict).
+            lambda_match / lambda_cov / lambda_mu / lambda_var / lambda_reg /
+            lambda_dir: weights of the six atomics (0 disables a term; the
+                ablations zero the corresponding one). lambda_match and
+                lambda_cov form the matching group; lambda_var and lambda_reg
+                form the dispersion group ("disp" in the loss dict).
             tau: FIXED temperature of the cosine match score (ablation
                 baseline only; not learnable).
             tau_match: temperature of the gaussian overlap match logits. The
@@ -142,6 +187,8 @@ class MCDispAlignLoss(nn.Module):
                 on held-out data; MSCOCO caption spread ~0.04).
             match_score: "gaussian" (default; overlap score, gradient also to
                 the variances) or "cosine" (means-only ablation baseline).
+            cov_alpha: confidence level alpha of the L_cov ellipsoid;
+                q_alpha = chi2.ppf(alpha, D) is the ellipsoid threshold.
             eps: numerical stabilizer for log / eigh.
             dir_eig_rel_tol: relative tolerance of the L_dir spectral rank
                 guard: an eigenvalue counts toward the actual rank only if it
@@ -152,6 +199,7 @@ class MCDispAlignLoss(nn.Module):
             raise ValueError(
                 f"match_score must be 'gaussian' or 'cosine', got {match_score!r}")
         self.lambda_match = lambda_match
+        self.lambda_cov = lambda_cov
         self.lambda_mu = lambda_mu
         self.lambda_var = lambda_var
         self.lambda_reg = lambda_reg
@@ -160,6 +208,7 @@ class MCDispAlignLoss(nn.Module):
         self.tau_match = float(tau_match)
         self.sigma0_sq = float(sigma0_sq)
         self.match_score = match_score
+        self.cov_alpha = float(cov_alpha)
         self.eps = eps
         self.dir_eig_rel_tol = float(dir_eig_rel_tol)
 
@@ -219,6 +268,68 @@ class MCDispAlignLoss(nn.Module):
 
         return 0.5 * (loss_i2t + loss_t2i), loss_i2t, loss_t2i
 
+    def _cov_loss(
+        self,
+        img_mu: torch.Tensor,
+        img_diag: torch.Tensor,
+        img_U: Optional[torch.Tensor],
+        text_mus: torch.Tensor,
+    ) -> Tuple[torch.Tensor, float, float]:
+        """L_cov: confidence-ellipsoid containment of the caption means
+        (paper §3.3, eq:cov_mahalanobis / eq:cov_hinge_loss).
+
+        m_{i,k} = (sg(mu_{i,k}^t) - mu_i^v)^T (Sigma_i^v)^-1 (sg(mu) - mu^v)
+        with Sigma_v = Diag(d_v) + U U^T, evaluated in Woodbury form (no DxD
+        inverse). The hinge [m - q_alpha]_+ charges ONLY violations of the
+        alpha-confidence ellipsoid, so L_cov = 0 certifies that every caption
+        mean lies inside its image's ellipsoid; cov_viol reports the
+        violating fraction as a training-time readout of that certificate.
+
+        The caption means are detached targets: the constraint moves the
+        image ellipsoid (mu_v, d_v, U_v) to cover the caption cloud. Without
+        the detach it would instead pull the captions toward the image and
+        collapse the between-caption dispersion s_t that supervises
+        L_var/L_dir (the L_cover_pos failure mode). Degenerate variance
+        inflation to satisfy the hinge is opposed by L_var's marginal match
+        and the log-determinant in the overlap score; it is monitored via
+        img_marginal_var_* / var_over_spread.
+
+        Computed even when lambda_cov = 0 (the weighted contribution and the
+        gradient are then zero) so the no_cov ablation can still MEASURE the
+        coverage it dropped -- an all-zeros readout would make the w/o
+        Coverage variant's diagnostic vacuous.
+
+        Returns (L_cov, cov_viol, cov_viol_img):
+          cov_viol     -- caption-level violating fraction (over B*K);
+                          1 - cov_viol = per-caption coverage rate.
+          cov_viol_img -- image-level violating fraction (any of the K
+                          captions outside); 1 - cov_viol_img = fraction of
+                          images whose ENTIRE caption set is covered.
+        """
+        B, K, D = text_mus.shape
+        q_alpha = _chi2_quantile(self.cov_alpha, D)
+
+        dev = text_mus.detach() - img_mu.unsqueeze(1)          # (B, K, D)
+        inv_d = 1.0 / img_diag                                  # (B, D)
+        m = (dev * dev * inv_d.unsqueeze(1)).sum(-1)            # (B, K)
+        if img_U is not None:
+            # Woodbury: dev^T C^-1 dev = dev^T diag(1/d) dev - v^T M^-1 v,
+            # M = I_r + U^T diag(1/d) U (SPD, well-conditioned by the I_r).
+            v = torch.einsum("bdr,bkd,bd->bkr", img_U, dev, inv_d)    # (B, K, r)
+            M = torch.einsum("bdr,bd,bds->brs", img_U, inv_d, img_U)  # (B, r, r)
+            M = M + torch.eye(M.shape[-1], dtype=M.dtype, device=M.device)
+            # M is per-image (B,r,r) but v per-caption (B,K,r): broadcast M
+            # over the K captions before solving.
+            w = torch.linalg.solve(M.unsqueeze(1), v.unsqueeze(-1)).squeeze(-1)  # (B, K, r)
+            m = m - (v * w).sum(-1)
+
+        hinge = torch.relu(m - q_alpha)
+        with torch.no_grad():
+            outside = m > q_alpha                                # (B, K)
+            cov_viol = outside.float().mean().item()
+            cov_viol_img = outside.any(dim=-1).float().mean().item()
+        return hinge.mean(), cov_viol, cov_viol_img
+
     def _dir_loss(
         self, img_U: Optional[torch.Tensor], text_mus: torch.Tensor
     ) -> Tuple[torch.Tensor, int, int]:
@@ -241,9 +352,12 @@ class MCDispAlignLoss(nn.Module):
 
         Returns (L_dir, dir_valid, dir_total): the loss over the valid
         sub-batch, how many samples passed the guard, and the batch size.
+        Computed even when lambda_dir = 0 (the weighted contribution and the
+        gradient are then zero) so the no_dir_loss ablation can still MEASURE
+        the subspace error it dropped.
         """
         B = text_mus.shape[0]
-        if img_U is None or self.lambda_dir <= 0:
+        if img_U is None:
             return text_mus.new_zeros(()), 0, B
         D = img_U.shape[-2]
         K = text_mus.shape[1]
@@ -314,6 +428,10 @@ class MCDispAlignLoss(nn.Module):
         # --- L_match: distribution-to-set bidirectional contrastive ---
         match_loss, match_i2t, match_t2i = self._match_loss(
             img_mu, img_diag, img_U, text_mus, text_logvars)
+        # --- L_cov: caption-mean containment in the image confidence
+        #     ellipsoid (match group; caption means are sg targets) ---
+        cov_loss, cov_viol, cov_viol_img = self._cov_loss(
+            img_mu, img_diag, img_U, text_mus)
         # --- L_mu: raw-coordinate center alignment (A01) ---
         mu_loss = F.mse_loss(img_mu, text_mu.detach())
         # --- dispersion group: full-marginal variance alignment + weak prior ---
@@ -325,7 +443,8 @@ class MCDispAlignLoss(nn.Module):
         # --- L_dir: between-caption variation subspace (A05 rank guard) ---
         dir_loss, dir_valid, dir_total = self._dir_loss(img_U, text_mus)
 
-        total = (self.lambda_match * match_loss + self.lambda_mu * mu_loss
+        total = (self.lambda_match * match_loss + self.lambda_cov * cov_loss
+                 + self.lambda_mu * mu_loss
                  + self.lambda_var * var_loss + self.lambda_reg * reg_loss
                  + self.lambda_dir * dir_loss)
 
@@ -360,6 +479,9 @@ class MCDispAlignLoss(nn.Module):
             "match": match_loss.item(),
             "match_i2t": match_i2t.item(),   # distribution-to-set: any-hit direction
             "match_t2i": match_t2i.item(),   # distribution-to-set: per-caption direction
+            "cov": cov_loss.item(),          # containment hinge (match group)
+            "cov_viol": cov_viol,            # fraction of caption means outside the ellipsoid
+            "cov_viol_img": cov_viol_img,    # fraction of images with >=1 caption outside
             "mu": mu_loss.item(),
             "var": var_loss.item(),
             "reg": reg_loss.item(),
@@ -367,6 +489,7 @@ class MCDispAlignLoss(nn.Module):
             "dir_valid": dir_valid,
             "dir_total": dir_total,
             "weighted_match": (self.lambda_match * match_loss).item(),
+            "weighted_cov": (self.lambda_cov * cov_loss).item(),
             "weighted_mu": (self.lambda_mu * mu_loss).item(),
             "weighted_var": (self.lambda_var * var_loss).item(),
             "weighted_reg": (self.lambda_reg * reg_loss).item(),
@@ -412,13 +535,13 @@ if __name__ == "__main__":
     crit = MCDispAlignLoss()
     loss, d = crit(img_mu, img_logvar, img_U, text_mu, text_logvar,
                    text_mus, text_logvars)
-    for k in ("total", "match", "match_i2t", "match_t2i", "mu", "var", "reg",
-              "dir", "dir_valid", "dir_total", "disp"):
+    for k in ("total", "match", "match_i2t", "match_t2i", "cov", "cov_viol",
+              "mu", "var", "reg", "dir", "dir_valid", "dir_total", "disp"):
         print(f"   {k}: {d[k]:.4f}" if isinstance(d[k], float) else f"   {k}: {d[k]}")
     print(f"   loss_dict keys ({len(d)}): {sorted(d)}")
     assert all(math.isfinite(v) for v in d.values()), "gaussian mode must be finite everywhere"
-    weighted_sum = (d["weighted_match"] + d["weighted_mu"] + d["weighted_var"]
-                    + d["weighted_reg"] + d["weighted_dir"])
+    weighted_sum = (d["weighted_match"] + d["weighted_cov"] + d["weighted_mu"]
+                    + d["weighted_var"] + d["weighted_reg"] + d["weighted_dir"])
     assert abs(d["total"] - weighted_sum) < 1e-6, (d["total"], weighted_sum)
     assert abs(d["disp"] - (d["weighted_var"] + d["weighted_reg"])) < 1e-6
 
@@ -433,7 +556,7 @@ if __name__ == "__main__":
 
     print("\n3. Gaussian match-only gradient flow (A16: L_match supervises variances):")
     crit_m = MCDispAlignLoss(lambda_mu=0.0, lambda_var=0.0, lambda_reg=0.0,
-                             lambda_dir=0.0)
+                             lambda_dir=0.0, lambda_cov=0.0)
     leaves = {
         "img_mu": img_mu.clone().requires_grad_(True),
         "img_logvar": img_logvar.clone().requires_grad_(True),
@@ -455,7 +578,7 @@ if __name__ == "__main__":
     ilv = img_logvar.clone().requires_grad_(True)
     tlv = text_logvars.clone().requires_grad_(True)
     crit_c = MCDispAlignLoss(match_score="cosine", lambda_mu=0.0, lambda_var=0.0,
-                             lambda_reg=0.0, lambda_dir=0.0)
+                             lambda_reg=0.0, lambda_dir=0.0, lambda_cov=0.0)
     total_c, _ = crit_c(img_mu, ilv, None, text_mu, text_logvar,
                         text_mus, tlv)
     total_c.backward()
@@ -469,5 +592,38 @@ if __name__ == "__main__":
                      collapsed, text_logvars)
     print(f"   dir: {d_coll['dir']}, dir_valid: {d_coll['dir_valid']}/{d_coll['dir_total']}")
     assert d_coll["dir"] == 0.0 and d_coll["dir_valid"] == 0
+
+    print("\n6. L_cov containment hinge (caption means are sg targets):")
+    # 6a. every caption mean exactly at the image mean -> m = 0 -> hinge 0
+    inside = img_mu.unsqueeze(1).repeat(1, K, 1)
+    crit_c = MCDispAlignLoss(lambda_match=0.0, lambda_mu=0.0, lambda_var=0.0,
+                             lambda_reg=0.0, lambda_dir=0.0, lambda_cov=1.0)
+    _, d_in = crit_c(img_mu, img_logvar, img_U, img_mu, text_logvar,
+                     inside, text_logvars)
+    print(f"   all-inside: cov={d_in['cov']:.4f}, cov_viol={d_in['cov_viol']}")
+    assert d_in["cov"] == 0.0 and d_in["cov_viol"] == 0.0
+    # 6b. far-away captions violate; gradient reaches ONLY the image side
+    far = img_mu.unsqueeze(1).repeat(1, K, 1) + 10.0
+    im = img_mu.clone().requires_grad_(True)
+    ilv = img_logvar.clone().requires_grad_(True)
+    iU = img_U.clone().requires_grad_(True)
+    tms = far.clone().requires_grad_(True)
+    loss_c, d_far = crit_c(im, ilv, iU, img_mu, text_logvar, tms, text_logvars)
+    print(f"   all-outside: cov={d_far['cov']:.1f}, cov_viol={d_far['cov_viol']}")
+    assert d_far["cov"] > 0.0 and d_far["cov_viol"] == 1.0
+    loss_c.backward()
+    for name, t in (("img_mu", im), ("img_logvar", ilv), ("img_U", iU)):
+        assert t.grad is not None and torch.isfinite(t.grad).all() \
+            and t.grad.norm() > 0, f"{name} must receive L_cov gradient"
+    assert tms.grad is None or tms.grad.norm() == 0, \
+        "caption means are stop-gradient targets (L_cover_pos lesson)"
+    print("   grads: img_mu/img_logvar/img_U > 0, text_mus == 0 (verified)")
+    # 6c. chi-square threshold: a larger alpha loosens the hinge monotonically
+    viol = [MCDispAlignLoss(lambda_cov=1.0, cov_alpha=a)(
+        img_mu, img_logvar, img_U, img_mu, text_logvar, text_mus, text_logvars
+    )[1]["cov"] for a in (0.90, 0.95, 0.99)]
+    print(f"   cov at alpha 0.90/0.95/0.99: "
+          f"{viol[0]:.1f}/{viol[1]:.1f}/{viol[2]:.1f} (monotone non-increasing)")
+    assert viol[0] >= viol[1] >= viol[2]
 
     print("\nAll MCDisp_Align loss self-tests passed.")

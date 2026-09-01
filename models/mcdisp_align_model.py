@@ -117,9 +117,10 @@ class MCDispAlignModel(nn.Module):
             nn.Linear(hidden_dim, hidden_dim)
         )
 
-        # Low-rank covariance factor heads U in R^{D x r} (image and text).
-        # Built via _build_cov_heads() so load() can rebuild them to match a
-        # checkpoint's cov_rank before load_state_dict.
+        # Low-rank covariance factor head U in R^{D x r} (image only; caption
+        # distributions are diagonal). Built via _build_cov_heads() so load()
+        # can rebuild it to match a checkpoint's cov_rank before
+        # load_state_dict.
         self._build_cov_heads()
 
         # Initialize distribution heads
@@ -148,7 +149,7 @@ class MCDispAlignModel(nn.Module):
         """Predict the low-rank covariance factor U.
 
         Args:
-            head: A cov head (img_cov_head or text_cov_head).
+            head: The image cov head (img_cov_head).
             features: Backbone features of shape (..., D).
 
         Returns:
@@ -164,11 +165,13 @@ class MCDispAlignModel(nn.Module):
     def _build_cov_heads(self) -> None:
         """(Re)create the low-rank covariance factor head for ``self.cov_rank``.
 
-        Covariance is image-side only (text is diagonal in
-        v1), so only ``img_cov_head`` is built. Small (non-zero) init keeps
-        Sigma near-diagonal at the start while still letting the L_cov
-        subspace-alignment gradient bootstrap U (zero init would make that loss
-        have zero gradient w.r.t. U). Called from ``__init__`` and from
+        Covariance is image-side only (caption distributions are diagonal, as
+        in the paper), so only ``img_cov_head`` is built. The head is a
+        2-layer MLP with the same structure as the mean/logvar heads, so every
+        distribution head in the model is an MLP. Only its FINAL layer keeps
+        the small (non-zero) init: U starts near zero (Sigma near-diagonal)
+        while the subspace losses can still bootstrap it (a zero init would
+        give L_dir no gradient w.r.t. U). Called from ``__init__`` and from
         ``load()`` (to match a checkpoint's cov_rank).
         """
         # Drop any existing head so a cov_rank change during load() is clean.
@@ -176,9 +179,17 @@ class MCDispAlignModel(nn.Module):
             del self.img_cov_head
 
         if self.cov_rank > 0:
-            self.img_cov_head = nn.Linear(self.hidden_dim, self.hidden_dim * self.cov_rank)
-            nn.init.normal_(self.img_cov_head.weight, std=1e-2)
-            nn.init.zeros_(self.img_cov_head.bias)
+            self.img_cov_head = nn.Sequential(
+                nn.Linear(self.hidden_dim, self.hidden_dim),
+                nn.Dropout(self.dropout_rate),
+                nn.ReLU(),
+                nn.Linear(self.hidden_dim, self.hidden_dim * self.cov_rank),
+            )
+            first, last = self.img_cov_head[0], self.img_cov_head[-1]
+            nn.init.xavier_uniform_(first.weight)
+            nn.init.zeros_(first.bias)
+            nn.init.normal_(last.weight, std=1e-2)
+            nn.init.zeros_(last.bias)
 
     def _floor_logvar(self, raw_logvar: torch.Tensor) -> torch.Tensor:
         """Map a raw head output to log-variance with a small numerical floor.

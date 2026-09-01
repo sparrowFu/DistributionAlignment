@@ -38,12 +38,13 @@ def create_optimizer(
     """Create optimizer with different learning rates for CLIP and MLP/cov heads.
 
     The image covariance head gets its own param group with ``weight_decay=0``:
-    in schedule stages where neither L_cov nor L_cover is active it receives no
-    loss gradient at all, and under Adam an L2-only gradient normalizes to a
-    constant-magnitude ``sign(w)`` step that drives the 1e-2-scale init weights
-    to EXACTLY zero within ~|w|/lr steps (observed: a dead U head at
-    evaluation despite non-zero init). Exempting it from weight decay keeps U
-    at its init until L_cov takes over."""
+    its final layer starts at a small scale (near-diagonal Sigma at init), and
+    under Adam an L2-only gradient normalizes to a constant-magnitude
+    ``sign(w)`` step that would drive those 1e-2-scale init weights to EXACTLY
+    zero within ~|w|/lr steps (observed: a dead U head at evaluation despite
+    non-zero init). Exempting it from weight decay keeps U's learning purely
+    loss-driven (the gaussian L_match reaches U from step 0; L_dir joins after
+    the warmup ramp)."""
     head_params = (
         list(model.img_mu_head.parameters())
         + list(model.img_logvar_head.parameters())
@@ -69,13 +70,15 @@ def create_optimizer(
 def warmup_ramp(
     epoch: int, step: int, steps_per_epoch: int, total_epochs: int, warmup_frac: float
 ) -> float:
-    """Linear 0 -> 1 ramp for the dispersion terms (L_var / L_dir) over the
-    first ``warmup_frac`` of the total optimizer steps; 1.0 afterwards.
+    """Linear 0 -> 1 ramp for the dispersion/containment terms (L_var /
+    L_dir / L_cov) over the first ``warmup_frac`` of the total optimizer
+    steps; 1.0 afterwards.
 
     The caption heads train from scratch on frozen CLIP features, so the
-    dispersion statistics (s_t^2, S_t) need a few steps to differentiate
-    before they supervise the image variance and directions. L_match / L_mu /
-    R_prior are always on. ``warmup_frac=0`` disables the ramp.
+    dispersion statistics (s_t^2, S_t) and the caption-mean containment
+    targets need a few steps to differentiate before they supervise the
+    image variance, directions, and ellipsoid. L_match / L_mu / R_prior are
+    always on. ``warmup_frac=0`` disables the ramp.
     """
     if warmup_frac <= 0:
         return 1.0
@@ -125,13 +128,15 @@ def train_epoch(
     total_epochs: int = 1,
     base_lambda_var: Optional[float] = None,
     base_lambda_dir: Optional[float] = None,
+    base_lambda_cov: Optional[float] = None,
     warmup_frac: float = 0.0,
 ) -> Dict[str, float]:
     """Train for one epoch.
 
-    L_var and L_dir are ramped per optimizer step by ``warmup_ramp`` (the
-    dispersion statistics need a few steps to mature); L_match / L_mu /
-    R_prior are always on. Also monitors a variance floor-collapse ratio.
+    L_var, L_dir and L_cov are ramped per optimizer step by ``warmup_ramp``
+    (the dispersion statistics and containment targets need a few steps to
+    mature); L_match / L_mu / R_prior are always on. Also monitors a variance
+    floor-collapse ratio.
     """
     # nn.Module.train() is recursive: it would also put the CLIP backbone
     # into train mode (dropout on). A frozen backbone must stay deterministic
@@ -145,15 +150,19 @@ def train_epoch(
         base_lambda_var = criterion.lambda_var
     if base_lambda_dir is None:
         base_lambda_dir = criterion.lambda_dir
+    if base_lambda_cov is None:
+        base_lambda_cov = getattr(criterion, "lambda_cov", 0.0)
     steps_per_epoch = len(dataloader)
     var_near = config.MCDISP_ALIGN_VAR_FLOOR * config.MCDISP_ALIGN_VAR_FLOOR_NEAR_MULT
     floor_thresh = config.MCDISP_ALIGN_VAR_FLOOR * 2.0
 
     totals = {k: 0.0 for k in (
         # four-group atomics (paper §3.3); "loss" maps to loss_dict["total"]
-        "loss", "match", "match_i2t", "match_t2i", "mu", "var", "reg", "dir", "disp",
+        "loss", "match", "match_i2t", "match_t2i", "cov", "cov_viol",
+        "cov_viol_img", "mu", "var", "reg", "dir", "disp",
         # weighted contributions
-        "weighted_match", "weighted_mu", "weighted_var", "weighted_reg", "weighted_dir",
+        "weighted_match", "weighted_cov", "weighted_mu", "weighted_var",
+        "weighted_reg", "weighted_dir",
         # diagonal-variance statistics
         "img_diag_var_mean", "img_diag_var_median", "img_diag_var_min", "img_diag_var_max",
         # full-marginal statistics (d_v + sum_r U_r^2, A02)
@@ -205,10 +214,12 @@ def train_epoch(
         input_ids = text_inputs["input_ids"].view(batch_size, num_captions, -1).to(device)
         attention_mask = text_inputs["attention_mask"].view(batch_size, num_captions, -1).to(device)
 
-        # Per-step warmup ramp for the dispersion terms (L_var / L_dir).
+        # Per-step warmup ramp for the dispersion/containment terms
+        # (L_var / L_dir / L_cov).
         ramp = warmup_ramp(epoch, batch_idx, steps_per_epoch, total_epochs, warmup_frac)
         criterion.lambda_var = base_lambda_var * ramp
         criterion.lambda_dir = base_lambda_dir * ramp
+        criterion.lambda_cov = base_lambda_cov * ramp
 
         outputs = model(pixel_values, input_ids, attention_mask)
 
@@ -314,9 +325,18 @@ def evaluate(
     """
     model.eval()
 
+    # mu/var/dir/cov* are the unweighted ATOMIC values -- computed regardless
+    # of the run's lambda switches (lambda=0 zeroes weight and gradient, not
+    # the readout), so this doubles as the ablation diagnostics aggregate.
     totals = {k: 0.0 for k in
-              ("loss", "match", "mu", "var", "reg", "dir", "img_marginal_var_mean")}
+              ("loss", "match", "mu", "var", "reg", "dir", "cov", "cov_viol",
+               "cov_viol_img", "img_marginal_var_mean")}
     processed_batches = 0
+    # dir diagnostics: weight each batch's projection error by its valid-sample
+    # count (batches with dir_valid=0 contribute nothing, not a zero).
+    dir_valid_sum = 0
+    dir_total_sum = 0
+    dir_weighted_sum = 0.0
     feats = {k: [] for k in ("img_mu", "img_logvar", "text_mus", "text_logvars")} \
         if compute_recall else None
 
@@ -350,6 +370,9 @@ def evaluate(
 
         for k in totals:
             totals[k] += loss_dict["total" if k == "loss" else k]
+        dir_valid_sum += loss_dict["dir_valid"]
+        dir_total_sum += loss_dict["dir_total"]
+        dir_weighted_sum += loss_dict["dir"] * loss_dict["dir_valid"]
 
         if feats is not None:
             feats["img_mu"].append(outputs['img_mu'].cpu())
@@ -361,6 +384,9 @@ def evaluate(
 
     num_batches = max(processed_batches, 1)
     metrics = {k: v / num_batches for k, v in totals.items()}
+    # exact valid-weighted projection error + guard pass rate
+    metrics["dir"] = dir_weighted_sum / max(dir_valid_sum, 1)
+    metrics["dir_valid_frac"] = dir_valid_sum / max(dir_total_sum, 1)
 
     # Standard multi-caption retrieval (N vs N*K) under the MCDisp_Align score.
     # The val loader uses shuffle=False, so concatenated img_mu[i] stays aligned
@@ -406,8 +432,10 @@ class MCDispAlignTrainConfig:
     cov_rank: int = field(default_factory=lambda: config.MCDISP_ALIGN_COV_RANK)
     dropout_rate: float = field(default_factory=lambda: config.MCDISP_ALIGN_DROPOUT_RATE)
 
-    # --- MCDisp_Align objective (paper §3.3, four-group: match/mu/var/reg/dir) ---
+    # --- MCDisp_Align objective (paper §3.3, four-group: match+cov/mu/var+reg/dir) ---
     lambda_match: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_MATCH)
+    lambda_cov: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_COV)
+    cov_alpha: float = field(default_factory=lambda: config.MCDISP_ALIGN_COV_ALPHA)
     lambda_mu: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_MU)
     lambda_var: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_VAR)
     lambda_reg: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_REG)
@@ -500,8 +528,8 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
     log.info(f"{prefix}Dataset: {cfg.dataset} | Epochs: {cfg.epochs} | Batch: {cfg.batch_size}")
     log.info(f"{prefix}CLIP LR: {cfg.clip_lr} | MLP LR: {cfg.mlp_lr} | Freeze CLIP: {cfg.freeze_clip}")
     log.info(f"{prefix}Cov rank r: {cfg.cov_rank} | Tau (fixed): {cfg.tau} | Warmup frac: {cfg.warmup_frac}")
-    log.info(f"{prefix}Loss weights: match={cfg.lambda_match} mu={cfg.lambda_mu} "
-             f"var={cfg.lambda_var} reg={cfg.lambda_reg} dir={cfg.lambda_dir} "
+    log.info(f"{prefix}Loss weights: match={cfg.lambda_match} cov={cfg.lambda_cov}(alpha={cfg.cov_alpha}) "
+             f"mu={cfg.lambda_mu} var={cfg.lambda_var} reg={cfg.lambda_reg} dir={cfg.lambda_dir} "
              f"| sigma_0^2={cfg.sigma0_sq} | match_score={cfg.match_score} "
              f"tau_match={cfg.tau_match}")
     log.info(f"{prefix}Select by: {cfg.select_by} | Device: {cfg.device}")
@@ -520,6 +548,7 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
     # Loss
     criterion = MCDispAlignLoss(
         lambda_match=cfg.lambda_match,
+        lambda_cov=cfg.lambda_cov,
         lambda_mu=cfg.lambda_mu,
         lambda_var=cfg.lambda_var,
         lambda_reg=cfg.lambda_reg,
@@ -528,10 +557,11 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
         tau_match=cfg.tau_match,
         sigma0_sq=cfg.sigma0_sq,
         match_score=cfg.match_score,
+        cov_alpha=cfg.cov_alpha,
         dir_eig_rel_tol=cfg.dir_eig_rel_tol,
     )
     log.info(f"{prefix}Using MCDisp_Align loss (paper §3.3 four-group objective: "
-             "match/mu/var/reg/dir)")
+             "match+cov/mu/var+reg/dir)")
     criterion = criterion.to(cfg.device)
 
     # Optimizer
@@ -595,7 +625,7 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
                 model, train_loader, criterion, optimizer, cfg.device, epoch,
                 desc_prefix=cfg.tag, total_epochs=cfg.epochs,
                 base_lambda_var=cfg.lambda_var, base_lambda_dir=cfg.lambda_dir,
-                warmup_frac=cfg.warmup_frac,
+                base_lambda_cov=cfg.lambda_cov, warmup_frac=cfg.warmup_frac,
             )
             val_metrics = evaluate(
                 model, val_loader, criterion, cfg.device,
@@ -606,6 +636,7 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             log.info(
                 f"{prefix}Epoch {epoch + 1}/{cfg.epochs} - "
                 f"Train Loss: {train_metrics['loss']:.4f}, Match: {train_metrics['match']:.4f}, "
+                f"Cov: {train_metrics['cov']:.2f} (viol {train_metrics['cov_viol']:.2f}), "
                 f"Mu: {train_metrics['mu']:.4f}, Var: {train_metrics['var']:.4f}, "
                 f"Reg: {train_metrics['reg']:.4f}, Dir: {train_metrics['dir']:.4f}, "
                 f"σ²diag: {train_metrics['img_diag_var_mean']:.4f}, "
@@ -631,6 +662,7 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
                            / (train_metrics['img_diag_var_mean'] + 1e-12))
             log.info(
                 f"{prefix}  diag: weighted[match={train_metrics['weighted_match']:.3f} "
+                f"cov={train_metrics['weighted_cov']:.3f} "
                 f"mu={train_metrics['weighted_mu']:.3f} var={train_metrics['weighted_var']:.3f} "
                 f"reg={train_metrics['weighted_reg']:.3f} dir={train_metrics['weighted_dir']:.3f}] | "
                 f"σ²diag[min/med/mean/max]={train_metrics['img_diag_var_min']:.4f}/"
@@ -736,6 +768,18 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             "num_samples": n_eval,
             "mc_recall": {f"R@{k}": eval_metrics.get(f"mc_recall@{k}", 0.0)
                           for k in cfg.recall_k_values},
+        }
+        # Ablation diagnostics (unweighted atomics on the eval split; the
+        # expected-verification table of the w/o Coverage/Mean/Variance/
+        # Direction variants): coverage rates and the three alignment errors.
+        results["alignment"] = {
+            "coverage_caption": 1.0 - eval_metrics.get("cov_viol", 0.0),
+            "coverage_set": 1.0 - eval_metrics.get("cov_viol_img", 0.0),
+            "center_mse": eval_metrics.get("mu", 0.0),
+            "var_log_mse": eval_metrics.get("var", 0.0),
+            "dir_proj_err": eval_metrics.get("dir", 0.0),
+            "dir_valid_frac": (
+                eval_metrics.get("dir_valid_frac", 0.0)),
         }
         log.info(f"{prefix}Final mc R@1/5/10: "
                  f"{eval_metrics.get('mc_recall@1', 0):.3f}/"

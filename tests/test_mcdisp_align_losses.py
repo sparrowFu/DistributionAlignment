@@ -1,6 +1,7 @@
 """
-Tests for the four-group objective: L_match (gaussian overlap by default,
-cosine as the cosine_match ablation baseline), L_mu, the dispersion group
+Tests for the four-group objective: the matching group (L_match with gaussian
+overlap by default / cosine as the cosine_match ablation baseline, plus the
+L_cov confidence-ellipsoid containment hinge), L_mu, the dispersion group
 (L_var + R_prior), and L_dir with the spectral rank guard.
 
 The first six tests are the COSINE-branch contract. Pure CPU, follows the
@@ -28,15 +29,15 @@ TAU = 0.07
 
 
 def _cosine_only(**kwargs) -> MCDispAlignLoss:
-    """Criterion with only the cosine L_match active (mu/var/reg/dir zeroed)."""
+    """Criterion with only the cosine L_match active (mu/var/reg/dir/cov zeroed)."""
     return MCDispAlignLoss(match_score="cosine", lambda_mu=0.0, lambda_var=0.0,
-                           lambda_reg=0.0, lambda_dir=0.0, **kwargs)
+                           lambda_reg=0.0, lambda_dir=0.0, lambda_cov=0.0, **kwargs)
 
 
 def _gauss_match_only(**kwargs) -> MCDispAlignLoss:
     """Criterion with only the gaussian L_match active (A16 isolation)."""
     return MCDispAlignLoss(match_score="gaussian", lambda_mu=0.0, lambda_var=0.0,
-                           lambda_reg=0.0, lambda_dir=0.0, **kwargs)
+                           lambda_reg=0.0, lambda_dir=0.0, lambda_cov=0.0, **kwargs)
 
 
 def _forward_match(crit, img_mu, text_mus):
@@ -224,7 +225,7 @@ def test_mu_loss_raw_coordinate():
     text_mu = img_mu.clone()
     crit = MCDispAlignLoss(match_score="cosine", lambda_match=0.0,
                            lambda_mu=1.0, lambda_var=0.0, lambda_reg=0.0,
-                           lambda_dir=0.0)
+                           lambda_dir=0.0, lambda_cov=0.0)
     _, d = crit(img_mu, torch.zeros(B, D), None, text_mu, torch.zeros(B, D),
                 torch.randn(B, K, D), torch.zeros(B, K, D))
     assert d["mu"] == 0.0
@@ -246,7 +247,7 @@ def test_mu_loss_raw_coordinate():
     # with lambda_mu=0 (everything else 0 too) no mu-term grad reaches img_mu
     crit0 = MCDispAlignLoss(match_score="cosine", lambda_match=0.0,
                             lambda_mu=0.0, lambda_var=0.0, lambda_reg=0.0,
-                            lambda_dir=0.0)
+                            lambda_dir=0.0, lambda_cov=0.0)
     im2 = img_mu.clone().requires_grad_(True)
     loss0, _ = crit0(im2, torch.zeros(B, D), None, text_mu, torch.zeros(B, D),
                      torch.randn(B, K, D), torch.zeros(B, K, D))
@@ -305,7 +306,7 @@ def test_prior_renamed_cal():
     text_logvars = (-4 + torch.randn(B, K, D)).requires_grad_(True)
     crit = MCDispAlignLoss(match_score="cosine", lambda_match=0.0,
                            lambda_mu=0.0, lambda_var=0.0, lambda_reg=1.0,
-                           lambda_dir=0.0, sigma0_sq=0.04)
+                           lambda_dir=0.0, lambda_cov=0.0, sigma0_sq=0.04)
     total, d = crit(torch.randn(B, D), torch.zeros(B, D), None,
                     torch.zeros(B, D), torch.zeros(B, D),
                     torch.randn(B, K, D), text_logvars)
@@ -320,7 +321,7 @@ def test_prior_renamed_cal():
     # no gradient at all reaches text_logvars
     crit0 = MCDispAlignLoss(match_score="cosine", lambda_match=0.0,
                             lambda_mu=0.0, lambda_var=0.0, lambda_reg=0.0,
-                            lambda_dir=0.0)
+                            lambda_dir=0.0, lambda_cov=0.0)
     tlv0 = text_logvars.detach().clone().requires_grad_(True)
     loss0, _ = crit0(torch.randn(B, D), torch.zeros(B, D), None,
                      torch.zeros(B, D), torch.zeros(B, D),
@@ -429,20 +430,180 @@ def test_match_uses_diag_not_marginal_in_scorer():
 
 
 def test_total_equals_weighted_atomic_sum():
-    """total is exactly the sum of the five weighted atomics, and disp is the
+    """total is exactly the sum of the six weighted atomics, and disp is the
     dispersion group's weighted sum (checked at non-default weights)."""
     torch.manual_seed(11)
     B, K, D, r = 4, 5, 8, 3
-    crit = MCDispAlignLoss(lambda_match=0.7, lambda_mu=0.3, lambda_var=1.2,
-                           lambda_reg=0.05, lambda_dir=0.5)   # gaussian match
+    crit = MCDispAlignLoss(lambda_match=0.7, lambda_cov=0.02, lambda_mu=0.3,
+                           lambda_var=1.2, lambda_reg=0.05,
+                           lambda_dir=0.5)             # gaussian match
     _, d = crit(torch.randn(B, D), 0.1 * torch.randn(B, D), torch.randn(B, D, r),
                 torch.randn(B, D), 0.1 * torch.randn(B, D),
                 torch.randn(B, K, D), -3 + 0.1 * torch.randn(B, K, D))
     assert d["dir_valid"] > 0                         # guard actually passing
-    atoms = (d["weighted_match"] + d["weighted_mu"] + d["weighted_var"]
-             + d["weighted_reg"] + d["weighted_dir"])
+    atoms = (d["weighted_match"] + d["weighted_cov"] + d["weighted_mu"]
+             + d["weighted_var"] + d["weighted_reg"] + d["weighted_dir"])
     assert abs(d["total"] - atoms) < 1e-6, (d["total"], atoms)
     assert abs(d["disp"] - (d["weighted_var"] + d["weighted_reg"])) < 1e-6
+
+
+# ---------------------------------------------------------------- L_cov containment hinge
+
+def _cov_only(lambda_cov: float = 1.0, **kwargs) -> MCDispAlignLoss:
+    """Criterion with only L_cov active (match/mu/var/reg/dir zeroed)."""
+    return MCDispAlignLoss(lambda_match=0.0, lambda_mu=0.0, lambda_var=0.0,
+                           lambda_reg=0.0, lambda_dir=0.0,
+                           lambda_cov=lambda_cov, **kwargs)
+
+
+def test_cov_mahalanobis_matches_direct():
+    """The Woodbury-form Mahalanobis m = dev^T (Diag(d)+UU^T)^-1 dev equals a
+    direct DxD solve, both with and without the low-rank factor."""
+    torch.manual_seed(13)
+    B, K, D, r = 3, 4, 8, 2
+    crit = _cov_only()
+    img_mu = torch.randn(B, D)
+    img_diag = 0.1 + torch.rand(B, D)
+    img_U = torch.randn(B, D, r)
+    text_mus = img_mu.unsqueeze(1) + 0.5 * torch.randn(B, K, D)
+
+    inv_d = 1.0 / img_diag
+    dev = text_mus - img_mu.unsqueeze(1)
+    direct = torch.empty(B, K)
+    for i in range(B):
+        S = torch.diag(img_diag[i]) + img_U[i] @ img_U[i].T
+        Sinv = torch.linalg.inv(S)
+        for k in range(K):
+            d_ik = dev[i, k]
+            direct[i, k] = d_ik @ Sinv @ d_ik
+
+    def _m(U):
+        m = (dev * dev * inv_d.unsqueeze(1)).sum(-1)
+        if U is not None:
+            v = torch.einsum("bdr,bkd,bd->bkr", U, dev, inv_d)
+            M = torch.einsum("bdr,bd,bds->brs", U, inv_d, U)
+            M = M + torch.eye(M.shape[-1])
+            w = torch.linalg.solve(M.unsqueeze(1), v.unsqueeze(-1)).squeeze(-1)
+            m = m - (v * w).sum(-1)
+        return m
+
+    assert (m_lowrank := _m(img_U)).allclose(direct, atol=1e-4), \
+        (m_lowrank - direct).abs().max()
+    assert _m(None).allclose(
+        torch.einsum("bkd,bd,bkd->bk", dev, inv_d, dev), atol=1e-6)
+
+    # the reported hinge is relu(m - q_alpha).mean() over the SAME m
+    q = 0.0
+    from scipy.stats import chi2
+    q = float(chi2.ppf(0.95, D))
+    _, d = crit(img_mu, torch.log(img_diag), img_U, img_mu,
+                torch.zeros(B, D), text_mus, torch.zeros(B, K, D))
+    expected = torch.relu(direct - q).mean().item()
+    assert abs(d["cov"] - expected) < 1e-4, (d["cov"], expected)
+
+
+def test_cov_hinge_and_violation_semantics():
+    """Inside the ellipsoid -> cov = 0 and cov_viol = 0; far outside -> both
+    positive; lambda_cov = 0 disables the term entirely."""
+    torch.manual_seed(14)
+    B, K, D = 2, 5, 8
+    crit = _cov_only()
+    img_mu = torch.randn(B, D)
+    img_lv = -2 + 0.1 * torch.randn(B, D)
+    img_U = 0.1 * torch.randn(B, D, 2)
+    _, d_in = crit(img_mu, img_lv, img_U, img_mu, torch.zeros(B, D),
+                   img_mu.unsqueeze(1).repeat(1, K, 1), torch.zeros(B, K, D))
+    assert d_in["cov"] == 0.0 and d_in["cov_viol"] == 0.0
+
+    far = img_mu.unsqueeze(1).repeat(1, K, 1) + 5.0
+    _, d_out = crit(img_mu, img_lv, img_U, img_mu, torch.zeros(B, D),
+                    far, torch.zeros(B, K, D))
+    assert d_out["cov"] > 0.0 and d_out["cov_viol"] == 1.0
+    # image-level violation: EVERY image has all K captions outside
+    assert d_out["cov_viol_img"] == 1.0
+
+    # lambda_cov = 0 disables the TERM (weighted contribution 0) but still
+    # REPORTS the diagnostic value -- the no_cov ablation must be able to
+    # measure the coverage it dropped.
+    crit_off = _cov_only(lambda_cov=0.0)
+    _, d_off = crit_off(img_mu, img_lv, img_U, img_mu, torch.zeros(B, D),
+                        far, torch.zeros(B, K, D))
+    assert d_off["cov"] > 0.0 and d_off["cov_viol"] == 1.0
+    assert d_off["weighted_cov"] == 0.0
+
+
+def test_cov_gradient_scope():
+    """The caption means are stop-gradient targets (the L_cover_pos lesson);
+    the image mean / diagonal / low-rank factor DO receive gradient when the
+    hinge is live, and none when lambda_cov = 0."""
+    torch.manual_seed(15)
+    B, K, D = 2, 4, 8
+    far_caps = torch.randn(B, K, D) * 3.0
+    im = torch.randn(B, D).requires_grad_(True)
+    ilv = (-2 + torch.randn(B, D)).requires_grad_(True)
+    iU = (0.1 * torch.randn(B, D, 2)).requires_grad_(True)
+    tms = far_caps.clone().requires_grad_(True)
+    loss, d = _cov_only()(im, ilv, iU, im.detach(), torch.zeros(B, D),
+                          tms, torch.zeros(B, K, D))
+    assert d["cov_viol"] > 0.0
+    loss.backward()
+    for name, t in (("img_mu", im), ("img_logvar", ilv), ("img_U", iU)):
+        assert t.grad is not None and t.grad.norm() > 0, \
+            f"{name} must receive L_cov gradient"
+    assert tms.grad is None or tms.grad.norm() == 0, \
+        "caption means must be detached targets of L_cov"
+
+    im2 = torch.randn(B, D).requires_grad_(True)
+    loss0, d0 = _cov_only(lambda_cov=0.0)(
+        im2, ilv.detach(), iU.detach(), im2.detach(), torch.zeros(B, D),
+        far_caps, torch.zeros(B, K, D))
+    loss0.backward()
+    assert d0["cov"] > 0.0            # diagnostic still reported
+    assert d0["weighted_cov"] == 0.0  # ...but the term contributes nothing
+    assert im2.grad is None or im2.grad.norm() == 0
+
+
+def test_disabled_terms_report_value_without_gradient():
+    """All lambdas zero: every atomic VALUE is still reported (ablation
+    diagnostics), every weighted contribution is exactly 0, and backward
+    sends no gradient to any image-side parameter."""
+    torch.manual_seed(17)
+    B, K, D, r = 2, 4, 8, 2
+    crit = MCDispAlignLoss(lambda_match=0.0, lambda_cov=0.0, lambda_mu=0.0,
+                           lambda_var=0.0, lambda_reg=0.0, lambda_dir=0.0,
+                           match_score="cosine")
+    im = torch.randn(B, D).requires_grad_(True)
+    ilv = (-1 + torch.randn(B, D)).requires_grad_(True)
+    iU = (0.1 * torch.randn(B, D, r)).requires_grad_(True)
+    caps = im.detach().unsqueeze(1) + 2.0 * torch.randn(B, K, D)
+    loss, d = crit(im, ilv, iU, im.detach(), torch.zeros(B, D),
+                   caps, torch.zeros(B, K, D))
+    assert loss.item() == 0.0
+    for w in ("weighted_match", "weighted_cov", "weighted_mu",
+              "weighted_var", "weighted_reg", "weighted_dir"):
+        assert d[w] == 0.0, w
+    # the dropped terms' diagnostics are still measurable (non-degenerate
+    # inputs: captions far from the mean, spread with rank >= r)
+    assert d["cov"] > 0.0 and d["cov_viol"] > 0.0
+    assert d["dir"] > 0.0 and d["dir_valid"] > 0
+    loss.backward()
+    for name, t in (("img_mu", im), ("img_logvar", ilv), ("img_U", iU)):
+        assert t.grad is None or t.grad.norm() == 0, \
+            f"{name} must receive no gradient when all lambdas are 0"
+
+
+def test_cov_alpha_loosens_hinge():
+    """A larger confidence level alpha raises q_alpha, so the hinge can only
+    shrink: cov(alpha) is non-increasing in alpha."""
+    torch.manual_seed(16)
+    B, K, D = 2, 4, 8
+    img_mu = torch.randn(B, D)
+    img_lv = -1 + 0.1 * torch.randn(B, D)
+    caps = img_mu.unsqueeze(1) + 1.5 * torch.randn(B, K, D)
+    vals = [_cov_only(cov_alpha=a)(
+        img_mu, img_lv, None, img_mu, torch.zeros(B, D), caps,
+        torch.zeros(B, K, D))[1]["cov"] for a in (0.5, 0.9, 0.99)]
+    assert vals[0] >= vals[1] >= vals[2], vals
 
 
 def main():

@@ -24,8 +24,10 @@ from utils.mcdisp_align_trainer import train_epoch, warmup_ramp
 # the first batch, traincoco.log 2026-08-26). Four-group keys only -- the
 # legacy aliases (ctr*, cal, img_var_*, u_*) were removed from the loss in A04.
 TRAINER_TOTALS_KEYS = (
-    "loss", "match", "match_i2t", "match_t2i", "mu", "var", "reg", "dir", "disp",
-    "weighted_match", "weighted_mu", "weighted_var", "weighted_reg", "weighted_dir",
+    "loss", "match", "match_i2t", "match_t2i", "cov", "cov_viol", "cov_viol_img",
+    "mu", "var", "reg", "dir", "disp",
+    "weighted_match", "weighted_cov", "weighted_mu", "weighted_var",
+    "weighted_reg", "weighted_dir",
     "img_diag_var_mean", "img_diag_var_median", "img_diag_var_min", "img_diag_var_max",
     "img_marginal_var_mean", "img_marginal_var_median", "img_marginal_var_min",
     "img_marginal_var_max",
