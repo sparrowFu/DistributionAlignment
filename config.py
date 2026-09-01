@@ -167,21 +167,17 @@ MCDISP_ALIGN_EVAL_RESULTS_PATH = OUTPUT_DIR / "mcdisp_align_eval_results.json"
 # after a short warmup ramp, and the budget must let the from-scratch heads
 # converge on frozen CLIP features.
 MCDISP_ALIGN_EPOCHS = 15
-# 64 (retrieval-max configuration): double the InfoNCE negatives of the 32
-# regime (B*K = 320 captions in the softmax), which strengthens the
-# discriminative training of the retrieval means. Chosen to maximize test-pool
-# retrieval (the goal), not batch-parity with the baselines.
-MCDISP_ALIGN_BATCH_SIZE = 64
+# 32: UNIFIED training regime -- MCDisp_Align / CLIP baseline / ProLIP all
+# train at batch 32 for a fair comparison (same negatives pool per softmax:
+# B*K = 160 captions).
+MCDISP_ALIGN_BATCH_SIZE = 32
 MCDISP_ALIGN_CLIP_LR = 1e-6  # Learning rate for CLIP (fine-tuning mode)
 MCDISP_ALIGN_MLP_LR = 5e-5   # Learning rate for MLP distribution heads (trained from scratch; balanced for convergence vs overfitting)
 MCDISP_ALIGN_WEIGHT_DECAY = 1e-4
-# Fine-tune CLIP alongside the heads (retrieval-max configuration): the CLIP
-# baseline is itself fully fine-tuned at 1e-6 on the target dataset, so a
-# frozen-feature head (a near-linear probe capped at zero-shot quality) would
-# concede in-domain adaptation to it. Same clip_lr as the baseline for a
-# like-for-like adaptation rate; best-checkpoint selection is by val recall,
-# which guards against late-epoch drift.
-MCDISP_ALIGN_FREEZE_CLIP = False
+# Frozen-backbone regime (frozen-first): MCDisp_Align trains ONLY the
+# distribution heads on frozen CLIP features. Backbone fine-tuning
+# (freeze_clip=False at clip_lr) is the fallback if retrieval falls short.
+MCDISP_ALIGN_FREEZE_CLIP = True
 
 # Distribution configuration
 MCDISP_ALIGN_DROPOUT_RATE = 0.1         # Dropout rate for MLP heads
