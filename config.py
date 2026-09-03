@@ -174,9 +174,11 @@ MCDISP_ALIGN_BATCH_SIZE = 32
 MCDISP_ALIGN_CLIP_LR = 1e-6  # Learning rate for CLIP (fine-tuning mode)
 MCDISP_ALIGN_MLP_LR = 5e-5   # Learning rate for MLP distribution heads (trained from scratch; balanced for convergence vs overfitting)
 MCDISP_ALIGN_WEIGHT_DECAY = 1e-4
-# STAGE 1: frozen backbone, as in the problematic run (selection criterion is
-# what changes, via --select-by overlap at the CLI). Stage 3 unfreezes.
-MCDISP_ALIGN_FREEZE_CLIP = True
+# STAGE 3 (user's staged plan): unfreeze the CLIP backbone -- the zero-shot
+# control proved the frozen-head ceiling sits BELOW untrained CLIP features
+# (0.226 vs 0.460 R@1), so the backbone must participate in training.
+# clip_lr below = 1e-6, the same adaptation rate as the CLIP baseline.
+MCDISP_ALIGN_FREEZE_CLIP = False
 
 # Distribution configuration
 MCDISP_ALIGN_DROPOUT_RATE = 0.1         # Dropout rate for MLP heads
