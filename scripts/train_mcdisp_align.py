@@ -130,10 +130,16 @@ def parse_args():
                         help="Opt IN to early stopping. Default is a fixed "
                              "budget: all epochs run, no early stopping.")
     parser.add_argument("--select-by", type=str, default="recall",
-                        choices=["recall", "loss"],
+                        choices=["recall", "mr", "overlap", "ellip", "loss"],
                         help="Best-checkpoint selection metric: 'recall' "
-                             "(multi-caption mc_recall@1, higher better) or 'loss' "
-                             "(val loss, lower better). Default: recall")
+                             "(multi-caption cosine mc_recall@1), 'mr' (mean over "
+                             "K of cosine), 'overlap' (Gaussian-overlap scored "
+                             "mc_overlap_recall@1 -- the distribution-aware "
+                             "criterion where the learned variances enter the "
+                             "score), 'ellip' (ellipsoid-membership scored "
+                             "mc_ellip_recall@1), or 'loss' (val loss, lower "
+                             "better). All recall criteria: higher better. "
+                             "Default: recall")
 
     # Output arguments
     parser.add_argument("--checkpoint-dir", type=str, default=None,

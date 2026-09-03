@@ -19,7 +19,7 @@ from utils.dataset_factory import build_train_dataset
 from utils.eval_common import build_eval_dataloader
 from utils.lr_scheduler import apply_lr_for_epoch
 from utils.logger import get_logger
-from utils.retrieval import compute_multicaption_recall
+from utils.retrieval import compute_multicaption_recall, compute_multicaption_recall_dist
 
 logger = get_logger("mcdisp_align_trainer")
 
@@ -337,7 +337,7 @@ def evaluate(
     dir_valid_sum = 0
     dir_total_sum = 0
     dir_weighted_sum = 0.0
-    feats = {k: [] for k in ("img_mu", "img_logvar", "text_mus", "text_logvars")} \
+    feats = {k: [] for k in ("img_mu", "img_logvar", "text_mus", "text_logvars", "img_U")} \
         if compute_recall else None
 
     pbar = tqdm(dataloader, desc="Evaluating")
@@ -379,6 +379,8 @@ def evaluate(
             feats["img_logvar"].append(outputs['img_logvar'].cpu())
             feats["text_mus"].append(outputs['text_mus'].cpu())
             feats["text_logvars"].append(outputs['text_logvars'].cpu())
+            if outputs['img_U'] is not None:
+                feats["img_U"].append(outputs['img_U'].cpu())
 
         pbar.set_postfix({'loss': f"{loss_dict['total']:.4f}"})
 
@@ -396,10 +398,26 @@ def evaluate(
         img_lv = torch.cat(feats["img_logvar"], dim=0).to(device)
         text_mus = torch.cat(feats["text_mus"], dim=0).to(device)
         text_lvs = torch.cat(feats["text_logvars"], dim=0).to(device)
+        img_U = torch.cat(feats["img_U"], dim=0).to(device) if feats["img_U"] else None
         mc = compute_multicaption_recall(
             img_mu, img_lv, text_mus, text_lvs, recall_k_values, tau=criterion.tau)
         metrics.update(mc)
         metrics["mr"] = sum(mc[f"mc_recall@{k}"] for k in recall_k_values) / len(recall_k_values)
+
+        # Distribution-aware families (overlap / ellipsoid) on a capped val
+        # subset: the pairwise score matrices are O(N * N*K * D) work, too
+        # heavy for the full 11.8k-image pool every epoch. The cap keeps the
+        # per-epoch cost seconds-scale while tracking the same protocol.
+        max_n = int(getattr(config, "MCDISP_ALIGN_VAL_DIST_RECALL_MAX_N", 2048))
+        sub = slice(0, min(max_n, img_mu.shape[0]))
+        dmc = compute_multicaption_recall_dist(
+            img_mu[sub], img_lv[sub],
+            img_U[sub] if img_U is not None else None,
+            text_mus[sub], text_lvs[sub], recall_k_values)
+        metrics.update(dmc)
+        for fam in ("overlap", "ellip"):
+            metrics[f"mr_{fam}"] = sum(
+                dmc[f"mc_{fam}_recall@{k}"] for k in recall_k_values) / len(recall_k_values)
 
     return metrics
 
@@ -451,7 +469,7 @@ class MCDispAlignTrainConfig:
     lr_scheduler: str = field(default_factory=lambda: config.LR_SCHEDULER)
     warmup_epochs: int = field(default_factory=lambda: config.LR_WARMUP_EPOCHS)
     min_lr_ratio: float = field(default_factory=lambda: config.LR_MIN_LR_RATIO)
-    select_by: str = "recall"                     # "recall" (multi-caption mc_recall@1) or "loss"
+    select_by: str = "recall"                     # "recall"/"mr" (cosine), "overlap"/"ellip" (distribution-aware), "loss"
     early_stop_patience: int = 3
     no_early_stop: bool = False
     seed: int = field(default_factory=lambda: config.SEED)
@@ -629,7 +647,7 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             )
             val_metrics = evaluate(
                 model, val_loader, criterion, cfg.device,
-                compute_recall=(cfg.select_by in ("recall", "mr")),
+                compute_recall=(cfg.select_by in ("recall", "mr", "overlap", "ellip")),
                 recall_k_values=list(cfg.recall_k_values),
             )
 
@@ -645,7 +663,11 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
                 f"σ²marg: {val_metrics['img_marginal_var_mean']:.4f}, "
                 f"mc R@1/5/10: {val_metrics.get('mc_recall@1', 0):.3f}/"
                 f"{val_metrics.get('mc_recall@5', 0):.3f}/{val_metrics.get('mc_recall@10', 0):.3f}, "
-                f"mR: {val_metrics.get('mr', 0):.3f}"
+                f"mR: {val_metrics.get('mr', 0):.3f}, "
+                f"ov R@1: {val_metrics.get('mc_overlap_recall@1', 0):.3f} "
+                f"(mR {val_metrics.get('mr_overlap', 0):.3f}), "
+                f"el R@1: {val_metrics.get('mc_ellip_recall@1', 0):.3f} "
+                f"(mR {val_metrics.get('mr_ellip', 0):.3f})"
             )
 
             if train_metrics.get("floor_severe", 0) > 0:
@@ -694,6 +716,16 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             elif cfg.select_by == "mr" and "mr" in val_metrics:
                 # Ablation study: unified multi-caption development mR.
                 current_score = val_metrics["mr"]
+                improved = current_score > best_recall
+                if improved:
+                    best_recall = current_score
+            elif (cfg.select_by in ("overlap", "ellip")
+                  and f"mc_{cfg.select_by}_recall@1" in val_metrics):
+                # Distribution-aware criterion: the learned (co)variances enter
+                # the retrieval score (overlap = Gaussian-overlap psi, ellip =
+                # ellipsoid membership depth), computed on the capped val
+                # subset each epoch.
+                current_score = val_metrics[f"mc_{cfg.select_by}_recall@1"]
                 improved = current_score > best_recall
                 if improved:
                     best_recall = current_score

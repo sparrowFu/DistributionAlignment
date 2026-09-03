@@ -174,9 +174,8 @@ MCDISP_ALIGN_BATCH_SIZE = 32
 MCDISP_ALIGN_CLIP_LR = 1e-6  # Learning rate for CLIP (fine-tuning mode)
 MCDISP_ALIGN_MLP_LR = 5e-5   # Learning rate for MLP distribution heads (trained from scratch; balanced for convergence vs overfitting)
 MCDISP_ALIGN_WEIGHT_DECAY = 1e-4
-# Frozen-backbone regime (frozen-first): MCDisp_Align trains ONLY the
-# distribution heads on frozen CLIP features. Backbone fine-tuning
-# (freeze_clip=False at clip_lr) is the fallback if retrieval falls short.
+# STAGE 1: frozen backbone, as in the problematic run (selection criterion is
+# what changes, via --select-by overlap at the CLI). Stage 3 unfreezes.
 MCDISP_ALIGN_FREEZE_CLIP = True
 
 # Distribution configuration
@@ -221,11 +220,20 @@ MCDISP_ALIGN_OBJECTIVE_VERSION = "four-group-v3"   # A13: checkpoint 兼容标�
 MCDISP_ALIGN_COV_RANK = 4                 # low-rank covariance rank r for the IMAGE side (0 = diagonal only)
 MCDISP_ALIGN_MATCH_SCORE = "gaussian"     # "gaussian"(L_match overlap score) | "cosine"(消融对照, means only)
 MCDISP_ALIGN_TAU = 0.07                   # FIXED temperature in the COSINE match score / retrieval scoring (not learnable)
-MCDISP_ALIGN_TAU_MATCH = 1.0              # 重叠分数的固定温度（分数逐维归一, O(1) 温度即可）
+MCDISP_ALIGN_TAU_MATCH = 0.1              # 重叠分数温度。0.1: 逐维归一分数的判别 gap ~O(1),
+                                          # 除以 0.1 后 logit gap ~O(10) = CLIP 级 softmax 锐度。
+                                          # (1.0 时 gap 仅 e^1.7, 均值尺度无锚 -> s_t/方差膨胀
+                                          #  的退化解, R@1 0.005, 2026-09-02 run_20260901)
 MCDISP_ALIGN_LAMBDA_MATCH = 1.0           # weight for L_match (0 in the no_match-style ablations)
 MCDISP_ALIGN_LAMBDA_COV = 0.01            # weight for the containment hinge L_cov (match group; 0 in the no_cov ablation)
 MCDISP_ALIGN_COV_ALPHA = 0.95             # confidence level alpha of the L_cov ellipsoid (q_alpha = chi2.ppf(alpha, D))
-MCDISP_ALIGN_LAMBDA_MU = 0.5              # weight for the raw-coordinate center alignment L_mu (0 in the no_mu ablation)
+MCDISP_ALIGN_LAMBDA_MU = 5.0              # STAGE 2 (user's staged plan): 0.5 -> 5.0. At 0.5
+                                          # the L_match spreading pressure equilibrated the
+                                          # cross-modal offset at MSE ~5.2 (Stage 1: cosine
+                                          # R@1 0.143 / overlap 0.226 vs ProLIP 0.636 --
+                                          # stage1_mcdisp_coco.log). 10x stronger pull to
+                                          # hold the image mean inside the caption cloud
+                                          # while L_match builds the margin.
 MCDISP_ALIGN_LAMBDA_VAR = 1.0             # weight for the variance alignment L_var (core)
 MCDISP_ALIGN_LAMBDA_REG = 0.01            # weight for the weak caption prior R_prior (原 LAMBDA_CAL 迁移)
 MCDISP_ALIGN_LAMBDA_DIR = 0.5             # weight for the direction alignment L_dir
@@ -241,6 +249,13 @@ MCDISP_ALIGN_GRAD_CLIP_NORM = 1.0         # global grad-norm clip (clip_grad_nor
 MCDISP_ALIGN_USE_LOGDET = True            # deprecated: loglik-eval only
 MCDISP_ALIGN_PER_DIM_NORMALIZE = True     # deprecated: loglik-eval only
 
+MCDISP_ALIGN_VAL_DIST_RECALL_MAX_N = 2048 # per-epoch cap on the val subset used for the
+                                          # distribution-aware recall families (overlap /
+                                          # ellipsoid) in the trainer: their pairwise score
+                                          # matrices are O(N*N*K*D) work, too heavy for the
+                                          # full 11.8k-image pool every epoch. Final
+                                          # evaluation (evaluate_mcdisp_align.py) uses the
+                                          # full pool regardless.
 # =============================================================================
 # Baseline B3: ProLIP Configuration (real ProLIP ViT-H/14 via the `prolip` lib)
 # =============================================================================

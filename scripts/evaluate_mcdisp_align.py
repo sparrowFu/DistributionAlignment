@@ -26,6 +26,7 @@ from utils.eval_results import append_eval_results, groups_to_flat, print_recall
 from utils.logger import get_logger, log_exception
 from utils.retrieval import (
     compute_multicaption_recall,
+    compute_multicaption_recall_dist,
 )
 from utils.seed import set_seed
 
@@ -81,6 +82,7 @@ def extract_features(
     all_text_logvar = []
     all_text_mus = []        # per-caption means (B, K, D) -- I2T pair-count metric
     all_text_logvars = []    # per-caption log-variances (B, K, D)
+    all_img_U = []           # image low-rank covariance factors (B, D, r), if any
     sample_count = 0
 
     logger.info("Extracting features...")
@@ -114,6 +116,8 @@ def extract_features(
         all_text_logvar.append(outputs['text_logvar'].cpu())
         all_text_mus.append(outputs['text_mus'].cpu())
         all_text_logvars.append(outputs['text_logvars'].cpu())
+        if outputs['img_U'] is not None:
+            all_img_U.append(outputs['img_U'].cpu())
 
         sample_count += batch_size
         if num_samples and sample_count >= num_samples:
@@ -125,6 +129,7 @@ def extract_features(
     text_logvar = torch.cat(all_text_logvar, dim=0)
     text_mus = torch.cat(all_text_mus, dim=0)          # (N, K, D)
     text_logvars = torch.cat(all_text_logvars, dim=0)  # (N, K, D)
+    img_U = torch.cat(all_img_U, dim=0) if all_img_U else None  # (N, D, r) or None
 
     if num_samples:
         img_mu = img_mu[:num_samples]
@@ -133,10 +138,11 @@ def extract_features(
         text_logvar = text_logvar[:num_samples]
         text_mus = text_mus[:num_samples]
         text_logvars = text_logvars[:num_samples]
+        img_U = img_U[:num_samples] if img_U is not None else None
 
     logger.info(f"Features shape: Images {img_mu.shape}, Texts {text_mu.shape}")
 
-    return img_mu, text_mu, img_logvar, text_logvar, text_mus, text_logvars
+    return img_mu, text_mu, img_logvar, text_logvar, text_mus, text_logvars, img_U
 
 
 def main():
@@ -169,7 +175,7 @@ def main():
 
     # text_mus/text_logvars are the per-caption outputs used by the
     # multi-caption retrieval protocol.
-    img_mu, text_mu, img_logvar, text_logvar, text_mus, text_logvars = extract_features(
+    img_mu, text_mu, img_logvar, text_logvar, text_mus, text_logvars, img_U = extract_features(
         model, dataloader, args.device, args.num_samples
     )
 
@@ -177,15 +183,23 @@ def main():
     img_lv_d = img_logvar.to(args.device)
     text_mus_d = text_mus.to(args.device)
     text_logvars_d = text_logvars.to(args.device)
+    img_U_d = img_U.to(args.device) if img_U is not None else None
 
-    # Primary (and only) metric: standard multi-caption bidirectional Recall
-    # (N images vs N*K captions) under the plain-cosine MCDisp_Align score
-    # -- the canonical MS-COCO/Flickr one-image-many-
-    # captions protocol, comparable to published baselines. Train-time
-    # checkpoint selection uses the same protocol (trainer evaluate()).
+    # Primary metric: standard multi-caption bidirectional Recall (N images vs
+    # N*K captions) under the plain-cosine MCDisp_Align score -- the canonical
+    # MS-COCO/Flickr one-image-many-captions protocol, comparable to published
+    # baselines. Train-time checkpoint selection uses the same protocol.
     mc = compute_multicaption_recall(
         img_mu_d, img_lv_d, text_mus_d, text_logvars_d,
         args.recall_at_k, tau=args.tau,
+    )
+
+    # Distribution-aware families on the SAME full pool: the learned
+    # (co)variances enter the retrieval score directly. This is the
+    # "does the distribution earn its keep at inference?" readout.
+    dmc = compute_multicaption_recall_dist(
+        img_mu_d, img_lv_d, img_U_d, text_mus_d, text_logvars_d,
+        args.recall_at_k,
     )
 
     groups = [
@@ -197,6 +211,30 @@ def main():
                     "i2t": mc[f"mc_recall_i2t@{k}"],
                     "t2i": mc[f"mc_recall_t2i@{k}"],
                     "mean": mc[f"mc_recall@{k}"],
+                }
+                for k in args.recall_at_k
+            },
+        },
+        {
+            "family": "mc_overlap_recall",
+            "label": "Multi-caption Recall@K (Gaussian overlap score psi; means + (co)variances score)",
+            "per_k": {
+                k: {
+                    "i2t": dmc.get(f"mc_overlap_recall_i2t@{k}", 0.0),
+                    "t2i": dmc.get(f"mc_overlap_recall_t2i@{k}", 0.0),
+                    "mean": dmc.get(f"mc_overlap_recall@{k}", 0.0),
+                }
+                for k in args.recall_at_k
+            },
+        },
+        {
+            "family": "mc_ellip_recall",
+            "label": "Multi-caption Recall@K (ellipsoid membership depth; -Mahalanobis of caption mean in image ellipsoid)",
+            "per_k": {
+                k: {
+                    "i2t": dmc.get(f"mc_ellip_recall_i2t@{k}", 0.0),
+                    "t2i": dmc.get(f"mc_ellip_recall_t2i@{k}", 0.0),
+                    "mean": dmc.get(f"mc_ellip_recall@{k}", 0.0),
                 }
                 for k in args.recall_at_k
             },
