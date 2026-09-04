@@ -400,3 +400,158 @@ def compute_multicaption_recall_dist(
             out[f"mc_{fam}_recall_t2i@{k}"] = t2i[k]
             out[f"mc_{fam}_recall@{k}"] = (i2t[k] + t2i[k]) / 2
     return out
+
+
+@torch.no_grad()
+def compute_multicaption_allhit(
+    scorers: dict,
+    n_images: int,
+    k_per_image: int,
+    k_hit: Optional[int] = None,
+    chunk_rows: int = 512,
+) -> Dict[str, float]:
+    """All-hit@K I2T metric: for each image query, do the top-k_hit retrieved
+    captions consist EXACTLY of its own k_per_image captions?
+
+    Strict "set exact match" companion of the any-hit I2T recall
+    (:func:`compute_multicaption_recall`): an image counts as an all-hit iff
+    every one of its K own captions outranks every foreign caption, i.e.
+    min_k s(i, c_ik) > max_{j!=i, k} s(i, c_jk). Reported per score family:
+
+      {fam}_allhit@{k}    fraction of images whose top-k captions are ALL
+                          their own (the headline number; k == K is the
+                          "retrieve the image's whole caption set" case)
+      {fam}_anyhit@{k}    the standard any-of-K recall on the same matrices
+                          (reference: what the strictness costs)
+      {fam}_paircount@{k} mean number of own captions inside the top-k
+                          (range 0..min(k, K); the graded version)
+
+    Args:
+        scorers: {family_name: fn(row_slice) -> (n_rows, N*K) score matrix,
+            higher = better match}. The callable receives a ``slice`` over the
+            N image rows and must return the scores of those rows against the
+            FULL N*K caption gallery; it manages its own memory (chunk the
+            gallery internally when needed). This keeps the metric
+            family-agnostic: cosine / CSD / Gaussian overlap / ellipsoid all
+            plug in as closures over their extra parameters.
+        n_images: N.
+        k_per_image: K (captions per image in the gallery).
+        k_hit: top-k cutoff for the hit test. Defaults to K (the whole
+            caption set). Must satisfy 1 <= k_hit <= N*K. all-hit is 0 by
+            construction when k_hit > K (more slots than own captions);
+            anyhit/paircount remain meaningful.
+        chunk_rows: image-row chunk size to bound the score-matrix memory.
+
+    Returns:
+        Flat dict, ``{fam}_{allhit|anyhit|paircount}@{k_hit}`` per family.
+    """
+    K = k_per_image
+    k = K if k_hit is None else k_hit
+    if not (1 <= k <= n_images * K):
+        raise ValueError(f"k_hit={k_hit} out of range [1, N*K={n_images * K}]")
+
+    out: Dict[str, float] = {}
+    for fam, scorer in scorers.items():
+        all_hits = 0
+        any_hits = 0
+        pair_sum = 0
+        for s in range(0, n_images, chunk_rows):
+            e = min(s + chunk_rows, n_images)
+            S = scorer(slice(s, e))                              # (n, N*K)
+            top = torch.topk(S, min(k, S.size(1)), dim=1).indices   # (n, k)
+            r = torch.arange(s, e, device=S.device).unsqueeze(1)
+            in_range = (top >= r * K) & (top < r * K + K)         # (n, k)
+            all_hits += in_range.all(dim=1).sum().item()
+            any_hits += in_range.any(dim=1).sum().item()
+            pair_sum += in_range.sum().item()
+        out[f"{fam}_allhit@{k}"] = all_hits / n_images
+        out[f"{fam}_anyhit@{k}"] = any_hits / n_images
+        out[f"{fam}_paircount@{k}"] = pair_sum / n_images
+    return out
+
+
+@torch.no_grad()
+def compute_multicaption_coverrank(
+    scorers: dict,
+    n_images: int,
+    k_per_image: int,
+    k_max: int = 100,
+    chunk_rows: int = 512,
+) -> Dict[str, float]:
+    """Cover-rank multi-caption retrieval metric: on average, how many
+    captions must the model return before an image's ENTIRE own caption set
+    is covered?
+
+    For image i with K own captions, the cover rank is
+
+        R_i = min{ K' : top-K' retrieved captions include ALL K own captions }
+            = 1-based rank of its LAST-ranked own caption,
+
+    i.e. the smallest retrieval depth at which the whole caption set has been
+    returned. The headline number is the mean of R_i over images (lower is
+    better; R_i == K means the top-K IS the own set -- exactly the all-hit@K
+    event, so ``{fam}_covered@K`` here equals ``{fam}_allhit@K`` from
+    :func:`compute_multicaption_allhit`).
+
+    Reported per score family:
+
+      {fam}_coverrank_mean@{k_max}          mean R_i over images covered
+                                            within k_max (the headline)
+      {fam}_coverrank_median@{k_max}        median R_i over covered images
+                                            (robust companion)
+      {fam}_coverrank_censored_mean@{k_max} mean R_i counting images NOT
+                                            covered within k_max as k_max
+                                            (conservative; defined for every
+                                            image, so it is comparable across
+                                            models with different cover rates)
+      {fam}_covered@{k_max}                 fraction of images whose whole
+                                            caption set is retrieved within
+                                            top-k_max
+
+    Args:
+        scorers: same interface as :func:`compute_multicaption_allhit`
+            ({family: fn(row_slice) -> (n_rows, N*K) score matrix}).
+        n_images: N.
+        k_per_image: K (own captions per image).
+        k_max: retrieval-depth cap. Must satisfy K <= k_max <= N*K. Images
+            not covered within k_max are excluded from mean/median and
+            counted as k_max in the censored mean.
+        chunk_rows: image-row chunk size to bound the score-matrix memory.
+
+    Returns:
+        Flat dict as listed above (NaN mean/median when no image is covered).
+    """
+    K = k_per_image
+    if not (K <= k_max <= n_images * K):
+        raise ValueError(
+            f"k_max={k_max} out of range [K={K}, N*K={n_images * K}]")
+
+    out: Dict[str, float] = {}
+    for fam, scorer in scorers.items():
+        covered_ranks: List[torch.Tensor] = []
+        censored_ranks: List[torch.Tensor] = []
+        covered = 0
+        for s in range(0, n_images, chunk_rows):
+            e = min(s + chunk_rows, n_images)
+            S = scorer(slice(s, e))                              # (n, N*K)
+            m = min(k_max, S.size(1))
+            top = torch.topk(S, m, dim=1).indices                # (n, m)
+            r = torch.arange(s, e, device=S.device).unsqueeze(1)
+            in_range = (top >= r * K) & (top < r * K + K)        # (n, m)
+            # cover rank = 1-based position of the LAST own-caption hit
+            # (bool * position zeroes non-hits, so amax picks the last one)
+            pos = torch.arange(1, m + 1, device=S.device)
+            last = (in_range * pos).amax(dim=1)                  # (n,)
+            cov = in_range.sum(dim=1) == K
+            covered += cov.sum().item()
+            covered_ranks.append(last[cov])
+            censored_ranks.append(
+                torch.where(cov, last, torch.full_like(last, m)))
+
+        R = torch.cat(covered_ranks).double() if covered_ranks else torch.tensor([])
+        Rc = torch.cat(censored_ranks).double()
+        out[f"{fam}_coverrank_mean@{k_max}"] = R.mean().item() if R.numel() else float("nan")
+        out[f"{fam}_coverrank_median@{k_max}"] = R.median().item() if R.numel() else float("nan")
+        out[f"{fam}_coverrank_censored_mean@{k_max}"] = Rc.mean().item()
+        out[f"{fam}_covered@{k_max}"] = covered / n_images
+    return out

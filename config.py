@@ -61,6 +61,9 @@ EVAL_CLIP_BASELINE_LOG_PATH = LOG_DIR / "evaluate_clip_baseline.log"
 # Evaluation log for CLIP zero-shot
 EVAL_CLIP_ZERO_SHOT_LOG_PATH = LOG_DIR / "evaluate_clip_zero_shot.log"
 
+# Evaluation log for the all-hit@K multi-caption metric (scripts/eval_allhit.py)
+EVAL_ALLHIT_LOG_PATH = LOG_DIR / "eval_allhit.log"
+
 # =============================================================================
 # Checkpoint Paths
 # =============================================================================
@@ -75,6 +78,9 @@ CLIP_BASELINE_EVAL_RESULTS_PATH = OUTPUT_DIR / "clip_baseline_eval_results.json"
 
 # JSON file for CLIP zero-shot evaluation results
 CLIP_ZERO_SHOT_EVAL_RESULTS_PATH = OUTPUT_DIR / "clip_zero_shot_eval_results.json"
+
+# JSON file for the all-hit@K multi-caption metric (scripts/eval_allhit.py)
+ALLHIT_EVAL_RESULTS_PATH = OUTPUT_DIR / "allhit_eval_results.json"
 
 # =============================================================================
 # Random Seed
@@ -178,7 +184,7 @@ MCDISP_ALIGN_WEIGHT_DECAY = 1e-4
 # control proved the frozen-head ceiling sits BELOW untrained CLIP features
 # (0.226 vs 0.460 R@1), so the backbone must participate in training.
 # clip_lr below = 1e-6, the same adaptation rate as the CLIP baseline.
-MCDISP_ALIGN_FREEZE_CLIP = False
+MCDISP_ALIGN_FREEZE_CLIP = True
 
 # Distribution configuration
 MCDISP_ALIGN_DROPOUT_RATE = 0.1         # Dropout rate for MLP heads

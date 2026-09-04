@@ -401,6 +401,39 @@ class MCDispAlignModel(nn.Module):
             max_length=77  # CLIP's max sequence length
         )
 
+    def encode_image(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        """
+        Extract deterministic image features (distribution mean).
+
+        Args:
+            pixel_values: Image tensor (B, 3, 224, 224)
+
+        Returns:
+            Image mu features (B, hidden_dim)
+        """
+        clip_feat = self.clip_model.get_image_features(pixel_values)
+        clip_feat = clip_feat.pooler_output
+        return self.img_mu_head(clip_feat)
+
+    def encode_text(
+        self, input_ids: torch.Tensor, attention_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Extract deterministic text features (distribution mean).
+
+        Args:
+            input_ids: Token IDs (B, seq_len)
+            attention_mask: Attention mask (B, seq_len)
+
+        Returns:
+            Text mu features (B, hidden_dim)
+        """
+        clip_feat = self.clip_model.get_text_features(
+            input_ids=input_ids, attention_mask=attention_mask,
+        )
+        clip_feat = clip_feat.pooler_output
+        return self.text_mu_head(clip_feat)
+
     def trainable_parameters(self) -> List[nn.Parameter]:
         """
         Get list of trainable parameters.
