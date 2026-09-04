@@ -90,6 +90,16 @@ def parse_args():
                         action="store_false",
                         help="L_set uses plain cosine (ablation)")
 
+    parser.add_argument("--loss", type=str, default="standard",
+                        choices=["standard", "kl"],
+                        help="Training loss: 'standard' = MCDispAlignLoss "
+                             "(separate L_mu/L_var terms, the original "
+                             "objective, default); 'kl' = MCDispAlignKLLoss "
+                             "(L_mu+L_var folded into one KL(p_v||p_t) term; "
+                             "--lambda-kl then replaces --lambda-mu/--lambda-var)")
+    parser.add_argument("--lambda-kl", type=float, default=1.0,
+                        help="Weight of the KL alignment term (only used with --loss kl)")
+
     parser.add_argument("--cov-rank", type=int, default=config.MCDISP_ALIGN_COV_RANK,
                         help="Low-rank covariance rank r for the image side (0 = diagonal only)")
     parser.add_argument("--freeze-clip", action="store_true", default=config.MCDISP_ALIGN_FREEZE_CLIP,
@@ -158,6 +168,8 @@ def main():
         lambda_ctr=args.lambda_ctr,
         lambda_mu=args.lambda_mu,
         lambda_var=args.lambda_var,
+        loss_name=args.loss,
+        lambda_kl=args.lambda_kl,
         lambda_cover_pos=args.lambda_cover_pos,
         lambda_cover_neg=args.lambda_cover_neg,
         lambda_cov=args.lambda_cov,

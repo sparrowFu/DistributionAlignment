@@ -175,26 +175,32 @@ def head_grad_norms(model) -> Dict[str, float]:
 def train_epoch(
     model: MCDispAlignModel,
     dataloader: DataLoader,
-    criterion: MCDispAlignLoss,
+    criterion,  # MCDispAlignLoss | MCDispAlignKLLoss (cfg.loss_name)
     optimizer: optim.Optimizer,
     device: torch.device,
     epoch: int,
     desc_prefix: str = "",
     total_epochs: int = 1,
     base_lambda_var: Optional[float] = None,
+    base_lambda_kl: Optional[float] = None,
 ) -> Dict[str, float]:
     """Train for one epoch.
 
     L_var and uncertainty_grad_alpha are ramped PER OPTIMIZER STEP (var_ramp /
     alpha_schedule) to avoid the hard Main-boundary step that collapsed sigma^2.
-    Also monitors a variance floor-collapse ratio.
+    The KL variant (loss_name="kl") has lambda_kl in place of the
+    (lambda_mu, lambda_var) pair; its KL term rides the SAME var_ramp so the
+    anti-collapse schedule (off while the caption heads are immature) is
+    preserved. Also monitors a variance floor-collapse ratio.
     """
     model.train()
     if not model.freeze_clip:
         model.clip_model.train()
 
     if base_lambda_var is None:
-        base_lambda_var = criterion.lambda_var
+        base_lambda_var = getattr(criterion, "lambda_var", 0.0)
+    if base_lambda_kl is None:
+        base_lambda_kl = getattr(criterion, "lambda_kl", 0.0)
     steps_per_epoch = len(dataloader)
     var_near = config.MCDISP_ALIGN_VAR_FLOOR * config.MCDISP_ALIGN_VAR_FLOOR_NEAR_MULT
     floor_thresh = config.MCDISP_ALIGN_VAR_FLOOR * 2.0
@@ -245,9 +251,14 @@ def train_epoch(
         input_ids = text_inputs["input_ids"].view(batch_size, num_captions, -1).to(device)
         attention_mask = text_inputs["attention_mask"].view(batch_size, num_captions, -1).to(device)
 
-        # Per-step L_var ramp + uncertainty_grad_alpha (anti-collapse scheduling)
-        criterion.lambda_var = base_lambda_var * var_ramp(
-            epoch, batch_idx, steps_per_epoch, total_epochs)
+        # Per-step L_var ramp + uncertainty_grad_alpha (anti-collapse scheduling).
+        # The KL variant has no lambda_var/lambda_mu attributes; its lambda_kl
+        # rides the same ramp (0 in Warmup, 0.05->1 in Var-Bootstrap, 1 after).
+        ramp = var_ramp(epoch, batch_idx, steps_per_epoch, total_epochs)
+        if hasattr(criterion, "lambda_var"):
+            criterion.lambda_var = base_lambda_var * ramp
+        if hasattr(criterion, "lambda_kl"):
+            criterion.lambda_kl = base_lambda_kl * ramp
         criterion.uncertainty_grad_alpha = alpha_schedule(
             epoch, batch_idx, steps_per_epoch, total_epochs)
 
@@ -325,7 +336,7 @@ def train_epoch(
 def evaluate(
     model: MCDispAlignModel,
     dataloader: DataLoader,
-    criterion: MCDispAlignLoss,
+    criterion,  # MCDispAlignLoss | MCDispAlignKLLoss (cfg.loss_name)
     device: torch.device,
     compute_recall: bool = False,
     recall_k_values=None,
@@ -476,6 +487,17 @@ class MCDispAlignTrainConfig:
     target_var: float = field(default_factory=lambda: config.MCDISP_ALIGN_TARGET_VAR)
     use_uncertainty_sim: bool = field(default_factory=lambda: config.MCDISP_ALIGN_USE_UNCERTAINTY_SIM)
 
+    # --- Loss selection ---
+    # "standard" -> MCDispAlignLoss (exact original construction, default);
+    # "kl"       -> losses.mcdisp_align_losses_kl.MCDispAlignKLLoss, where the
+    #               (lambda_mu, lambda_var) pair is replaced by a single
+    #               lambda_kl (the KL folds mean+variance alignment into one
+    #               term). Both classes share the forward signature and the
+    #               loss_dict key contract, so training/eval/selection code
+    #               downstream is unchanged.
+    loss_name: str = "standard"                   # "standard" | "kl"
+    lambda_kl: float = 1.0                        # KL term weight ("kl" only)
+
     # --- Schedule / selection ---
     no_staged: bool = False
     lr_scheduler: str = field(default_factory=lambda: config.LR_SCHEDULER)
@@ -490,7 +512,7 @@ class MCDispAlignTrainConfig:
     device: str = "cuda"
     tag: str = ""                                  # log/tqdm prefix (e.g. ablation name)
     checkpoint_dir: Optional[Path] = None          # standard naming root
-    model_name: str = "mcdisp_align"                 # -> {model_name}_{dataset}_best|last.pt
+    model_name: str = "mcdisp_align"               # -> {model_name}[_kl]_{dataset}_best|last.pt
     best_ckpt_path: Optional[Path] = None          # explicit override (ablation)
     last_ckpt_path: Optional[Path] = None
     resume_path: Optional[Path] = None
@@ -501,18 +523,28 @@ class MCDispAlignTrainConfig:
     recall_k_values: tuple = field(default_factory=lambda: tuple(config.RECALL_AT_K))
 
     @property
+    def ckpt_model_name(self) -> str:
+        """Model name used in the DEFAULT checkpoint filenames. The KL loss
+        gets its own tag so the two objectives never overwrite each other's
+        weights: "standard" -> mcdisp_align_{dataset}_best|last.pt (unchanged
+        legacy name), "kl" -> mcdisp_align_kl_{dataset}_best|last.pt. Explicit
+        best_ckpt_path / last_ckpt_path overrides bypass this entirely."""
+        suffix = "_kl" if self.loss_name == "kl" else ""
+        return f"{self.model_name}{suffix}"
+
+    @property
     def best_path(self) -> Path:
         if self.best_ckpt_path is not None:
             return self.best_ckpt_path
         root = self.checkpoint_dir or config.CHECKPOINT_DIR
-        return Path(root) / f"{self.model_name}_{self.dataset}_best.pt"
+        return Path(root) / f"{self.ckpt_model_name}_{self.dataset}_best.pt"
 
     @property
     def last_path(self) -> Path:
         if self.last_ckpt_path is not None:
             return self.last_ckpt_path
         root = self.checkpoint_dir or config.CHECKPOINT_DIR
-        return Path(root) / f"{self.model_name}_{self.dataset}_last.pt"
+        return Path(root) / f"{self.ckpt_model_name}_{self.dataset}_last.pt"
 
 
 def _build_loaders(cfg: MCDispAlignTrainConfig):
@@ -588,6 +620,10 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
     log.info(f"{prefix}Dataset: {cfg.dataset} | Epochs: {cfg.epochs} | Batch: {cfg.batch_size}")
     log.info(f"{prefix}CLIP LR: {cfg.clip_lr} | MLP LR: {cfg.mlp_lr} | Freeze CLIP: {cfg.freeze_clip}")
     log.info(f"{prefix}Cov rank r: {cfg.cov_rank} | Tau (fixed): {cfg.tau} | Staged: {not cfg.no_staged}")
+    log.info(f"{prefix}Loss function: {cfg.loss_name}"
+             + (f" (lambda_kl={cfg.lambda_kl}; replaces mu/var weights)"
+                if cfg.loss_name == "kl" else ""))
+    log.info(f"{prefix}Checkpoints: best={cfg.best_path} | last={cfg.last_path}")
     log.info(f"{prefix}Loss weights: ctr={cfg.lambda_ctr} mu={cfg.lambda_mu} var={cfg.lambda_var} "
              f"cover_pos={cfg.lambda_cover_pos} cover_neg={cfg.lambda_cover_neg} cov={cfg.lambda_cov} reg={cfg.lambda_reg}")
     log.info(f"{prefix}Select by: {cfg.select_by} | Device: {cfg.device}")
@@ -604,22 +640,45 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
     model = model.to(cfg.device)
     log.info(f"{prefix}Model created with {model.num_trainable_parameters():,} trainable parameters")
 
-    # Loss
-    criterion = MCDispAlignLoss(
-        lambda_ctr=cfg.lambda_ctr,
-        lambda_mu=cfg.lambda_mu,
-        lambda_var=cfg.lambda_var,
-        lambda_cover_pos=cfg.lambda_cover_pos,
-        lambda_cover_neg=cfg.lambda_cover_neg,
-        lambda_cov=cfg.lambda_cov,
-        lambda_reg=cfg.lambda_reg,
-        tau=cfg.tau,
-        m_pos=cfg.m_pos,
-        target_var=cfg.target_var,
-        m_neg=cfg.m_neg,
-        use_uncertainty_sim=cfg.use_uncertainty_sim,
-    )
-    log.info(f"{prefix}Using MCDisp_Align loss (uncertainty-discounted cosine L_set)")
+    # Loss, selected by cfg.loss_name. "standard" keeps the exact original
+    # MCDispAlignLoss construction; "kl" swaps in the KL variant (same forward
+    # signature and loss_dict key contract, so nothing downstream changes).
+    if cfg.loss_name == "kl":
+        from losses.mcdisp_align_losses_kl import MCDispAlignKLLoss
+        criterion = MCDispAlignKLLoss(
+            lambda_ctr=cfg.lambda_ctr,
+            lambda_kl=cfg.lambda_kl,
+            lambda_cover_pos=cfg.lambda_cover_pos,
+            lambda_cover_neg=cfg.lambda_cover_neg,
+            lambda_cov=cfg.lambda_cov,
+            lambda_reg=cfg.lambda_reg,
+            tau=cfg.tau,
+            m_pos=cfg.m_pos,
+            target_var=cfg.target_var,
+            m_neg=cfg.m_neg,
+            use_uncertainty_sim=cfg.use_uncertainty_sim,
+        )
+        log.info(f"{prefix}Using MCDisp_Align KL-variant loss "
+                 f"(lambda_kl={cfg.lambda_kl}; mu/var terms folded into the KL)")
+    elif cfg.loss_name == "standard":
+        criterion = MCDispAlignLoss(
+            lambda_ctr=cfg.lambda_ctr,
+            lambda_mu=cfg.lambda_mu,
+            lambda_var=cfg.lambda_var,
+            lambda_cover_pos=cfg.lambda_cover_pos,
+            lambda_cover_neg=cfg.lambda_cover_neg,
+            lambda_cov=cfg.lambda_cov,
+            lambda_reg=cfg.lambda_reg,
+            tau=cfg.tau,
+            m_pos=cfg.m_pos,
+            target_var=cfg.target_var,
+            m_neg=cfg.m_neg,
+            use_uncertainty_sim=cfg.use_uncertainty_sim,
+        )
+        log.info(f"{prefix}Using MCDisp_Align loss (uncertainty-discounted cosine L_set)")
+    else:
+        raise ValueError(
+            f"Unknown loss_name {cfg.loss_name!r} (expected 'standard' or 'kl')")
     criterion = criterion.to(cfg.device)
 
     # Optimizer
@@ -650,6 +709,14 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
         best_recall = checkpoint.get("best_recall", -float('inf'))
         patience_counter = checkpoint.get("patience_counter", 0)
         base_lrs = checkpoint.get("base_lrs", base_lrs)
+        # The checkpoint must come from the same objective; a missing key means
+        # a legacy (pre-loss-selection) checkpoint, assumed "standard".
+        ckpt_loss = checkpoint.get("loss_name", "standard")
+        if ckpt_loss != cfg.loss_name:
+            log.warning(
+                f"{prefix}Checkpoint loss_name {ckpt_loss!r} != cfg.loss_name "
+                f"{cfg.loss_name!r} (resuming initializes weights only, not an "
+                "equivalent-objective continuation).")
         log.info(f"{prefix}Resumed from epoch {start_epoch}, best_val_loss: {best_val_loss:.4f}, "
                  f"best_recall: {best_recall:.4f}, patience_counter: {patience_counter}")
 
@@ -669,7 +736,12 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             # Staged loss schedule
             mult = stage_multipliers(epoch, cfg.epochs, cfg.no_staged)
             criterion.lambda_ctr = cfg.lambda_ctr * mult["ctr"]
-            criterion.lambda_mu = cfg.lambda_mu * mult["mu"]
+            if hasattr(criterion, "lambda_mu"):
+                criterion.lambda_mu = cfg.lambda_mu * mult["mu"]
+            # KL variant: no lambda_mu/lambda_var here; its lambda_kl is fully
+            # controlled by the PER-STEP var_ramp inside train_epoch (off in
+            # Warmup, ramped in Var-Bootstrap, 1 afterwards) -- the same
+            # anti-collapse schedule L_var went through.
             # var & uncertainty_grad_alpha are ramped PER STEP in train_epoch (var_ramp / alpha_schedule)
             criterion.lambda_cover_pos = cfg.lambda_cover_pos * mult["cover_pos"]
             criterion.lambda_cover_neg = cfg.lambda_cover_neg * mult["cover_neg"]
@@ -684,6 +756,7 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             train_metrics = train_epoch(
                 model, train_loader, criterion, optimizer, cfg.device, epoch,
                 desc_prefix=cfg.tag, total_epochs=cfg.epochs, base_lambda_var=cfg.lambda_var,
+                base_lambda_kl=cfg.lambda_kl,
             )
             val_metrics = evaluate(
                 model, val_loader, criterion, cfg.device,
@@ -780,6 +853,7 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             "patience_counter": patience_counter,
             "base_lrs": base_lrs,
             "select_by": cfg.select_by,
+            "loss_name": cfg.loss_name,  # objective tag for the resume guard
         }
         torch.save(final_state, str(last_path))
         log.info(f"{prefix}Final model saved to {last_path}")
