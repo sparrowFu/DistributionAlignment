@@ -67,6 +67,9 @@ EVAL_CLIP_BASELINE_LOG_PATH = LOG_DIR / "evaluate_clip_baseline.log"
 # Evaluation log for CLIP zero-shot
 EVAL_CLIP_ZERO_SHOT_LOG_PATH = LOG_DIR / "evaluate_clip_zero_shot.log"
 
+# Evaluation log for the all-hit@K / cover-rank multi-caption metrics (scripts/eval_allhit.py)
+EVAL_ALLHIT_LOG_PATH = LOG_DIR / "eval_allhit.log"
+
 
 # =============================================================================
 # Checkpoint Paths
@@ -86,6 +89,9 @@ CLIP_BASELINE_EVAL_RESULTS_PATH = OUTPUT_DIR / "clip_baseline_eval_results.json"
 
 # JSON file for CLIP zero-shot evaluation results
 CLIP_ZERO_SHOT_EVAL_RESULTS_PATH = OUTPUT_DIR / "clip_zero_shot_eval_results.json"
+
+# JSON file for the all-hit@K / cover-rank multi-caption metrics (scripts/eval_allhit.py)
+ALLHIT_EVAL_RESULTS_PATH = OUTPUT_DIR / "allhit_eval_results.json"
 
 
 # =============================================================================
