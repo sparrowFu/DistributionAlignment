@@ -91,6 +91,7 @@ def phase_train(args) -> None:
         cfg = build_train_config(
             args.experiment, seed, manifests_dir=MANIFESTS,
             epochs=args.epochs, batch_size=args.batch_size, device=_device(args),
+            loss=args.loss,
         )
         logger.info(f"=== train {args.experiment} seed={seed} ===")
         run_mcdisp_align_training(cfg, logger)
@@ -281,6 +282,10 @@ def main():
                     help="cap test images in eval/interventions (smoke/debug)")
     ap.add_argument("--checkpoint", default=None, help="explicit checkpoint for eval")
     ap.add_argument("--limit", type=int, default=None, help="audit: cap manifest entries")
+    ap.add_argument("--loss", default=None, choices=["standard", "kl"],
+                    help="Training objective override (default: the experiment's own "
+                         "'loss' field). standard = L_mu/L_var separate terms; "
+                         "kl = one KL(p_v||p_t) alignment term (lambda_kl).")
     ap.add_argument("--device", default=None)
     args = ap.parse_args()
 

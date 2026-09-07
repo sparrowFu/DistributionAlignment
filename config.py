@@ -359,89 +359,55 @@ OOD_DATA_DIR = PROJECT_ROOT / "TrainDatasets" / "ood"
 ABLATION_RESULTS_DIR = OUTPUT_DIR / "ablation"
 ABLATION_LOG_PATH = LOG_DIR / "ablation.log"
 
-# Ablation configurations (each is a dict of overrides)
+# Ablation configurations per 消融实验方案.md: 4 groups on the KL-objective
+# model (loss_name="kl"). Only the corresponding loss weight is zeroed; every
+# other weight, the model structure (incl. the low-rank branch in every group),
+# the data split and the training settings stay identical across groups. The
+# weak variance prior (lambda_reg) is likewise kept in all groups.
+# Term mapping: KL alignment -> lambda_kl, caption coverage -> lambda_cover_pos,
+# direction alignment (low-rank U supervision) -> lambda_cov (cov_rank kept > 0).
+ABLATION_LOSS_NAME = "kl"
 ABLATION_CONFIGS = {
     "full_model": {
-        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
-        "lambda_cover": 0.5, "lambda_cov": 0.2, "lambda_reg": 0.01,
+        "loss_name": "kl",
+        "lambda_ctr": 1.0, "lambda_kl": 1.0,
+        "lambda_cover_pos": 0.5, "lambda_cover_neg": 0.0,
+        "lambda_cov": 0.2, "lambda_reg": 0.01,
         "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
-        "description": "Full MCDisp_Align (set-NCE + mu + var + cover + cov + reg)",
+        "description": "Full MCDisp-Align (KL + coverage + direction)",
     },
-    "no_var": {
-        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 0.0,
-        "lambda_cover": 0.5, "lambda_cov": 0.2, "lambda_reg": 0.01,
+    "no_kl": {
+        "loss_name": "kl",
+        "lambda_ctr": 1.0, "lambda_kl": 0.0,
+        "lambda_cover_pos": 0.5, "lambda_cover_neg": 0.0,
+        "lambda_cov": 0.2, "lambda_reg": 0.01,
         "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
-        "description": "w/o L_var (variance semantic consistency)",
+        "description": "w/o KL Alignment (no direct image<-caption-set center/range supervision)",
     },
     "no_cover": {
-        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
-        "lambda_cover": 0.0, "lambda_cov": 0.2, "lambda_reg": 0.01,
+        "loss_name": "kl",
+        "lambda_ctr": 1.0, "lambda_kl": 1.0,
+        "lambda_cover_pos": 0.0, "lambda_cover_neg": 0.0,
+        "lambda_cov": 0.2, "lambda_reg": 0.01,
         "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
-        "description": "w/o L_cover (multi-caption coverage)",
+        "description": "w/o Caption Coverage (per-caption coverage loss removed)",
     },
-    "no_cov": {
-        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
-        "lambda_cover": 0.5, "lambda_cov": 0.0, "lambda_reg": 0.01,
+    "no_direction": {
+        "loss_name": "kl",
+        "lambda_ctr": 1.0, "lambda_kl": 1.0,
+        "lambda_cover_pos": 0.5, "lambda_cover_neg": 0.0,
+        "lambda_cov": 0.0, "lambda_reg": 0.01,
         "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
-        "description": "w/o L_cov (covariance direction)",
-    },
-    "no_mu": {
-        "lambda_ctr": 1.0, "lambda_mu": 0.0, "lambda_var": 1.0,
-        "lambda_cover": 0.5, "lambda_cov": 0.2, "lambda_reg": 0.01,
-        "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
-        "use_uncertainty_sim": True,
-        "description": "w/o L_mu (mean-center alignment)",
-    },
-    "diagonal_only": {
-        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
-        "lambda_cover": 0.5, "lambda_cov": 0.0, "lambda_reg": 0.01,
-        "cov_rank": 0, "num_captions": 5,
-        "use_uncertainty_sim": True,
-        "description": "Diagonal only (cov_rank=0, no covariance)",
-    },
-    "no_uncertainty_sim": {
-        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
-        "lambda_cover": 0.5, "lambda_cov": 0.2, "lambda_reg": 0.01,
-        "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
-        "use_uncertainty_sim": False,
-        "description": "w/o uncertainty-discounted similarity (standard cosine)",
-    },
-    "k1": {
-        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
-        "lambda_cover": 0.5, "lambda_cov": 0.0, "lambda_reg": 0.01,
-        "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 1,
-        "use_uncertainty_sim": True,
-        "description": "K=1 caption (single-caption fairness)",
-    },
-    "k3": {
-        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
-        "lambda_cover": 0.5, "lambda_cov": 0.2, "lambda_reg": 0.01,
-        "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 3,
-        "use_uncertainty_sim": True,
-        "description": "K=3 captions",
-    },
-    "k5": {
-        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
-        "lambda_cover": 0.5, "lambda_cov": 0.2, "lambda_reg": 0.01,
-        "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
-        "use_uncertainty_sim": True,
-        "description": "K=5 captions (full)",
-    },
-    "no_neg": {
-        "lambda_ctr": 1.0, "lambda_mu": 0.5, "lambda_var": 1.0,
-        "lambda_cover": 0.5, "lambda_cover_neg": 0.0, "lambda_cov": 0.2, "lambda_reg": 0.01,
-        "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
-        "use_uncertainty_sim": True,
-        "description": "w/o L_cover negative repulsion (pos-only coverage)",
+        "description": "w/o Direction Alignment (L_cov=0; low-rank branch kept)",
     },
 }
 
-# Sensitivity analysis parameter grids
-ABLATION_LAMBDA_VAR_VALUES = [0.1, 0.5, 1.0, 2.0, 5.0]
+# Sensitivity analysis parameter grids (KL-objective terms)
+ABLATION_LAMBDA_KL_VALUES = [0.1, 0.5, 1.0, 2.0, 5.0]
 ABLATION_LAMBDA_COVER_VALUES = [0.1, 0.5, 1.0, 2.0]
 ABLATION_TAU_VALUES = [0.05, 0.07, 0.1, 0.2]
 

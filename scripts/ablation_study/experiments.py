@@ -35,13 +35,29 @@ K_EVAL = 5             # uniform dev protocol K for checkpoint selection
 
 
 def _base_loss_weights() -> Dict[str, float]:
-    """Full-model loss weights (plan §4.1 F): one source of truth."""
+    """Full-model loss weights, standard objective (plan §4.1 F): one source of truth."""
     return {
         "lambda_ctr": 1.0,
         "lambda_mu": 0.5,
         "lambda_var": 1.0,
         "lambda_cover_pos": 0.5,
         "lambda_cover_neg": 0.0,   # negative repulsion is NOT part of Full (§4.1)
+        "lambda_cov": LAMBDA_COV_FULL,
+        "lambda_reg": 0.01,
+    }
+
+
+def _base_loss_weights_kl() -> Dict[str, float]:
+    """Full-model loss weights, KL objective (消融实验方案.md).
+
+    lambda_kl replaces the (lambda_mu, lambda_var) pair: the KL(p_v||p_t) term
+    folds the semantic-center and semantic-range alignment into one term.
+    """
+    return {
+        "lambda_ctr": 1.0,
+        "lambda_kl": 1.0,
+        "lambda_cover_pos": 0.5,
+        "lambda_cover_neg": 0.0,
         "lambda_cov": LAMBDA_COV_FULL,
         "lambda_reg": 0.01,
     }
@@ -118,6 +134,36 @@ EXPERIMENTS: Dict[str, Dict] = {
         "weights": _base_loss_weights(), "cov_rank": 2,
         "K": 5, "sample": "first", "uncertainty_sim": True,
     },
+    # ---- 消融实验方案.md: KL-objective groups (loss="kl") ----
+    # Only the named weight is zeroed; the low-rank branch (cov_rank>0) and the
+    # weak variance prior stay in every group.
+    "full_kl": {
+        "desc": "Full MCDisp-Align, KL objective (set-NCE + KL + cover + direction)",
+        "loss": "kl",
+        "weights": _base_loss_weights_kl(), "cov_rank": config.MCDISP_ALIGN_COV_RANK,
+        "K": 5, "sample": "first", "uncertainty_sim": True,
+    },
+    "no_kl": {
+        "desc": "w/o KL Alignment (no direct image<-caption-set center/range supervision)",
+        "loss": "kl",
+        "weights": {**_base_loss_weights_kl(), "lambda_kl": 0.0},
+        "cov_rank": config.MCDISP_ALIGN_COV_RANK,
+        "K": 5, "sample": "first", "uncertainty_sim": True,
+    },
+    "no_cover_kl": {
+        "desc": "w/o Caption Coverage (per-caption coverage loss removed), KL objective",
+        "loss": "kl",
+        "weights": {**_base_loss_weights_kl(), "lambda_cover_pos": 0.0},
+        "cov_rank": config.MCDISP_ALIGN_COV_RANK,
+        "K": 5, "sample": "first", "uncertainty_sim": True,
+    },
+    "no_direction_kl": {
+        "desc": "w/o Direction Alignment (L_cov=0; low-rank branch kept), KL objective",
+        "loss": "kl",
+        "weights": {**_base_loss_weights_kl(), "lambda_cov": 0.0},
+        "cov_rank": config.MCDISP_ALIGN_COV_RANK,
+        "K": 5, "sample": "first", "uncertainty_sim": True,
+    },
 }
 
 
@@ -129,16 +175,26 @@ def build_train_config(
     batch_size: Optional[int] = None,
     device: str = "cuda",
     ckpt_dir: Optional[Path] = None,
+    loss: Optional[str] = None,
 ) -> MCDispAlignTrainConfig:
     """Map an experiment definition to a ``MCDispAlignTrainConfig``.
 
     All variants use the image-exclusive manifests, the same optimizer
     settings, no early stopping (fixed budget), and unified ``select_by="mr"``
     checkpoint selection on the dev manifest.
+
+    ``loss`` ("standard" | "kl") overrides the experiment's own objective; by
+    default each entry uses its ``loss`` field ("standard" for the legacy §4/§5
+    matrix, "kl" for the 消融实验方案.md groups). For the KL objective
+    ``weights["lambda_kl"]`` (default 1.0) replaces the (lambda_mu, lambda_var)
+    pair, so zeroing either of those has no effect under "kl".
     """
     if experiment not in EXPERIMENTS:
         raise KeyError(f"Unknown experiment {experiment!r}; known: {list(EXPERIMENTS)}")
     d = EXPERIMENTS[experiment]
+    loss_name = loss or d.get("loss", "standard")
+    if loss_name not in ("standard", "kl"):
+        raise ValueError(f"Unknown loss {loss_name!r} (expected 'standard' or 'kl')")
     manifests_dir = Path(manifests_dir) if manifests_dir else (
         config.OUTPUT_DIR / "ablation_study" / "manifests")
     out_root = Path(ckpt_dir) if ckpt_dir else (
@@ -156,6 +212,8 @@ def build_train_config(
         clip_lr=config.MCDISP_ALIGN_CLIP_LR,
         mlp_lr=config.MCDISP_ALIGN_MLP_LR,
         cov_rank=d["cov_rank"],
+        loss_name=loss_name,
+        lambda_kl=w.get("lambda_kl", 1.0),
         # --- manifest-backed data (plan §3.1/§3.2) ---
         train_manifest=manifests_dir / "manifest_coco_train.json",
         dev_manifest=manifests_dir / "manifest_coco_dev.json",
@@ -163,8 +221,8 @@ def build_train_config(
         manifest_sample_mode=d["sample"],
         dev_num_captions=K_EVAL,
         # --- loss weights (NOT renormalized; §8.7) ---
-        lambda_ctr=w["lambda_ctr"], lambda_mu=w["lambda_mu"],
-        lambda_var=w["lambda_var"],
+        lambda_ctr=w["lambda_ctr"], lambda_mu=w.get("lambda_mu", 0.5),
+        lambda_var=w.get("lambda_var", 1.0),
         lambda_cover_pos=w["lambda_cover_pos"], lambda_cover_neg=w["lambda_cover_neg"],
         lambda_cov=w["lambda_cov"], lambda_reg=w["lambda_reg"],
         tau=config.MCDISP_ALIGN_TAU,

@@ -1,27 +1,28 @@
 """
-Exp5: Ablation Study Script
+Exp5: Ablation Study Script (per 消融实验方案.md)
 
-Quantifies the contribution of each MCDisp_Align loss component by training mcdisp_align
-with different configurations and evaluating retrieval.
+Quantifies the contribution of the three key constraints of MCDisp-Align by
+training the KL-objective model with different configurations and evaluating
+bidirectional retrieval.
 
-Each ablation variant is trained by the SAME code as the real model — staged schedule,
-grad clipping, recall/loss best-checkpoint selection, early stopping — differing
-only in the loss weights / ``cov_rank`` / ``num_captions`` overrides, the
-``--dataset`` (coco or flickr), and the per-variant checkpoint path. So ablation
-results are directly comparable to a full training run.
+Each ablation variant is trained by the SAME code as the real model — staged
+schedule, grad clipping, recall/loss best-checkpoint selection, early stopping —
+differing only in the loss weights / ``cov_rank`` / ``num_captions`` overrides,
+the ``--dataset`` (coco or flickr), and the per-variant checkpoint path. So
+ablation results are directly comparable to a full training run.
 
-Ablation configurations:
-    - Full MCDisp_Align (set-NCE + mu + var + cover + cov + reg)
-    - w/o L_var (variance semantic consistency)
-    - w/o L_cover (multi-caption coverage)
-    - w/o L_cov (covariance direction)
-    - w/o L_mu (mean-center alignment)
-    - diagonal only (cov_rank=0)
-    - w/o uncertainty-discounted similarity (standard cosine)
-    - K = 1 / 3 / 5 captions
-    - lambda_var sensitivity: 0.1 / 0.5 / 1.0 / 2.0 / 5.0
-    - lambda_cover sensitivity: 0.1 / 0.5 / 1.0 / 2.0
-    - tau sensitivity: 0.05 / 0.07 / 0.1 / 0.2
+Ablation configurations (only the named weight is zeroed; the low-rank branch
+and the weak variance prior are kept in every group):
+    - Full MCDisp-Align (set-NCE + KL + cover + cov + reg)
+    - w/o KL Alignment (lambda_kl = 0)
+    - w/o Caption Coverage (lambda_cover_pos = 0)
+    - w/o Direction Alignment (lambda_cov = 0, low-rank branch kept)
+
+Sensitivity grids (``--config sensitivity``): lambda_kl / lambda_cover / tau.
+
+Reports per dataset: image-to-text and text-to-image Recall@1/5/10 under the
+MCDisp_Align score; the summary table shows I->T R@1, T->I R@1 and mR (mean of
+the six bidirectional recalls).
 """
 
 import argparse
@@ -62,6 +63,17 @@ def parse_args():
     parser.add_argument("--eval-samples", type=int, default=500,
                         help="Number of eval samples for the final retrieval report "
                              "(coco subset; flickr uses its full test split)")
+    parser.add_argument("--seed", type=int, default=config.SEED,
+                        help="Random seed (shared by every ablation group so all "
+                             "groups use the same data split and candidate pool)")
+    parser.add_argument("--loss", type=str, default=None, choices=["standard", "kl"],
+                        help="Training objective override for every ablation group "
+                             "(default: each ABLATION_CONFIGS entry's loss_name; the "
+                             "ablation plan entries use 'kl'). 'standard' = separate "
+                             "L_mu/L_var terms; 'kl' = single KL(p_v||p_t) term "
+                             "(lambda_kl). Note: the no_kl group is specific to the "
+                             "kl objective; under 'standard' it degrades to a second "
+                             "full-model run.")
     parser.add_argument("--device", type=str,
                         default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--output-dir", type=str, default=None)
@@ -81,9 +93,11 @@ def _config_from_ablation(config_name, ablation_config, args, best_path, last_pa
         freeze_clip=True,
         clip_lr=args.lr,
         mlp_lr=args.lr,
+        loss_name=args.loss or ablation_config.get("loss_name", config.ABLATION_LOSS_NAME),
         cov_rank=ablation_config.get("cov_rank", config.MCDISP_ALIGN_COV_RANK),
         num_captions_override=ablation_config.get("num_captions"),
         lambda_ctr=ablation_config.get("lambda_ctr", config.MCDISP_ALIGN_LAMBDA_CTR),
+        lambda_kl=ablation_config.get("lambda_kl", 1.0),
         lambda_mu=ablation_config.get("lambda_mu", config.MCDISP_ALIGN_LAMBDA_MU),
         lambda_var=ablation_config.get("lambda_var", config.MCDISP_ALIGN_LAMBDA_VAR),
         lambda_cover_pos=ablation_config.get("lambda_cover_pos", ablation_config.get("lambda_cover", config.MCDISP_ALIGN_LAMBDA_COVER_POS)),
@@ -92,6 +106,7 @@ def _config_from_ablation(config_name, ablation_config, args, best_path, last_pa
         lambda_reg=ablation_config.get("lambda_reg", config.MCDISP_ALIGN_LAMBDA_REG),
         tau=ablation_config.get("temperature", config.MCDISP_ALIGN_TAU),
         use_uncertainty_sim=ablation_config.get("use_uncertainty_sim", True),
+        seed=args.seed,
         device=args.device,
         best_ckpt_path=best_path,
         last_ckpt_path=last_path,
@@ -127,19 +142,19 @@ def train_ablation(config_name, ablation_config, args, output_dir):
 
 
 def run_sensitivity_analysis(args, output_dir):
-    """Run lambda_var, lambda_cover, and tau sensitivity analysis."""
+    """Run lambda_kl, lambda_cover, and tau sensitivity analysis."""
     sensitivity_results = {}
 
-    for lam in config.ABLATION_LAMBDA_VAR_VALUES:
-        name = f"lambda_var_{lam}"
+    for lam in config.ABLATION_LAMBDA_KL_VALUES:
+        name = f"lambda_kl_{lam}"
         cfg = {**config.ABLATION_CONFIGS["full_model"],
-               "lambda_var": lam, "description": f"lambda_var={lam}"}
+               "lambda_kl": lam, "description": f"lambda_kl={lam}"}
         sensitivity_results[name] = train_ablation(name, cfg, args, output_dir)
 
     for lam in config.ABLATION_LAMBDA_COVER_VALUES:
         name = f"lambda_cover_{lam}"
         cfg = {**config.ABLATION_CONFIGS["full_model"],
-               "lambda_cover": lam, "description": f"lambda_cover={lam}"}
+               "lambda_cover_pos": lam, "description": f"lambda_cover={lam}"}
         sensitivity_results[name] = train_ablation(name, cfg, args, output_dir)
 
     for tau in config.ABLATION_TAU_VALUES:
@@ -151,14 +166,29 @@ def run_sensitivity_analysis(args, output_dir):
     return sensitivity_results
 
 
-def _retr(metrics, k):
-    """Pull R@k from an ablation result's retrieval block (mcdisp_align_recall primary)."""
+def _retr(metrics, k, direction="mean"):
+    """Pull R@k from an ablation result's retrieval block.
+
+    direction: "i2t" / "t2i" pick the one-direction score, anything else the
+    bidirectional mean ("mcdisp_align_recall" primary).
+    """
     if not metrics:
         return 0.0
-    mcdisp = metrics.get("mcdisp_align_recall", {})
-    if f"R@{k}" in mcdisp:
-        return mcdisp[f"R@{k}"]
+    key = "mcdisp_align_recall" if direction == "mean" else f"mcdisp_align_recall_{direction}"
+    block = metrics.get(key, metrics.get("mcdisp_align_recall", {}))
+    if f"R@{k}" in block:
+        return block[f"R@{k}"]
     return metrics.get("cos_recall", {}).get(f"R@{k}", 0.0)
+
+
+def _mr(metrics):
+    """mR: mean of the six bidirectional recalls (I->T/T->I at R@1/5/10)."""
+    if not metrics:
+        return 0.0
+    vals = []
+    for key in ("mcdisp_align_recall_i2t", "mcdisp_align_recall_t2i"):
+        vals.extend(metrics.get(key, {}).get(f"R@{k}", 0.0) for k in (1, 5, 10))
+    return sum(vals) / len(vals) if vals else 0.0
 
 
 def main():
@@ -184,19 +214,19 @@ def main():
         json.dump(all_results, f, indent=2)
     logger.info(f"Results saved to {output_path}")
 
-    # Print summary table
-    print("\n" + "=" * 70)
-    print(f"Table 4: Ablation Study Results (dataset={args.dataset})")
-    print("=" * 70)
-    print(f"{'Configuration':<45} {'R@1':>6} {'R@5':>6} {'R@10':>6}")
-    print("-" * 70)
+    # Print summary table (main-table columns of the ablation plan)
+    print("\n" + "=" * 78)
+    print(f"Table: Ablation Study (dataset={args.dataset}, MCDisp_Align score)")
+    print("=" * 78)
+    print(f"{'Configuration':<42} {'I->T R@1':>9} {'T->I R@1':>9} {'mR':>8}")
+    print("-" * 78)
     for name, r in all_results.items():
         ret = r.get("retrieval")
-        r1 = _retr(ret, 1)
-        r5 = _retr(ret, 5)
-        r10 = _retr(ret, 10)
-        print(f"{r.get('description', name):<45} {r1:>6.4f} {r5:>6.4f} {r10:>6.4f}")
-    print("=" * 70)
+        print(f"{r.get('description', name):<42} "
+              f"{_retr(ret, 1, 'i2t'):>9.4f} "
+              f"{_retr(ret, 1, 't2i'):>9.4f} "
+              f"{_mr(ret):>8.4f}")
+    print("=" * 78)
 
 
 if __name__ == "__main__":

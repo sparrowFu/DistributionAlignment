@@ -889,6 +889,15 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             "num_samples": n_eval,
             "mcdisp_align_recall": {f"R@{k}": eval_metrics.get(f"mcdisp_align_recall@{k}", 0.0)
                             for k in cfg.recall_k_values},
+            "mcdisp_align_recall_i2t": {f"R@{k}": eval_metrics.get(f"mcdisp_align_recall_i2t@{k}", 0.0)
+                            for k in cfg.recall_k_values},
+            "mcdisp_align_recall_t2i": {f"R@{k}": eval_metrics.get(f"mcdisp_align_recall_t2i@{k}", 0.0)
+                            for k in cfg.recall_k_values},
+            # mR (ablation plan): mean of the six bidirectional recalls
+            "mr": sum(
+                eval_metrics.get(f"mcdisp_align_recall_{d}@{k}", 0.0)
+                for d in ("i2t", "t2i") for k in cfg.recall_k_values
+            ) / (2 * len(cfg.recall_k_values)),
             "cos_recall": {f"R@{k}": eval_metrics.get(f"cos_recall@{k}", 0.0)
                            for k in cfg.recall_k_values},
         }
