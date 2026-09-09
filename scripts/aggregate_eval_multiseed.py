@@ -1,16 +1,20 @@
 #!/usr/bin/env python
-"""Aggregate multi-seed retrieval-eval JSONs into a mean±std summary table.
+"""Aggregate multi-seed retrieval-eval JSONs into mean±std summary tables.
 
 Reads the outputs of scripts/run_eval_multiseed.sh (outputs/eval_multiseed/):
 
   recall_{model}_{dataset}_seed{S}.json   -- evaluate_*.py records, flat keys
   allhit_{model}_{dataset}_seed{S}.json   -- eval_allhit.py records
 
-Model-native metric family is preferred per model (mcdisp_align score for
-MCDisp-Align, csd for ProLIP, cosine for CLIP), falling back to whatever
-recall family the record contains. Reported per (model, dataset) across seeds:
+Two tables are produced:
 
-  I->T R@1/5/10, T->I R@1/5/10, AllHit@5, cover-rank mean (mean coverage depth)
+  Table 1 (unified multi-caption protocol): N images vs N*K captions,
+      any-hit I2T + per-caption T2I under the SAME cosine scorer for every
+      model (family ``mc_cos_recall``), plus AllHit@5 and cover-rank mean
+      ("mean coverage"; from eval_allhit, already the unified protocol).
+  Table 2 (legacy 1:1 protocol, for comparability with old runs): CLIP/ProLIP
+      first-caption metrics (``csd_recall``/``recall``), MCDisp-Align
+      set-level N-vs-N on the merged caption center (``mcdisp_align_recall``).
 
 Usage: python scripts/aggregate_eval_multiseed.py [outputs/eval_multiseed]
 """
@@ -32,12 +36,13 @@ DISPLAY = {
     "mcdisp": "MCDisp-Align (std)", "mcdisp_kl": "MCDisp-Align (KL)",
     "clip_zero_shot": "CLIP zero-shot", "prolip_zero_shot": "ProLIP zero-shot",
 }
-# score-family preference per model (recall side / allhit side)
-RECALL_PREF = {"mcdisp": ["mcdisp_align_recall"], "mcdisp_kl": ["mcdisp_align_recall"],
-               "prolip": ["csd_recall", "cos_recall", "recall"],
-               "default": ["recall", "cos_recall"]}
-ALLHIT_PREF = {"mcdisp": ["mcdisp"], "mcdisp_kl": ["mcdisp"],
-               "prolip": ["csd", "cos"], "default": ["cos"]}
+# per-model family for the LEGACY table (unified table is always mc_cos_recall)
+LEGACY_PREF = {
+    "clip": ["recall"], "clip_zero_shot": ["recall"],
+    "prolip": ["csd_recall", "cos_recall", "recall"],
+    "prolip_zero_shot": ["csd_recall", "cos_recall", "recall"],
+    "mcdisp": ["mcdisp_align_recall"], "mcdisp_kl": ["mcdisp_align_recall"],
+}
 KS = (1, 5, 10)
 
 
@@ -61,14 +66,11 @@ def parse_name(path: Path):
     return m.groups() if m else None
 
 
-def pick_family(metrics: dict, pref_key: str, side: str):
-    """Resolve the metric family actually present in a flat-metrics dict."""
-    prefs = (RECALL_PREF if side == "recall" else ALLHIT_PREF).get(pref_key) \
-        or (RECALL_PREF if side == "recall" else ALLHIT_PREF)["default"]
-    if side == "recall":
-        fams = {k.rsplit("_i2t@", 1)[0] for k in metrics if k.endswith("_i2t@1")}
-    else:
-        fams = {k.rsplit("_allhit@", 1)[0] for k in metrics if "_allhit@" in k}
+def recall_families(metrics: dict):
+    return {k.rsplit("_i2t@", 1)[0] for k in metrics if k.endswith("_i2t@1")}
+
+
+def pick(fams, prefs):
     for p in prefs:
         if p in fams:
             return p
@@ -76,32 +78,46 @@ def pick_family(metrics: dict, pref_key: str, side: str):
 
 
 def collect(out_dir: Path):
-    """{(model, dataset): {metric_name: [per-seed values]}}"""
-    cells = defaultdict(lambda: defaultdict(list))
+    """{(model, dataset): {store_key: {metric: [per-seed values]}}}
+
+    store_key: "unified" | "legacy" | "allhit"
+    """
+    cells = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     for path in sorted(out_dir.glob("*.json")):
         parsed = parse_name(path)
         if not parsed:
             continue
-        side, model, ds, seed = parsed
+        side, model, ds, _seed = parsed
         rec = last_record(path)
         if rec is None or "metrics" not in rec:
             continue
         metrics = rec["metrics"]
-        fam = pick_family(metrics, model, side)
-        if fam is None:
-            continue
+
         if side == "recall":
-            for k in KS:
-                for d in ("i2t", "t2i"):
-                    v = metrics.get(f"{fam}_{d}@{k}")
-                    if v is not None:
-                        cells[(model, ds)][f"{d}_R@{k}"].append(v)
-        else:
-            for k, key in ((5, f"{fam}_allhit@5"), (None, f"{fam}_coverrank_mean@100")):
-                v = metrics.get(key)
-                if v is not None:
-                    name = "AllHit@5" if k else "CoverRank"
-                    cells[(model, ds)][name].append(v)
+            fams = recall_families(metrics)
+            unified = pick(fams, ["mc_cos_recall"])
+            legacy = pick(fams, LEGACY_PREF.get(model, ["recall"]))
+            for store, fam in (("unified", unified), ("legacy", legacy)):
+                if fam is None:
+                    continue
+                for k in KS:
+                    for d in ("i2t", "t2i"):
+                        v = metrics.get(f"{fam}_{d}@{k}")
+                        if v is not None:
+                            cells[(model, ds)][store][f"{d}_R@{k}"].append(v)
+        else:  # allhit side: prefer the model-native score family
+            fams = {k.rsplit("_allhit@", 1)[0] for k in metrics if "_allhit@" in k}
+            fam = pick(fams, {"mcdisp": ["mcdisp"], "mcdisp_kl": ["mcdisp"],
+                              "prolip": ["csd", "cos"],
+                              "prolip_zero_shot": ["csd", "cos"]}.get(model, ["cos"]))
+            if fam is None:
+                continue
+            v = metrics.get(f"{fam}_allhit@5")
+            if v is not None:
+                cells[(model, ds)]["allhit"]["AllHit@5"].append(v)
+            v = metrics.get(f"{fam}_coverrank_mean@100")
+            if v is not None:
+                cells[(model, ds)]["allhit"]["CoverRank"].append(v)
     return cells
 
 
@@ -113,6 +129,38 @@ def mean_std(vals):
     return m, math.sqrt(var)
 
 
+def render_table(cells, title, col_specs, note=""):
+    """col_specs: [(header, [(store, key), ...fallbacks], is_rank2), ...]"""
+    headers = [c[0] for c in col_specs]
+    lines = [f"## {title}", ""]
+    if note:
+        lines += [note, ""]
+    lines += ["| 模型 | 数据集 | seeds | " + " | ".join(headers) + " |",
+              "|---|---|" + "---:|" * (len(headers) + 1)]
+    for (model, ds) in sorted(cells, key=lambda x: (
+            x[1], MODEL_KEYS.index(x[0]) if x[0] in MODEL_KEYS else 99)):
+        stores = cells[(model, ds)]
+        row_vals, nmax = [], 0
+        for _h, sources, rank2 in col_specs:
+            vs = None
+            for store, key in sources:
+                vs = stores.get(store, {}).get(key)
+                if vs:
+                    break
+            if not vs:
+                row_vals.append("—")
+                continue
+            m, s = mean_std(vs)
+            nmax = max(nmax, len(vs))
+            fmt = "{:.2f}±{:.2f}" if rank2 else "{:.4f}±{:.4f}"
+            row_vals.append(fmt.format(m, s))
+        if all(v == "—" for v in row_vals):
+            continue
+        lines.append("| " + " | ".join(
+            [DISPLAY.get(model, model), ds, str(nmax) if nmax else "—"] + row_vals) + " |")
+    return lines
+
+
 def main():
     out_dir = Path(sys.argv[1] if len(sys.argv) > 1 else "outputs/eval_multiseed")
     if not out_dir.exists():
@@ -121,33 +169,28 @@ def main():
     if not cells:
         sys.exit(f"no eval JSONs found under {out_dir}")
 
-    cols = [f"I2T R@{k}" for k in KS] + [f"T2I R@{k}" for k in KS] \
-        + ["AllHit@5", "CoverRank"]
-    lines = ["# 多种子检索评估汇总（mean±std across seeds）", "",
-             f"来源：`{out_dir}`（各模型原生打分：MCDisp=uncertainty-discounted，"
-             "ProLIP=CSD，CLIP=cosine；CoverRank 为覆盖整个 caption 集的平均检索深度，越小越好）", "",
-             "| 模型 | 数据集 | seeds | " + " | ".join(cols) + " |",
-             "|---|---|" + "---:|" * (len(cols) + 1)]
+    lines = ["# 多种子检索评估汇总（mean±std across seeds）", ""]
+    rc = [(f"I2T R@{k}", [("unified", f"i2t_R@{k}")], False) for k in KS] \
+        + [(f"T2I R@{k}", [("unified", f"t2i_R@{k}")], False) for k in KS]
+    rc_allhit = rc + [("AllHit@5", [("allhit", "AllHit@5")], False),
+                      ("CoverRank", [("allhit", "CoverRank")], True)]
+    lc = [(f"I2T R@{k}", [("legacy", f"i2t_R@{k}")], False) for k in KS] \
+        + [(f"T2I R@{k}", [("legacy", f"t2i_R@{k}")], False) for k in KS]
 
-    for (model, ds) in sorted(cells, key=lambda x: (x[1], MODEL_KEYS.index(x[0])
-                             if x[0] in MODEL_KEYS else 99)):
-        vals = cells[(model, ds)]
-        row = [DISPLAY.get(model, model), ds]
-        # map friendly column names to stored keys
-        keymap = {f"I2T R@{k}": f"i2t_R@{k}" for k in KS}
-        keymap.update({f"T2I R@{k}": f"t2i_R@{k}" for k in KS})
-        keymap["AllHit@5"] = "AllHit@5"
-        keymap["CoverRank"] = "CoverRank"
-        for c in cols:
-            vs = vals.get(keymap[c])
-            if not vs:
-                row.append("—")
-                continue
-            m, s = mean_std(vs)
-            row.append(f"{m:.4f}±{s:.4f}" if c != "CoverRank" else f"{m:.2f}±{s:.2f}")
-        n = max((len(v) for v in vals.values()), default=0)
-        row.insert(2, str(n))
-        lines.append("| " + " | ".join(row) + " |")
+    lines += render_table(
+        cells,
+        "表 1 · 统一全描述协议（每图全部 5 条 caption 参与检索；N 图 vs N×K 描述候选库；"
+        "any-hit I2T / 逐 caption T2I；全模型同一 cosine 打分）",
+        rc_allhit,
+        note="CoverRank = 覆盖整图全部 5 条描述的平均检索深度（越小越好）；"
+             "AllHit@5 = top-5 恰好为全部自身描述的比例。")
+    lines.append("")
+    lines += render_table(
+        cells,
+        "表 2 · 原协议对照（CLIP/ProLIP 仅第一条 caption 的 1:1 检索；"
+        "MCDisp 为集合中心 N vs N）",
+        lc,
+        note="仅用于与历史结果对比，协议不一致，不应跨模型直接比较。")
 
     table = "\n".join(lines)
     (out_dir / "summary.md").write_text(table + "\n")
