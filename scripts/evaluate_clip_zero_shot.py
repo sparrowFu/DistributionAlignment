@@ -21,7 +21,7 @@ from models.clip_baseline import CLIPFineTuneBaseline
 from utils.eval_common import build_eval_dataloader, VALID_DATASETS
 from utils.eval_results import append_eval_results, groups_to_flat, print_recall_groups
 from utils.logger import get_logger, log_exception
-from utils.retrieval import compute_recall_bidirectional
+from utils.retrieval import compute_recall_bidirectional, compute_multicaption_recall
 from utils.seed import set_seed
 
 
@@ -66,21 +66,26 @@ def extract_features(
     model.eval()
 
     all_img_features = []
-    all_text_features = []
+    all_cap_features = []  # per-batch (B, K, D)
     sample_count = 0
 
-    logger.info("Extracting features...")
+    logger.info("Extracting features (all K captions per image)...")
     for batch in tqdm(dataloader):
         if batch is None:
             continue
 
         pil_images = batch["image"]
         caption_lists = batch["captions"]
+        B = len(pil_images)
+        K = len(caption_lists[0])
+
+        all_captions = []
+        for captions in caption_lists:
+            all_captions.extend(captions)
 
         pixel_values = model.process_images(pil_images).to(device)
 
-        selected_captions = [captions[0] for captions in caption_lists]
-        text_inputs = model.process_text(selected_captions)
+        text_inputs = model.process_text(all_captions)
         input_ids = text_inputs["input_ids"].to(device)
         attention_mask = text_inputs["attention_mask"].to(device)
 
@@ -92,21 +97,21 @@ def extract_features(
         )
 
         all_img_features.append(img_feat.cpu())
-        all_text_features.append(text_feat.cpu())
+        all_cap_features.append(text_feat.cpu().view(B, K, -1))
 
         sample_count += len(pil_images)
         if num_samples and sample_count >= num_samples:
             break
 
     img_features = torch.cat(all_img_features, dim=0)
-    text_features = torch.cat(all_text_features, dim=0)
+    text_mus = torch.cat(all_cap_features, dim=0)          # (N, K, D)
 
     if num_samples:
         img_features = img_features[:num_samples]
-        text_features = text_features[:num_samples]
+        text_mus = text_mus[:num_samples]
 
-    logger.info(f"Features shape: Images {img_features.shape}, Texts {text_features.shape}")
-    return img_features, text_features
+    logger.info(f"Features shape: Images {img_features.shape}, Captions {text_mus.shape}")
+    return img_features, text_mus
 
 
 def main():
@@ -132,16 +137,19 @@ def main():
     )
     logger.info(f"Dataset loaded ({args.dataset}): {num_eval_samples} samples")
 
-    img_features, text_features = extract_features(
+    img_features, text_mus = extract_features(
         model, dataloader, args.device, args.num_samples,
     )
 
-    # Compute bidirectional Recall@K (image->text and text->image, cosine)
+    groups = []
+
+    # --- Protocol A (legacy): 1:1 retrieval against the FIRST caption. ------
     bidir = compute_recall_bidirectional(
-        img_features, text_features, args.recall_at_k, chunk_size=1000, normalize=True)
-    groups = [{
+        img_features, text_mus[:, 0], args.recall_at_k,
+        chunk_size=1000, normalize=True)
+    groups.append({
         "family": "recall",
-        "label": "Recall@K",
+        "label": "Recall@K (legacy 1:1, first caption only)",
         "per_k": {
             k: {
                 "i2t": bidir[f"recall_i2t@{k}"],
@@ -150,7 +158,29 @@ def main():
             }
             for k in args.recall_at_k
         },
-    }]
+    })
+
+    # --- Protocol B (unified multi-caption): same protocol as the
+    # fine-tuned baselines' mc_cos_recall rows. No variance heads -> zero
+    # logvars make the discounted score rank-identical to cosine. ---------
+    dev = torch.device(args.device)
+    mc = compute_multicaption_recall(
+        img_features.to(dev), torch.zeros_like(img_features).to(dev),
+        text_mus.to(dev), torch.zeros_like(text_mus).to(dev),
+        args.recall_at_k,
+    )
+    groups.append({
+        "family": "mc_cos_recall",
+        "label": "Multi-caption Recall@K (unified protocol, cosine)",
+        "per_k": {
+            k: {
+                "i2t": mc[f"mc_cos_recall_i2t@{k}"],
+                "t2i": mc[f"mc_cos_recall_t2i@{k}"],
+                "mean": mc[f"mc_cos_recall@{k}"],
+            }
+            for k in args.recall_at_k
+        },
+    })
     print_recall_groups(groups, logger)
 
     # Append results (never overwrite prior runs); time is stamped after dataset.

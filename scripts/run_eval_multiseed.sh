@@ -70,14 +70,14 @@ recall_and_allhit() {  # tag model_key eval_script allhit_model thresh ckpt ds
     echo "[$(date '+%F %T')] MISSING $tag (no checkpoint: $ckpt)" >> "$RUN_DIR/runner.log"
     return 0
   fi
-  run_eval "recall_${model_key}_${ds}" "$thresh" \
+  run_eval "recall_${model_key}" "$thresh" \
     "$PY" "scripts/${eval_script}" --dataset "$ds" --batch-size "$EVAL_BS" \
     --checkpoint "$ckpt" \
-    --output-path "$OUT_DIR/recall_${model_key}_${ds}.json"
-  run_eval "allhit_${model_key}_${ds}" "$thresh" \
+    --output-path "$OUT_DIR/recall_${model_key}.json"
+  run_eval "allhit_${model_key}" "$thresh" \
     "$PY" scripts/eval_allhit.py --model "$ah_model" --dataset "$ds" \
     --batch-size "$EVAL_BS" --checkpoint "$ckpt" \
-    --output-path "$OUT_DIR/allhit_${model_key}_${ds}.json"
+    --output-path "$OUT_DIR/allhit_${model_key}.json"
 }
 
 for SEED in $SEEDS; do
