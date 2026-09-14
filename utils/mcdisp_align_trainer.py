@@ -183,6 +183,8 @@ def train_epoch(
     total_epochs: int = 1,
     base_lambda_var: Optional[float] = None,
     base_lambda_kl: Optional[float] = None,
+    epoch_offset: int = 0,
+    lr_apply_fn: Optional[callable] = None,
 ) -> Dict[str, float]:
     """Train for one epoch.
 
@@ -226,6 +228,7 @@ def train_epoch(
     clip_steps = 0
     nonfinite_steps = 0
     processed_batches = 0
+    successful_steps = 0
 
     desc = f"{desc_prefix}Epoch {epoch + 1}" if desc_prefix else f"Epoch {epoch + 1}"
     pbar = tqdm(dataloader, desc=desc)
@@ -254,13 +257,13 @@ def train_epoch(
         # Per-step L_var ramp + uncertainty_grad_alpha (anti-collapse scheduling).
         # The KL variant has no lambda_var/lambda_mu attributes; its lambda_kl
         # rides the same ramp (0 in Warmup, 0.05->1 in Var-Bootstrap, 1 after).
-        ramp = var_ramp(epoch, batch_idx, steps_per_epoch, total_epochs)
+        ramp = var_ramp(epoch + epoch_offset, batch_idx, steps_per_epoch, total_epochs)
         if hasattr(criterion, "lambda_var"):
             criterion.lambda_var = base_lambda_var * ramp
         if hasattr(criterion, "lambda_kl"):
             criterion.lambda_kl = base_lambda_kl * ramp
         criterion.uncertainty_grad_alpha = alpha_schedule(
-            epoch, batch_idx, steps_per_epoch, total_epochs)
+            epoch + epoch_offset, batch_idx, steps_per_epoch, total_epochs)
 
         outputs = model(pixel_values, input_ids, attention_mask)
 
@@ -280,12 +283,26 @@ def train_epoch(
 
         optimizer.zero_grad()
         loss.backward()
+        # Plan (grouped continuation §7.3): finite loss does not imply finite
+        # grads; a non-finite step must not touch parameters or optimizer
+        # state and must not advance the successful-step counter.
+        grads_finite = all(
+            torch.isfinite(p.grad).all()
+            for p in model.parameters() if p.grad is not None)
+        if not grads_finite:
+            nonfinite_steps += 1
+            optimizer.zero_grad()
+            logger.warning(f"Non-finite gradients at batch {batch_idx}; step skipped.")
+            continue
+        if lr_apply_fn is not None:
+            lr_apply_fn(successful_steps)
         # Per-head grad norms BEFORE clip (who dominates at stage transitions?)
         head_norms = head_grad_norms(model)
         # Clip global grad norm (returns the pre-clip total norm over ALL params);
         # protects against L_cov / cover spikes destabilizing the retrieval means.
         total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.MCDISP_ALIGN_GRAD_CLIP_NORM)
         optimizer.step()
+        successful_steps += 1
         grad_before = float(total_norm)
         grad_after = min(grad_before, config.MCDISP_ALIGN_GRAD_CLIP_NORM)
         if math.isfinite(grad_before) and grad_before > config.MCDISP_ALIGN_GRAD_CLIP_NORM:
@@ -329,6 +346,7 @@ def train_epoch(
     # Plan §8.1/§12.5 stability accounting.
     metrics["clip_step_ratio"] = clip_steps / num_batches
     metrics["nonfinite_steps"] = nonfinite_steps
+    metrics["successful_steps"] = successful_steps
     return metrics
 
 
@@ -431,6 +449,15 @@ def evaluate(
             for k in recall_k_values:
                 metrics[f"mc_recall@{k}"] = mc[f"mc_recall@{k}"]
             metrics["mr"] = sum(mc[f"mc_recall@{k}"] for k in recall_k_values) / len(recall_k_values)
+            # Grouped-continuation plan §9.2: the ONE selection metric is the
+            # per-caption COSINE mR (native mc_recall above stays untouched).
+            for k in recall_k_values:
+                metrics[f"mc_cos_recall@{k}"] = mc[f"mc_cos_recall@{k}"]
+                metrics[f"mc_cos_recall_i2t@{k}"] = mc[f"mc_cos_recall_i2t@{k}"]
+                metrics[f"mc_cos_recall_t2i@{k}"] = mc[f"mc_cos_recall_t2i@{k}"]
+            metrics["cosine_mr"] = sum(
+                (mc[f"mc_cos_recall_i2t@{k}"] + mc[f"mc_cos_recall_t2i@{k}"])
+                for k in recall_k_values) / (2 * len(recall_k_values))
 
     return metrics
 
@@ -760,9 +787,9 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             )
             val_metrics = evaluate(
                 model, val_loader, criterion, cfg.device,
-                compute_recall=(cfg.select_by in ("recall", "mr")),
+                compute_recall=(cfg.select_by in ("recall", "mr", "cosine_mr")),
                 recall_k_values=list(cfg.recall_k_values),
-                multicaption=(cfg.select_by == "mr"),
+                multicaption=(cfg.select_by in ("mr", "cosine_mr")),
             )
 
             log.info(
@@ -813,6 +840,12 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             # Best-checkpoint selection
             if cfg.select_by == "recall" and "mcdisp_align_recall@1" in val_metrics:
                 current_score = val_metrics["mcdisp_align_recall@1"]
+                improved = current_score > best_recall
+                if improved:
+                    best_recall = current_score
+            elif cfg.select_by == "cosine_mr" and "cosine_mr" in val_metrics:
+                # Grouped continuation §9.2: unrounded validation cosine mR.
+                current_score = val_metrics["cosine_mr"]
                 improved = current_score > best_recall
                 if improved:
                     best_recall = current_score

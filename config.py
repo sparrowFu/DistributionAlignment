@@ -186,6 +186,7 @@ MCDISP_ALIGN_LAST_CKPT = CHECKPOINT_DIR / "mcdisp_align_coco_last.pt"
 
 # Evaluation results path
 MCDISP_ALIGN_EVAL_RESULTS_PATH = OUTPUT_DIR / "mcdisp_align_eval_results.json"
+MCDISP_COVERAGE_EVAL_RESULTS_PATH = OUTPUT_DIR / "mcdisp_coverage_eval_results.json"
 
 # I2T per-caption pair-count metric (separate file)
 MCDISP_ALIGN_I2T_PAIR_COUNTS_PATH = OUTPUT_DIR / "mcdisp_align_i2t_pair_counts.json"

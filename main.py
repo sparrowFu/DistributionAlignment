@@ -32,6 +32,7 @@ Available tasks:
     eval_clip_baseline     Evaluate CLIP baseline model (B2)
     train_mcdisp_align       Train distribution alignment model (Ours/MCDisp_Align)
     eval_mcdisp_align        Evaluate distribution alignment model (Ours/MCDisp_Align)
+    eval_mcdisp_coverage     Coverage-penalty retrieval eval (cosine vs cos-lambda*P)
     train_prolip           Train ProLIP baseline model (B3)
     eval_prolip            Evaluate ProLIP baseline model (B3)
     eval_prolip_zero_shot  Evaluate ProLIP Zero-Shot baseline (B3)
@@ -72,6 +73,7 @@ Examples:
             # Stage 1: Alignment training
             "train_clip_baseline", "eval_clip_baseline",
             "train_mcdisp_align", "eval_mcdisp_align",
+            "eval_mcdisp_coverage",
             "train_prolip", "eval_prolip", "eval_prolip_zero_shot",
             "eval_clip_zero_shot",
             # Stage 2: VQA-as-retrieval downstream (gemma caption)
@@ -160,6 +162,25 @@ Examples:
     parser.add_argument("--resume", type=str, default=None,
                         help="Path to checkpoint to resume training from")
 
+    # Coverage-penalty evaluation (eval_mcdisp_coverage)
+    parser.add_argument("--penalty-weight", type=float, nargs="+", default=None,
+                        help="eval_mcdisp_coverage: lambda grid for the "
+                             "coverage score (default 0 0.01 0.03 0.1 0.3)")
+    parser.add_argument("--coverage-margin", type=float, default=None,
+                        help="eval_mcdisp_coverage: m_pos margin (training default)")
+    parser.add_argument("--eps", type=float, default=None,
+                        help="eval_mcdisp_coverage: covariance stabilizer")
+    parser.add_argument("--dev-seed", type=int, default=None,
+                        help="eval_mcdisp_coverage: evaluate on the training "
+                             "run's random_split dev subset rebuilt with this seed")
+    parser.add_argument("--checkpoint-name", type=str, default=None,
+                        choices=["mcdisp_align", "mcdisp_align_kl"],
+                        help="eval_mcdisp_coverage: name for auto checkpoint "
+                             "resolution")
+    parser.add_argument("--ckpt-dir", type=str, default=None,
+                        help="eval_mcdisp_coverage: directory to resolve the "
+                             "checkpoint from (e.g. checkpoints/seed42)")
+
     return parser.parse_args()
 
 
@@ -221,6 +242,18 @@ def run_python_script(script_path: Path, args: argparse.Namespace) -> int:
         cmd.append("--no-resume")
     if hasattr(args, 'resume') and args.resume:
         cmd.extend(["--resume", args.resume])
+    if getattr(args, 'penalty_weight', None):
+        cmd.extend(["--penalty-weight"] + [str(w) for w in args.penalty_weight])
+    if getattr(args, 'coverage_margin', None) is not None:
+        cmd.extend(["--coverage-margin", str(args.coverage_margin)])
+    if getattr(args, 'eps', None) is not None:
+        cmd.extend(["--eps", str(args.eps)])
+    if getattr(args, 'dev_seed', None) is not None:
+        cmd.extend(["--dev-seed", str(args.dev_seed)])
+    if getattr(args, 'checkpoint_name', None):
+        cmd.extend(["--checkpoint-name", args.checkpoint_name])
+    if getattr(args, 'ckpt_dir', None):
+        cmd.extend(["--ckpt-dir", args.ckpt_dir])
 
     logger.info(f"Running: {' '.join(cmd)}")
 
@@ -242,6 +275,7 @@ TASK_SCRIPTS = {
     "eval_clip_baseline":    "evaluate_clip_baseline.py",
     "train_mcdisp_align":      "train_mcdisp_align.py",
     "eval_mcdisp_align":       "evaluate_mcdisp_align.py",
+    "eval_mcdisp_coverage":    "evaluate_mcdisp_coverage.py",
     "train_prolip":          "train_prolip.py",
     "eval_prolip":           "evaluate_prolip.py",
     "eval_prolip_zero_shot": "evaluate_prolip_zero_shot.py",

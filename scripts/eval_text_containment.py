@@ -182,6 +182,8 @@ def run_dataset(dataset, args, out_dir):
 
     results = {}
     for key, disp in MODEL_SPECS:
+        if args.models and key not in args.models:
+            continue
         model = build_model(key, args.ckpt_root, dataset).to(args.device).eval()
         feats = extract(key, model, batches, args.device)
         del model
@@ -234,6 +236,8 @@ def main():
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--num-workers", type=int, default=config.NUM_WORKERS)
     p.add_argument("--ckpt-root", default="checkpoints/seed42")
+    p.add_argument("--models", nargs="+", default=None,
+                   help="Subset of model keys to analyse (default: all)")
     p.add_argument("--device", default=None)
     p.add_argument("--output-dir", default=None)
     args = p.parse_args()

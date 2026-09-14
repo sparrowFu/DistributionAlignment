@@ -75,3 +75,43 @@ def apply_lr_for_epoch(
             f"Epoch {epoch + 1}/{total_epochs} lr factor={factor:.4f} -> {lrs}"
         )
     return factor
+
+
+class StepCosineSchedule:
+    """Per-SUCCESSFUL-update LR schedule for continuation training
+    (plan: 固定批量相似样本组批续训方案 §7.2).
+
+    Pure function of the successful-step counter (snapshots, validation and
+    mining do NOT advance it; skipped non-finite steps do not advance it):
+    linear warmup from 0.1x peak over the first ``warmup_steps`` successful
+    updates, then cosine decay to ``min_ratio`` x peak by step ``total_steps``.
+    Recomputable from the counter alone -> resumable without extra state.
+    """
+
+    def __init__(self, base_lrs, *, total_steps: int,
+                 peak_multiplier: float = 0.2,
+                 warmup_fraction: float = 0.05,
+                 min_ratio: float = 0.1,
+                 warmup_start_ratio: float = 0.1):
+        self.base_lrs = [float(b) for b in base_lrs]
+        self.total_steps = max(1, int(total_steps))
+        self.peak = peak_multiplier
+        self.min_ratio = min_ratio
+        self.warmup_start = warmup_start_ratio
+        self.warmup_steps = max(1, math.ceil(warmup_fraction * self.total_steps))
+
+    def factor(self, successful_steps: int) -> float:
+        if successful_steps < self.warmup_steps:
+            t = successful_steps / self.warmup_steps
+            return self.peak * (self.warmup_start + (1.0 - self.warmup_start) * t)
+        progress = (successful_steps - self.warmup_steps) / max(
+            1, self.total_steps - self.warmup_steps)
+        progress = min(1.0, max(0.0, progress))
+        return self.peak * (self.min_ratio + (1.0 - self.min_ratio)
+                            * 0.5 * (1.0 + math.cos(math.pi * progress)))
+
+    def apply(self, optimizer, successful_steps: int) -> float:
+        f = self.factor(successful_steps)
+        for group, base in zip(optimizer.param_groups, self.base_lrs):
+            group["lr"] = base * f
+        return f

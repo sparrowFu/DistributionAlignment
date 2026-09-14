@@ -160,6 +160,8 @@ def run_dataset(dataset: str, args, out_dir: Path) -> dict:
 
     results = {}
     for key, disp in MODEL_SPECS:
+        if args.models and key not in args.models:
+            continue
         logger.info(f"[{dataset}] model: {disp}")
         model = build_model(key, Path(args.ckpt_root), dataset).to(args.device).eval()
         centers = caption_centers(key, model, batches, args.device)
@@ -266,6 +268,8 @@ def parse_args():
     p.add_argument("--num-workers", type=int, default=config.NUM_WORKERS)
     p.add_argument("--ckpt-root", type=str, default="checkpoints/seed42",
                    help="Directory holding the trained per-seed checkpoints")
+    p.add_argument("--models", nargs="+", default=None,
+                   help="Subset of model keys to analyse (default: all)")
     p.add_argument("--device", type=str, default=None)
     p.add_argument("--output-dir", type=str, default=None)
     return p.parse_args()
