@@ -119,3 +119,47 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+class TestEvaluateAccumulation:
+    """Regression (two production crashes): evaluate()'s totals accumulation
+    must tolerate any loss dict -- plain KL (no cap_nce key) and capnce
+    (with it) -- without KeyError or float-subscript bugs."""
+
+    def test_evaluate_with_plain_kl_and_capnce_dicts(self):
+        import torch as _t
+        from torch.utils.data import DataLoader as _DL
+        from utils.mcdisp_align_trainer import evaluate
+        from losses.mcdisp_align_losses_kl import MCDispAlignKLLoss
+        from losses.mcdisp_align_losses_kl_capnce import MCDispAlignKLCapNCELoss
+
+        class _MockModel(_t.nn.Module):
+            def process_images(self, pil):
+                return _t.randn(len(pil), 3, 4, 4)
+
+            def process_text(self, texts):
+                n = len(texts)
+                return {"input_ids": _t.randint(0, 100, (n, 5)),
+                        "attention_mask": _t.ones(n, 5, dtype=_t.long)}
+
+            def forward(self, pixel_values, input_ids, attention_mask):
+                B, K, D = input_ids.shape[0], input_ids.shape[1], 8
+                return {"img_mu": _t.randn(B, D),
+                        "img_logvar": _t.full((B, D), -1.0), "img_U": None,
+                        "text_mu": _t.randn(B, D),
+                        "text_logvar": _t.full((B, D), -1.0),
+                        "text_mus": _t.randn(B, K, D),
+                        "text_logvars": _t.full((B, K, D), -1.0)}
+
+        class _OneBatch:
+            def __iter__(self):
+                yield {"image": ["x"] * 4, "captions": [["c"] * 5 for _ in range(4)]}
+
+            def __len__(self):
+                return 1
+
+        for crit in (MCDispAlignKLLoss(lambda_kl=1.0, tau=0.07),
+                     MCDispAlignKLCapNCELoss(lambda_kl=1.0, lambda_cap_nce=0.5, tau=0.07)):
+            metrics = evaluate(_MockModel(), _OneBatch(), crit, "cpu",
+                               compute_recall=False)
+            assert "loss" in metrics and _t.isfinite(_t.tensor(metrics["loss"]))

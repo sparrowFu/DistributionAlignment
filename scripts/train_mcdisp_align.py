@@ -91,7 +91,7 @@ def parse_args():
                         help="L_set uses plain cosine (ablation)")
 
     parser.add_argument("--loss", type=str, default="standard",
-                        choices=["standard", "kl"],
+                        choices=["standard", "kl", "kl_capnce"],
                         help="Training loss: 'standard' = MCDispAlignLoss "
                              "(separate L_mu/L_var terms, the original "
                              "objective, default); 'kl' = MCDispAlignKLLoss "
@@ -99,6 +99,11 @@ def parse_args():
                              "--lambda-kl then replaces --lambda-mu/--lambda-var)")
     parser.add_argument("--lambda-kl", type=float, default=1.0,
                         help="Weight of the KL alignment term (only used with --loss kl)")
+    parser.add_argument("--lambda-cap-nce", type=float, default=config.MCDISP_ALIGN_LAMBDA_CAP_NCE,
+                        help="Weight of the auxiliary per-caption NCE term "
+                             "(only with --loss kl_capnce; 0 reduces to plain KL)")
+    parser.add_argument("--tau-cap", type=float, default=config.MCDISP_ALIGN_CAP_NCE_TAU,
+                        help="Fixed temperature of the auxiliary per-caption NCE")
 
     parser.add_argument("--cov-rank", type=int, default=config.MCDISP_ALIGN_COV_RANK,
                         help="Low-rank covariance rank r for the image side (0 = diagonal only)")
@@ -170,6 +175,8 @@ def main():
         lambda_var=args.lambda_var,
         loss_name=args.loss,
         lambda_kl=args.lambda_kl,
+        lambda_cap_nce=args.lambda_cap_nce,
+        tau_cap=args.tau_cap,
         lambda_cover_pos=args.lambda_cover_pos,
         lambda_cover_neg=args.lambda_cover_neg,
         lambda_cov=args.lambda_cov,

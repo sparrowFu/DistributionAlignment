@@ -202,6 +202,10 @@ MCDISP_ALIGN_FREEZE_CLIP = True  # Whether to freeze CLIP parameters
 # Distribution configuration
 MCDISP_ALIGN_DROPOUT_RATE = 0.1         # Dropout rate for MLP heads
 MCDISP_ALIGN_DISTRIBUTION_MERGING = "moment_matching"  # Method: "moment_matching", "poe", "simple"
+# Auxiliary per-caption NCE (loss_name="kl_capnce"): weight and its own
+# fixed temperature. lambda_cap_nce=0 reduces exactly to the KL objective.
+MCDISP_ALIGN_LAMBDA_CAP_NCE = 0.5
+MCDISP_ALIGN_CAP_NCE_TAU = 0.07
 
 
 # =============================================================================

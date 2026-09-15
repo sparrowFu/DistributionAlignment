@@ -209,6 +209,7 @@ def train_epoch(
 
     totals = {k: 0.0 for k in (
         "loss", "set_nce", "mu", "var", "cover_pos", "cover_neg", "cov", "reg", "img_var_avg",
+        "cap_nce", "weighted_cap_nce",
         # weighted contributions (P1 #9)
         "weighted_set_nce", "weighted_mu", "weighted_var", "weighted_cover_pos",
         "weighted_cover_neg", "weighted_cov", "weighted_reg",
@@ -311,7 +312,7 @@ def train_epoch(
         # Accumulate losses
         for k in totals:
             src = "total" if k == "loss" else k
-            totals[k] += loss_dict[src]
+            totals[k] += loss_dict.get(src, 0.0)
 
         # Variance floor-collapse monitor (do NOT raise the floor -- it masks collapse)
         with torch.no_grad():
@@ -407,7 +408,7 @@ def evaluate(
         )
 
         for k in totals:
-            totals[k] += loss_dict["total" if k == "loss" else k]
+            totals[k] += loss_dict["total"] if k == "loss" else loss_dict.get(k, 0.0)
 
         if feats is not None:
             feats["img_mu"].append(outputs['img_mu'].cpu())
@@ -522,7 +523,9 @@ class MCDispAlignTrainConfig:
     #               term). Both classes share the forward signature and the
     #               loss_dict key contract, so training/eval/selection code
     #               downstream is unchanged.
-    loss_name: str = "standard"                   # "standard" | "kl"
+    loss_name: str = "standard"                   # "standard" | "kl" | "kl_capnce"
+    lambda_cap_nce: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_CAP_NCE)
+    tau_cap: float = field(default_factory=lambda: config.MCDISP_ALIGN_CAP_NCE_TAU)
     lambda_kl: float = 1.0                        # KL term weight ("kl" only)
 
     # --- Schedule / selection ---
@@ -556,7 +559,7 @@ class MCDispAlignTrainConfig:
         weights: "standard" -> mcdisp_align_{dataset}_best|last.pt (unchanged
         legacy name), "kl" -> mcdisp_align_kl_{dataset}_best|last.pt. Explicit
         best_ckpt_path / last_ckpt_path overrides bypass this entirely."""
-        suffix = "_kl" if self.loss_name == "kl" else ""
+        suffix = {"kl": "_kl", "kl_capnce": "_kl_capnce"}.get(self.loss_name, "")
         return f"{self.model_name}{suffix}"
 
     @property
@@ -687,6 +690,26 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
         )
         log.info(f"{prefix}Using MCDisp_Align KL-variant loss "
                  f"(lambda_kl={cfg.lambda_kl}; mu/var terms folded into the KL)")
+    elif cfg.loss_name == "kl_capnce":
+        from losses.mcdisp_align_losses_kl_capnce import MCDispAlignKLCapNCELoss
+        criterion = MCDispAlignKLCapNCELoss(
+            lambda_ctr=cfg.lambda_ctr,
+            lambda_kl=cfg.lambda_kl,
+            lambda_cap_nce=cfg.lambda_cap_nce,
+            tau_cap=cfg.tau_cap,
+            lambda_cover_pos=cfg.lambda_cover_pos,
+            lambda_cover_neg=cfg.lambda_cover_neg,
+            lambda_cov=cfg.lambda_cov,
+            lambda_reg=cfg.lambda_reg,
+            tau=cfg.tau,
+            m_pos=cfg.m_pos,
+            target_var=cfg.target_var,
+            m_neg=cfg.m_neg,
+            use_uncertainty_sim=cfg.use_uncertainty_sim,
+        )
+        log.info(f"{prefix}Using MCDisp_Align KL + auxiliary per-caption NCE loss "
+                 f"(lambda_kl={cfg.lambda_kl}, lambda_cap_nce={cfg.lambda_cap_nce}, "
+                 f"tau_cap={cfg.tau_cap})")
     elif cfg.loss_name == "standard":
         criterion = MCDispAlignLoss(
             lambda_ctr=cfg.lambda_ctr,
