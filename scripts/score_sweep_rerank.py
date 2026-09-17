@@ -46,57 +46,29 @@ def alpha_qe(feats_q, feats_g, S, alpha, m):
     return qe @ F.normalize(feats_g, dim=-1).T
 
 
-def k_reciprocal(feats_q, feats_g, S, k1, k2, lam, device, chunk=2048):
-    """Simplified k-reciprocal: reciprocal sets + k2-neighbor expansion +
-    Jaccard similarity, blended with the cosine."""
+def graph_smooth(img, cap, S, kq, kg, alpha, device, chunk=4096):
+    """Cross-modal graph smoothing (label-prop family): smooth the score
+    matrix over same-modality kNN graphs.
+
+        S' = (1-a)*S + a*Wq @ S        (image side)
+        S'' = (1-a)*S' + a*S' @ Wg.T   (caption side)
+
+    Wq / Wg are row-normalized kNN means built from the SAME features that
+    produced S. Label-free, grouping-free.
+    """
+    q_top = torch.topk(img @ img.T, kq, dim=1).indices        # (Q, kq)
+    g_top = torch.topk(cap @ cap.T, kg, dim=1).indices        # (G, kg)
     Q, G = S.shape
-    # adjacency: query->topk gallery, gallery->topk query (as bool mats)
-    kq = min(k1, G)
-    kg = min(k1, Q)
-    A_idx = torch.topk(S, kq, dim=1).indices                    # (Q, kq)
-    B_idx = torch.topk(S.T, kg, dim=1).indices                  # (G, kg)
-    # reciprocal: R(q) = {g: g in A(q), q in B(g)}
-    Bt = torch.zeros(Q, G, dtype=torch.bool, device=device)     # (Q, G) = B^T
-    g_arange = torch.arange(G, device=device).unsqueeze(1).expand_as(B_idx)
-    Bt[B_idx.reshape(-1), g_arange.reshape(-1)] = True
-    A = torch.zeros(Q, G, dtype=torch.bool, device=device)
-    q_arange = torch.arange(Q, device=device).unsqueeze(1).expand_as(A_idx)
-    A[q_arange.reshape(-1), A_idx.reshape(-1)] = True
-    R = A & Bt                                                 # (Q, G)
-    # local expansion: R'(q) = R(q) ∪ N(R(q), k2) -- via Bt rows of members
-    if k2 > 0:
-        extra = torch.zeros_like(R)
-        for s in range(0, Q, chunk):
-            e = min(s + chunk, Q)
-            members = R[s:e]                                    # (c, G) bool
-            # union of gallery->topk(k2) queries for each g in R(q):
-            nb = B_idx[:, :k2]                                 # (G, k2) queries
-            # count contributions via scatter: for row q, |{q' in nb(g)}| >= 1
-            acc = torch.zeros(e - s, Q, dtype=torch.float, device=device)
-            g_sel = members.nonzero(as_tuple=False)             # (nnz, 2)
-            if g_sel.numel():
-                rows, gs = g_sel[:, 0], g_sel[:, 1]
-                acc.index_put_(
-                    (rows.repeat_interleave(k2), nb[gs].reshape(-1)),
-                    torch.ones(rows.numel() * k2, device=device),
-                    accumulate=True)
-            extra[s:e] = acc > 0
-        R = R | extra
-    del A, Bt, extra
-    # Jaccard via float matmul on the (Q,G)x(G,G)... use R (Q,G) with
-    # gallery-side reciprocal sets RG (G,G sparse): approximate RG by
-    # gallery self-reciprocity through queries: RG = B_rows & A_cols style is
-    # too big; instead use the query-membership trick: inter(q,g) counts
-    # shared QUERIES in R? Faithful Jaccard needs gallery sets; approximate
-    # with the standard simplification: sim(q,g) from R row vs B(g) columns.
-    Bq = torch.zeros(G, Q, dtype=torch.float, device=device)   # B as float
-    Bq[g_arange.reshape(-1), B_idx.reshape(-1)] = 1.0
-    Rf = R.float()
-    card_r = Rf.sum(1, keepdim=True)                           # (Q, 1)
-    card_b = Bq.sum(1, keepdim=True).T                         # (1, G)
-    inter = Rf @ Bq                                            # (Q, G)
-    jacc = inter / (card_r + card_b - inter + 1e-8)
-    return lam * S + (1 - lam) * jacc
+    out = torch.empty_like(S)
+    for s0 in range(0, Q, chunk):
+        s1 = min(s0 + chunk, Q)
+        out[s0:s1] = (1 - alpha) * S[s0:s1] + alpha * S[q_top[s0:s1]].mean(1)
+    S = out
+    out = torch.empty_like(S)
+    for g0 in range(0, G, chunk):
+        g1 = min(g0 + chunk, G)
+        out[:, g0:g1] = (1 - alpha) * S[:, g0:g1] + alpha * S[:, g_top[g0:g1]].mean(2)
+    return out
 
 
 def main():
@@ -135,9 +107,8 @@ def main():
         for a in (0.5, 1.0):
             for m in (3, 5):
                 variants[f"AQE:a={a},m={m}"] = alpha_qe(img, cap, C, a, m)
-        for lam in (0.3, 0.5):
-            variants[f"KR:k1=20,lam={lam}"] = k_reciprocal(
-                img, cap, C, 20, 6, lam, args.device)
+        for a in (0.3, 0.5):
+            variants[f"GS:a={a}"] = graph_smooth(img, cap, C, 10, 10, a, args.device)
 
         dev_idx = torch.arange(0, N, 2, device=args.device)
         test_idx = torch.arange(1, N, 2, device=args.device)
