@@ -360,6 +360,7 @@ def evaluate(
     compute_recall: bool = False,
     recall_k_values=None,
     multicaption: bool = False,
+    dist_health: bool = False,
 ) -> Dict[str, float]:
     """Evaluate the model (loss + optional retrieval Recall@K).
 
@@ -368,6 +369,11 @@ def evaluate(
     §3.3) and its mR (mean of the 6 recall values, plan §6.1). This is the
     ablation study's checkpoint-selection metric (``select_by="mr"``); the
     merged-center recall stays available as a diagnostic.
+
+    ``dist_health=True`` adds distribution-health diagnostics (subsampled):
+    image-variance CV, caption-set between-caption spread, corr(v_v,
+    between), cover-ball radius vs pos/neg caption distances and the share
+    of negative captions inside the ball. Keys are prefixed ``dh_``.
     """
     model.eval()
 
@@ -377,7 +383,7 @@ def evaluate(
     feats = {k: [] for k in ("img_mu", "text_mu", "img_logvar", "text_logvar")} \
         if compute_recall else None
     cap_feats = {k: [] for k in ("text_mus", "text_logvars")} \
-        if (compute_recall and multicaption) else None
+        if (compute_recall and (multicaption or dist_health)) else None
 
     pbar = tqdm(dataloader, desc="Evaluating")
 
@@ -460,6 +466,48 @@ def evaluate(
                 (mc[f"mc_cos_recall_i2t@{k}"] + mc[f"mc_cos_recall_t2i@{k}"])
                 for k in recall_k_values) / (2 * len(recall_k_values))
 
+    # Distribution-health diagnostics (prior-shrink experiments). Subsampled
+    # to keep validation cheap; all on CPU.
+    if dist_health and feats and feats["img_logvar"] and cap_feats and cap_feats["text_mus"]:
+        with torch.no_grad():
+            img_lv = torch.cat(feats["img_logvar"], dim=0)
+            img_mu_all = torch.cat(feats["img_mu"], dim=0)
+            t_mus_all = torch.cat(cap_feats["text_mus"], dim=0)      # (N,K,D)
+            t_lvs_all = torch.cat(cap_feats["text_logvars"], dim=0)
+            n_total = img_lv.shape[0]
+            idx = torch.randperm(n_total, generator=torch.Generator().manual_seed(0))[
+                : min(512, n_total)]
+            v_v = img_lv[idx].exp().mean(-1)                          # (n,)
+            v_within = t_lvs_all[idx].exp().mean(dim=(1, 2))          # (n,)
+            v_between = t_mus_all[idx].var(dim=1, unbiased=False).mean(-1)  # (n,)
+            v_C = v_within + v_between
+
+            def _corr(a, b):
+                a, b = a - a.mean(), b - b.mean()
+                return (a * b).sum() / (a.norm() * b.norm()).clamp_min(1e-12)
+
+            metrics["dh_vv_mean"] = v_v.mean().item()
+            metrics["dh_vv_cv"] = (v_v.std() / v_v.mean().clamp_min(1e-12)).item()
+            metrics["dh_between_mean"] = v_between.mean().item()
+            metrics["dh_corr_vv_between"] = _corr(v_v, v_between).item()
+            metrics["dh_corr_vv_vC"] = _corr(v_v, v_C).item()
+            # cover-ball geometry: radius sqrt(mean sigma^2 * D * m_pos) vs
+            # pos/neg caption distances and the negative fall-in rate
+            D = img_lv.shape[-1]
+            m = getattr(criterion, "m_pos", 1.0)
+            r = (v_v.mean() * D * m).sqrt()
+            caps = t_mus_all[idx].reshape(-1, D)                      # n*K caps
+            d = torch.cdist(img_mu_all[idx], caps)                    # (n, n*K)
+            K = t_mus_all.shape[1]
+            pos_mask = torch.zeros_like(d, dtype=torch.bool)
+            for i in range(len(idx)):
+                pos_mask[i, i * K:(i + 1) * K] = True
+            pos_d, neg_d = d[pos_mask], d[~pos_mask]
+            metrics["dh_ball_r"] = r.item()
+            metrics["dh_pos_d"] = pos_d.mean().item()
+            metrics["dh_neg_d"] = neg_d.mean().item()
+            metrics["dh_neg_in_ball"] = (neg_d <= r).float().mean().item()
+
     return metrics
 
 
@@ -500,6 +548,7 @@ class MCDispAlignTrainConfig:
     cov_rank: int = field(default_factory=lambda: config.MCDISP_ALIGN_COV_RANK)
     distribution_merging: str = field(default_factory=lambda: config.MCDISP_ALIGN_DISTRIBUTION_MERGING)
     dropout_rate: float = field(default_factory=lambda: config.MCDISP_ALIGN_DROPOUT_RATE)
+    mu_residual: bool = field(default_factory=lambda: config.MCDISP_ALIGN_MU_RESIDUAL)
 
     # --- MCDisp_Align loss weights ---
     lambda_ctr: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_CTR)
@@ -514,6 +563,10 @@ class MCDispAlignTrainConfig:
     m_neg: float = field(default_factory=lambda: config.MCDISP_ALIGN_M_NEG)
     target_var: float = field(default_factory=lambda: config.MCDISP_ALIGN_TARGET_VAR)
     use_uncertainty_sim: bool = field(default_factory=lambda: config.MCDISP_ALIGN_USE_UNCERTAINTY_SIM)
+    # Lower bound on the KL target sigma^2 (log-space clamp). The legacy 0.01
+    # floor dominates any target_var below it, so prior-shrink experiments
+    # (target_var << 0.01) must lower this together with target_var.
+    kl_var_clamp: float = 0.01
 
     # --- Loss selection ---
     # "standard" -> MCDispAlignLoss (exact original construction, default);
@@ -687,6 +740,7 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             target_var=cfg.target_var,
             m_neg=cfg.m_neg,
             use_uncertainty_sim=cfg.use_uncertainty_sim,
+            kl_var_clamp=cfg.kl_var_clamp,
         )
         log.info(f"{prefix}Using MCDisp_Align KL-variant loss "
                  f"(lambda_kl={cfg.lambda_kl}; mu/var terms folded into the KL)")
@@ -748,12 +802,21 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
         log.info(f"{prefix}Resuming from checkpoint: {resume_path}")
         checkpoint = torch.load(str(resume_path), map_location=cfg.device, weights_only=False)
         model.load_state_dict(checkpoint["model_state_dict"])
+        if cfg.freeze_clip:
+            # heads-only continuation from an unfrozen checkpoint: future
+            # heads-only saves reference this file for the backbone
+            model._backbone_source = str(resume_path)
         if "optimizer_state_dict" in checkpoint:
-            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-            for state in optimizer.state.values():
-                for k, v in state.items():
-                    if isinstance(v, torch.Tensor):
-                        state[k] = v.to(cfg.device)
+            try:
+                optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+                for state in optimizer.state.values():
+                    for k, v in state.items():
+                        if isinstance(v, torch.Tensor):
+                            state[k] = v.to(cfg.device)
+            except ValueError as e:
+                log.warning(f"{prefix}Optimizer state not restored ({e}); "
+                            "continuing with a fresh optimizer (frozen-backbone "
+                            "continuation has a different parameter group).")
         start_epoch = checkpoint.get("epoch", 0)
         best_val_loss = checkpoint.get("best_val_loss", float('inf'))
         best_recall = checkpoint.get("best_recall", -float('inf'))
@@ -813,6 +876,7 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
                 compute_recall=(cfg.select_by in ("recall", "mr", "cosine_mr")),
                 recall_k_values=list(cfg.recall_k_values),
                 multicaption=(cfg.select_by in ("mr", "cosine_mr")),
+                dist_health=True,
             )
 
             log.info(
@@ -831,6 +895,15 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
                 f"Cos R@1/5/10: {val_metrics.get('cos_recall@1', 0):.3f}/"
                 f"{val_metrics.get('cos_recall@5', 0):.3f}/{val_metrics.get('cos_recall@10', 0):.3f}"
             )
+            if "dh_vv_mean" in val_metrics:
+                log.info(
+                    f"{prefix}  dist-health: σ²v={val_metrics['dh_vv_mean']:.4f} "
+                    f"(CV {val_metrics['dh_vv_cv']:.3f})  between={val_metrics['dh_between_mean']:.4f}  "
+                    f"corr(v_v,between)={val_metrics['dh_corr_vv_between']:.3f}  "
+                    f"corr(v_v,v_C)={val_metrics['dh_corr_vv_vC']:.3f}  "
+                    f"ball_r={val_metrics['dh_ball_r']:.2f}  pos_d={val_metrics['dh_pos_d']:.2f}  "
+                    f"neg_d={val_metrics['dh_neg_d']:.2f}  neg_in_ball={val_metrics['dh_neg_in_ball']:.1%}"
+                )
 
             if train_metrics.get("floor_severe", 0) > 0:
                 log.warning(

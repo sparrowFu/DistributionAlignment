@@ -81,6 +81,10 @@ def parse_args():
                         help="L_cover positive coverage margin (per-D normalized Mahalanobis)")
     parser.add_argument("--target-var", type=float, default=config.MCDISP_ALIGN_TARGET_VAR,
                         help="L_reg variance prior sigma_0^2")
+    parser.add_argument("--kl-var-clamp", type=float, default=0.01,
+                        help="Lower bound on the KL target sigma^2 (log-space clamp). "
+                             "Lower this together with --target-var when target_var < 0.01, "
+                             "otherwise the floor overrides the shrunk prior.")
     parser.add_argument("--m-neg", type=float, default=config.MCDISP_ALIGN_M_NEG,
                         help="L_cover negative repulsion margin")
     parser.add_argument("--use-uncertainty-sim", action="store_true",
@@ -114,6 +118,11 @@ def parse_args():
     parser.add_argument("--distribution-merging", type=str, default=config.MCDISP_ALIGN_DISTRIBUTION_MERGING,
                         choices=["moment_matching", "poe", "simple"],
                         help="Method for merging multiple text distributions")
+    parser.add_argument("--mu-residual", action="store_true",
+                        default=config.MCDISP_ALIGN_MU_RESIDUAL,
+                        help="Mu heads as identity-start residual MLPs (x + MLP(x)); "
+                             "preserves the frozen backbone's zero-shot retrieval")
+    parser.add_argument("--no-mu-residual", dest="mu_residual", action="store_false")
     parser.add_argument("--dropout-rate", type=float, default=config.MCDISP_ALIGN_DROPOUT_RATE,
                         help="Dropout rate for MLP heads")
     parser.add_argument("--no-staged", action="store_true",
@@ -134,10 +143,12 @@ def parse_args():
     parser.add_argument("--no-early-stop", action="store_true",
                         help="Disable early stopping")
     parser.add_argument("--select-by", type=str, default="recall",
-                        choices=["recall", "loss"],
+                        choices=["recall", "loss", "mr", "cosine_mr"],
                         help="Best-checkpoint selection metric: 'recall' "
-                             "(MCDisp_Align R@1, higher better) or 'loss' "
-                             "(val loss, lower better). Default: recall")
+                             "(MCDisp_Align R@1, higher better), 'loss' "
+                             "(val loss, lower better), 'mr' (multi-caption "
+                             "mR), or 'cosine_mr' (per-caption COSINE mR, "
+                             "the unified retrieval protocol). Default: recall")
 
     # Output arguments
     parser.add_argument("--checkpoint-dir", type=str, default=None,
@@ -169,6 +180,7 @@ def main():
         cov_rank=args.cov_rank,
         distribution_merging=args.distribution_merging,
         dropout_rate=args.dropout_rate,
+        mu_residual=args.mu_residual,
         # loss weights
         lambda_ctr=args.lambda_ctr,
         lambda_mu=args.lambda_mu,
@@ -186,6 +198,7 @@ def main():
         m_neg=args.m_neg,
         target_var=args.target_var,
         use_uncertainty_sim=args.use_uncertainty_sim,
+        kl_var_clamp=args.kl_var_clamp,
         # schedule / selection
         no_staged=args.no_staged,
         lr_scheduler=args.lr_scheduler,

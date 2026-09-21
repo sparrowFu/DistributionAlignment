@@ -486,3 +486,8 @@ def print_config() -> None:
 if __name__ == "__main__":
     ensure_project_dirs()
     print_config()
+
+# Mu heads as identity-start residual MLPs (x + MLP(x), zero-init output
+# layer). Fresh Xavier heads drop the frozen backbone ~13 pts below its own
+# zero-shot retrieval; the residual start preserves it. (models/mcdisp_align_model.py)
+MCDISP_ALIGN_MU_RESIDUAL = False

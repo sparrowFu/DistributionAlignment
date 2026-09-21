@@ -20,6 +20,30 @@ from utils.image_preprocess import preprocess_images_on_gpu
 logger = get_logger("mcdisp_align_model")
 
 
+class _ResidualMuHead(nn.Module):
+    """Two-layer MLP with an identity skip (x + MLP(x)), last layer zero-init.
+
+    Fresh Xavier heads destroy ~13 pts of the frozen backbone's zero-shot
+    retrieval before training even starts; the identity start preserves it
+    and lets the MCDisp losses adapt the representation from there.
+    """
+
+    def __init__(self, hidden_dim: int, dropout_rate: float):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.Dropout(dropout_rate),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim))
+        nn.init.xavier_uniform_(self.net[0].weight)
+        nn.init.zeros_(self.net[0].bias)
+        nn.init.zeros_(self.net[3].weight)   # zero-init output layer -> identity
+        nn.init.zeros_(self.net[3].bias)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.net(x)
+
+
 class MCDispAlignModel(nn.Module):
     """
     MCDisp_Align model for multi-modal semantic matching.
@@ -43,6 +67,7 @@ class MCDispAlignModel(nn.Module):
         distribution_merging: str = "moment_matching",
         dropout_rate: float = 0.1,
         cov_rank: Optional[int] = None,
+        mu_residual: Optional[bool] = None,
     ):
         """
         Initialize distribution alignment model.
@@ -68,6 +93,13 @@ class MCDispAlignModel(nn.Module):
         self.dropout_rate = dropout_rate
         # Low-rank covariance rank r (0 = diagonal-only). Defaults to config.
         self.cov_rank = cov_rank if cov_rank is not None else config.MCDISP_ALIGN_COV_RANK
+        # Identity-start residual mu heads (x + MLP(x)); defaults to config.
+        self.mu_residual = (mu_residual if mu_residual is not None
+                            else getattr(config, "MCDISP_ALIGN_MU_RESIDUAL", False))
+        # True only while clip_model still holds the untouched pretrained
+        # weights (then checkpoints may omit the backbone). Any full state
+        # dict load replaces them with fine-tuned weights -> must be saved.
+        self._backbone_is_pretrained = True
 
         # Load CLIP model from local files
         logger.info(f"Loading CLIP model from: {self.model_path}")
@@ -91,27 +123,33 @@ class MCDispAlignModel(nn.Module):
             logger.info("CLIP parameters will be fine-tuned")
 
         # Image distribution modeling heads
-        self.img_mu_head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.Dropout(dropout_rate),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim)
-        )
+        if self.mu_residual:
+            self.img_mu_head = _ResidualMuHead(hidden_dim, dropout_rate)
+        else:
+            self.img_mu_head = nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.Dropout(dropout_rate),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim)
+            )
 
         self.img_logvar_head = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.Dropout(dropout_rate),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim)
-        )
+                nn.Linear(hidden_dim, hidden_dim)
+            )
 
         # Text distribution modeling heads
-        self.text_mu_head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.Dropout(dropout_rate),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim)
-        )
+        if self.mu_residual:
+            self.text_mu_head = _ResidualMuHead(hidden_dim, dropout_rate)
+        else:
+            self.text_mu_head = nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.Dropout(dropout_rate),
+                nn.ReLU(),
+                nn.Linear(hidden_dim, hidden_dim)
+            )
 
         self.text_logvar_head = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
@@ -130,6 +168,13 @@ class MCDispAlignModel(nn.Module):
 
         logger.info("Distribution alignment model initialized")
 
+    def load_state_dict(self, state_dict, strict: bool = True):
+        """Track whether a FULL state dict (with fine-tuned clip weights) has
+        been loaded -- such backbones must be saved back, not excluded."""
+        if any(k.startswith("clip_model.") for k in state_dict):
+            self._backbone_is_pretrained = False
+        return super().load_state_dict(state_dict, strict=strict)
+
     def _freeze_clip(self) -> None:
         """Freeze CLIP model parameters."""
         for param in self.clip_model.parameters():
@@ -137,8 +182,11 @@ class MCDispAlignModel(nn.Module):
 
     def _init_distribution_heads(self) -> None:
         """Initialize mu/logvar distribution heads with Xavier init (cov heads are initialized separately in _build_cov_heads)."""
-        for head in [self.img_mu_head, self.img_logvar_head,
-                     self.text_mu_head, self.text_logvar_head]:
+        heads = [self.img_mu_head, self.img_logvar_head,
+                 self.text_mu_head, self.text_logvar_head]
+        if self.mu_residual:  # residual mu heads carry their own init
+            heads = [self.img_logvar_head, self.text_logvar_head]
+        for head in heads:
             for layer in head:
                 if isinstance(layer, nn.Linear):
                     nn.init.xavier_uniform_(layer.weight)
@@ -484,13 +532,22 @@ class MCDispAlignModel(nn.Module):
         Args:
             path: Path to save checkpoint
         """
+        sd = self.state_dict()
+        bb_src = getattr(self, "_backbone_source", None)
+        if self.freeze_clip and (self._backbone_is_pretrained or bb_src):
+            # frozen backbone == pretrained weights, rebuildable on load;
+            # dropping it shrinks checkpoints from ~1.7GB to a few MB
+            sd = {k: v for k, v in sd.items() if not k.startswith("clip_model.")}
         state = {
-            "model_state_dict": self.state_dict(),
+            "model_state_dict": sd,
             "hidden_dim": self.hidden_dim,
             "freeze_clip": self.freeze_clip,
             "distribution_merging": self.distribution_merging,
             "dropout_rate": self.dropout_rate,
             "cov_rank": self.cov_rank,
+            "mu_residual": self.mu_residual,
+            "backbone_excluded": self.freeze_clip,
+            "backbone_source": bb_src,
         }
         torch.save(state, path)
         logger.info(f"Model saved to: {path}")
@@ -509,14 +566,48 @@ class MCDispAlignModel(nn.Module):
         # cov_rank=0 (diagonal) checkpoint can load into a model constructed
         # with a different default cov_rank (and vice versa) without missing/
         # unexpected key errors.
+        if "mu_residual" in state and state["mu_residual"] != self.mu_residual:
+            logger.info(f"mu_residual {self.mu_residual} -> {state['mu_residual']} (from checkpoint); "
+                        f"rebuilding mu heads")
+            self.mu_residual = state["mu_residual"]
+            if self.mu_residual:
+                self.img_mu_head = _ResidualMuHead(self.hidden_dim, self.dropout_rate)
+                self.text_mu_head = _ResidualMuHead(self.hidden_dim, self.dropout_rate)
+            else:
+                self.img_mu_head = nn.Sequential(
+                    nn.Linear(self.hidden_dim, self.hidden_dim),
+                    nn.Dropout(self.dropout_rate),
+                    nn.ReLU(),
+                    nn.Linear(self.hidden_dim, self.hidden_dim))
+                self.text_mu_head = nn.Sequential(
+                    nn.Linear(self.hidden_dim, self.hidden_dim),
+                    nn.Dropout(self.dropout_rate),
+                    nn.ReLU(),
+                    nn.Linear(self.hidden_dim, self.hidden_dim))
         if "cov_rank" in state and state["cov_rank"] != self.cov_rank:
             logger.info(f"cov_rank {self.cov_rank} -> {state['cov_rank']} (from checkpoint); "
                         f"rebuilding covariance heads")
             self.cov_rank = state["cov_rank"]
             self._build_cov_heads()
 
-        self.load_state_dict(state["model_state_dict"], strict=strict)
-        logger.info(f"Model loaded from: {path}")
+        if state.get("backbone_source"):
+            # heads-only checkpoint produced by a FROZEN continuation: the
+            # backbone lives in the referenced full checkpoint
+            src = torch.load(state["backbone_source"], map_location="cpu", weights_only=False)
+            self.load_state_dict(src["model_state_dict"])
+            del src
+        if state.get("backbone_excluded"):
+            # heads-only checkpoint: the pretrained CLIP weights already in
+            # self.clip_model are the excluded backbone
+            missing, unexpected = self.load_state_dict(state["model_state_dict"], strict=False)
+            bad_missing = [k for k in missing if not k.startswith("clip_model.")]
+            if bad_missing or unexpected:
+                raise RuntimeError(f"heads-only load mismatch: missing={bad_missing[:5]} unexpected={list(unexpected)[:5]}")
+            logger.info(f"Model loaded from: {path} (heads only; backbone from pretrained)")
+        else:
+            self.load_state_dict(state["model_state_dict"], strict=strict)
+            self._backbone_is_pretrained = False  # backbone weights may be fine-tuned
+            logger.info(f"Model loaded from: {path}")
 
         # Load configuration
         if "hidden_dim" in state:
