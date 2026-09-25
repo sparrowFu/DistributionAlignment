@@ -185,6 +185,7 @@ def train_epoch(
     base_lambda_kl: Optional[float] = None,
     epoch_offset: int = 0,
     lr_apply_fn: Optional[callable] = None,
+    no_staged: bool = False,
 ) -> Dict[str, float]:
     """Train for one epoch.
 
@@ -258,13 +259,18 @@ def train_epoch(
         # Per-step L_var ramp + uncertainty_grad_alpha (anti-collapse scheduling).
         # The KL variant has no lambda_var/lambda_mu attributes; its lambda_kl
         # rides the same ramp (0 in Warmup, 0.05->1 in Var-Bootstrap, 1 after).
-        ramp = var_ramp(epoch + epoch_offset, batch_idx, steps_per_epoch, total_epochs)
+        # no_staged=True puts every loss at full strength from step 1; the
+        # ramps belong to the staged curriculum only.
+        if no_staged:
+            ramp, alpha = 1.0, 1.0
+        else:
+            ramp = var_ramp(epoch + epoch_offset, batch_idx, steps_per_epoch, total_epochs)
+            alpha = alpha_schedule(epoch + epoch_offset, batch_idx, steps_per_epoch, total_epochs)
         if hasattr(criterion, "lambda_var"):
             criterion.lambda_var = base_lambda_var * ramp
         if hasattr(criterion, "lambda_kl"):
             criterion.lambda_kl = base_lambda_kl * ramp
-        criterion.uncertainty_grad_alpha = alpha_schedule(
-            epoch + epoch_offset, batch_idx, steps_per_epoch, total_epochs)
+        criterion.uncertainty_grad_alpha = alpha
 
         outputs = model(pixel_values, input_ids, attention_mask)
 
@@ -580,6 +586,7 @@ class MCDispAlignTrainConfig:
     lambda_cap_nce: float = field(default_factory=lambda: config.MCDISP_ALIGN_LAMBDA_CAP_NCE)
     tau_cap: float = field(default_factory=lambda: config.MCDISP_ALIGN_CAP_NCE_TAU)
     lambda_kl: float = 1.0                        # KL term weight ("kl" only)
+    sg_set_variance: bool = False                 # sg[.] on the L_set text-set variance discount
 
     # --- Schedule / selection ---
     no_staged: bool = False
@@ -719,6 +726,7 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
         distribution_merging=cfg.distribution_merging,
         dropout_rate=cfg.dropout_rate,
         cov_rank=cfg.cov_rank,
+        mu_residual=cfg.mu_residual,
     )
     model = model.to(cfg.device)
     log.info(f"{prefix}Model created with {model.num_trainable_parameters():,} trainable parameters")
@@ -741,9 +749,11 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             m_neg=cfg.m_neg,
             use_uncertainty_sim=cfg.use_uncertainty_sim,
             kl_var_clamp=cfg.kl_var_clamp,
+            sg_set_variance=cfg.sg_set_variance,
         )
         log.info(f"{prefix}Using MCDisp_Align KL-variant loss "
-                 f"(lambda_kl={cfg.lambda_kl}; mu/var terms folded into the KL)")
+                 f"(lambda_kl={cfg.lambda_kl}; mu/var terms folded into the KL; "
+                 f"sg_set_variance={cfg.sg_set_variance})")
     elif cfg.loss_name == "kl_capnce":
         from losses.mcdisp_align_losses_kl_capnce import MCDispAlignKLCapNCELoss
         criterion = MCDispAlignKLCapNCELoss(
@@ -869,7 +879,7 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             train_metrics = train_epoch(
                 model, train_loader, criterion, optimizer, cfg.device, epoch,
                 desc_prefix=cfg.tag, total_epochs=cfg.epochs, base_lambda_var=cfg.lambda_var,
-                base_lambda_kl=cfg.lambda_kl,
+                base_lambda_kl=cfg.lambda_kl, no_staged=cfg.no_staged,
             )
             val_metrics = evaluate(
                 model, val_loader, criterion, cfg.device,
@@ -960,7 +970,8 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             if improved:
                 model.save(str(best_path))
                 score_str = (f"mcdisp_align_recall@1: {best_recall:.4f}" if cfg.select_by == "recall"
-                             else f"val_loss: {best_val_loss:.4f}")
+                             else f"val_loss: {best_val_loss:.4f}" if cfg.select_by == "loss"
+                             else f"{cfg.select_by}: {best_recall:.4f}")
                 log.info(f"{prefix}Best model saved ({score_str}) -> {best_path}")
                 patience_counter = 0
             else:
@@ -983,11 +994,14 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             "base_lrs": base_lrs,
             "select_by": cfg.select_by,
             "loss_name": cfg.loss_name,  # objective tag for the resume guard
+            "seed": cfg.seed,
+            "freeze_clip": cfg.freeze_clip,
+            "mu_residual": cfg.mu_residual,
+            "sg_set_variance": cfg.sg_set_variance,
         }
         torch.save(final_state, str(last_path))
         log.info(f"{prefix}Final model saved to {last_path}")
-        log.info(f"{prefix}Best val loss: {best_val_loss:.4f} | Best MCDisp_Align recall@1: {best_recall:.4f} "
-                 f"(selected by: {cfg.select_by})")
+        log.info(f"{prefix}Best val loss: {best_val_loss:.4f} | Best score ({cfg.select_by}): {best_recall:.4f}")
 
     results = {
         "best_val_loss": best_val_loss,

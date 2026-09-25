@@ -103,6 +103,12 @@ def parse_args():
                              "--lambda-kl then replaces --lambda-mu/--lambda-var)")
     parser.add_argument("--lambda-kl", type=float, default=1.0,
                         help="Weight of the KL alignment term (only used with --loss kl)")
+    parser.add_argument("--sg-set-variance", action="store_true",
+                        help="Stop-gradient on the merged text-set variance in "
+                             "the L_set score discount. Forward values are "
+                             "unchanged; blocks the caption norm/spread "
+                             "collapse gradient channel (default off = exact "
+                             "paper gradient path)")
     parser.add_argument("--lambda-cap-nce", type=float, default=config.MCDISP_ALIGN_LAMBDA_CAP_NCE,
                         help="Weight of the auxiliary per-caption NCE term "
                              "(only with --loss kl_capnce; 0 reduces to plain KL)")
@@ -187,6 +193,7 @@ def main():
         lambda_var=args.lambda_var,
         loss_name=args.loss,
         lambda_kl=args.lambda_kl,
+        sg_set_variance=args.sg_set_variance,
         lambda_cap_nce=args.lambda_cap_nce,
         tau_cap=args.tau_cap,
         lambda_cover_pos=args.lambda_cover_pos,

@@ -59,3 +59,6 @@ desktop.ini
 
 # API keys and secrets
 api_config.json
+
+# Shell Scripts
+*.sh

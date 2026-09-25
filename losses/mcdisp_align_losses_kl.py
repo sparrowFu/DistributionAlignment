@@ -138,6 +138,7 @@ class MCDispAlignKLLoss(nn.Module):
         kl_symmetric: bool = False,
         kl_detach_target: bool = True,
         kl_normalize_by_dim: bool = True,
+        sg_set_variance: bool = False,
     ):
         """MCDisp_Align KL-variant loss.
 
@@ -166,6 +167,14 @@ class MCDispAlignKLLoss(nn.Module):
                 detach-everything-caption philosophy of MCDispAlignLoss).
             kl_normalize_by_dim: divide the KL by D so its scale matches the
                 per-D-normalized L_cover and does not drift with D.
+            sg_set_variance: stop-gradient on the merged text-set variance
+                inside the L_set score discount. Forward values are unchanged
+                (same loss, same ranking); the only effect is that L_set can
+                no longer lower its loss by shrinking caption norms or
+                between-caption spread through the moment-matched v_C
+                (= mean(v_k) + Var(mu_k), which depends on the caption means).
+                Extends the paper's own sg[.] usage on caption-derived targets;
+                default False keeps the exact paper gradient path.
         """
         super().__init__()
         self.lambda_ctr = lambda_ctr
@@ -185,6 +194,7 @@ class MCDispAlignKLLoss(nn.Module):
         self.kl_symmetric = kl_symmetric
         self.kl_detach_target = kl_detach_target
         self.kl_normalize_by_dim = kl_normalize_by_dim
+        self.sg_set_variance = sg_set_variance
 
     # ------------------------------------------------------------------ helpers
     @staticmethod
@@ -250,6 +260,10 @@ class MCDispAlignKLLoss(nn.Module):
         B = img_mu.shape[0]
         img_mu_n = F.normalize(img_mu, dim=-1)
         text_mu_n = F.normalize(text_mu, dim=-1)
+        if self.sg_set_variance:
+            # values identical; only the gradient path through the merged
+            # caption-set variance (norm/spread collapse channel) is cut
+            text_logvar = text_logvar.detach()
         sim = self._sim_matrix(img_mu_n, img_logvar, text_mu_n, text_logvar,
                                self.tau, self.use_uncertainty_sim,
                                self.uncertainty_grad_alpha)
