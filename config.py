@@ -499,11 +499,14 @@ PCMEPP_TXT_SIZE_AUGMENT_MASKING = 0.5
 PCMEPP_TXT_SIZE_AUGMENT_ERASING = 0.1
 PCMEPP_PERTURB_VOCAB_SIZE = 30522  # official uses len(BertTokenizer vocab)
 
-# Precision: official trains fp32 ("32-true"); bf16 autocast (encoders only,
-# criterion/GPO stay fp32) is the default here to fit batch 128 next to other
-# GPU tenants on a single 85GB card. Use --precision 32-true for the exact
-# official setting.
-PCMEPP_PRECISION = "bf16-mixed"
+# Precision: official trains fp32 ("32-true") -- the default again since
+# 2026-11-10: bf16 backward produced non-finite gradients in the (officially
+# unbounded) sigma branch during occasional mid-training runaways, which the
+# official fp32 recipe survives via grad clipping (2026-11-10 root-cause
+# investigation, experiments.md section 10). fp32 batch 128 fits the card
+# thanks to gradient checkpointing over the two CLIP towers (numerically
+# identical; see PCMEPPModel.enable_grad_checkpoint).
+PCMEPP_PRECISION = "32-true"
 
 
 # =============================================================================

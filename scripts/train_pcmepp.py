@@ -12,15 +12,22 @@ MSDA (mixup/cutmix, elem mode) and the token-level SizeAugment /
 caption-token perturbation.
 
 Deviations from the official setup (documented in experiments.md):
-- precision: default bf16 autocast for the encoders (criterion + GPO stay
-  fp32) to fit batch 128 next to other GPU tenants; --precision 32-true
-  reproduces the official full-fp32 setting.
+- precision: official fp32 ("32-true", the default since 2026-11-10). The
+  earlier bf16-autocast default was reverted: in the officially unbounded
+  sigma branch, occasional mid-training runaways (a structural property of
+  the recipe, see experiments.md section 10) produced non-finite gradients
+  under bf16 backward, while official fp32 survives them via grad clipping.
+  To fit fp32 batch 128 on one 80GB GPU the two CLIP towers run under
+  torch.utils.checkpoint (numerically identical; pure-torch modules, no RNG
+  inside, exact fp32 recompute) -- --no-grad-checkpoint disables it.
 - no torch.compile: the official engine calls torch.compile and discards
   the result, so its runs were effectively uncompiled too.
 - no SWA (official swa_start_epoch 16; not part of the paper's main-table
   protocol).
 - epochs: 5 (official 25); the epoch-15 lr milestone is therefore never
   reached.
+- non-finite loss handling: official prints 'Killed due to NaN!!' and
+  exits; we log and raise (same outcome, visible in main.py).
 - data: the project's MSCOCO train2017 pool (118,287 images) instead of the
   official COCO-2014 Karpathy split; PIL bilinear instead of cv2.INTER_LINEAR;
   validation uses caption[0] per image.
@@ -86,8 +93,13 @@ def parse_args():
                         help="Weight decay")
     parser.add_argument("--precision", type=str, default=config.PCMEPP_PRECISION,
                         choices=["bf16-mixed", "32-true"],
-                        help="bf16-mixed: autocast encoders (criterion/GPO fp32); "
-                             "32-true: official full fp32")
+                        help="32-true: official full fp32 (default); bf16-mixed: "
+                             "autocast encoders (numerically riskier in the sigma "
+                             "branch -- see module docstring)")
+    parser.add_argument("--no-grad-checkpoint", action="store_true",
+                        help="Disable torch.utils.checkpoint over the CLIP towers "
+                             "(enabled by default; numerically identical, halves the "
+                             "activation memory so fp32 batch 128 fits one 80GB GPU)")
     parser.add_argument("--max-batches-per-epoch", type=int, default=0,
                         help="Cap on processed batches per epoch (<=0: no cap; "
                              "smoke-run convenience)")
@@ -181,36 +193,21 @@ def train_epoch(model: PCMEPPModel, dataloader: DataLoader, optimizer,
                              embedding_warmup_epochs=config.PCMEPP_EMBEDDING_WARMUP_EPOCHS)
         loss = loss * alpha
 
-        # Skip non-finite losses only. NOTE: a fresh CLIP init legitimately
-        # produces losses of ~2600 for the first ~15 batches (they decay to
-        # ~0.03 within a few stepped batches) -- do NOT add an absolute loss
-        # threshold here.
+        # Official engine.py: `if torch.isnan(loss) or torch.isinf(loss):
+        # print('Killed due to NaN!!'); exit(0)`. Finite-but-huge losses
+        # (sigma-branch runaways are a structural property of the recipe)
+        # are STEPPED: grad clip 2.0 bounds the update and pulls sigma back,
+        # which is how the official fp32 recipe self-heals them.
         if not torch.isfinite(loss):
-            logger.warning(f"Epoch {epoch + 1}, batch {batch_idx + 1}: non-finite loss "
-                           f"({loss.item()}); skipping step")
-            optimizer.zero_grad(set_to_none=True)
-            # Release this batch's autograd graph before continuing: without a
-            # backward() nothing frees it, and the retained activations make
-            # the next forward OOM (~2x activation memory).
-            del loss, loss_dict, img_emb, cap_emb
-            continue
+            raise RuntimeError(
+                f"Epoch {epoch + 1}, batch {batch_idx + 1}: non-finite loss "
+                f"({loss.item()}) -- terminating, as the official engine does "
+                f"('Killed due to NaN')."
+            )
 
         optimizer.zero_grad()
         loss.backward()
-        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(),
-                                                   config.PCMEPP_GRAD_CLIP)
-        # A finite loss can still produce inf/NaN gradients (the 2026-11-10
-        # crash: a finite 5e17 loss stepped NaN grads into the weights). With
-        # a finite norm clip_grad_norm_ has already rescaled all grads to
-        # PCMEPP_GRAD_CLIP, so the step is safe; a non-finite norm means the
-        # update would poison the weights -- skip it. backward() has already
-        # freed the graph, no manual release needed here.
-        if not torch.isfinite(grad_norm):
-            logger.warning(f"Epoch {epoch + 1}, batch {batch_idx + 1}: non-finite grad "
-                           f"norm (loss {loss.item():.4f}); skipping step")
-            optimizer.zero_grad(set_to_none=True)
-            continue
-
+        torch.nn.utils.clip_grad_norm_(model.parameters(), config.PCMEPP_GRAD_CLIP)
         optimizer.step()
 
         total_loss += loss.item()
@@ -309,6 +306,8 @@ def main():
     # disables it, re-enable after seeding
     torch.backends.cudnn.benchmark = True
     model.apply_epoch_freeze(0)
+    if not args.no_grad_checkpoint:
+        model.enable_grad_checkpoint()
     logger.info(f"Model created: {sum(p.numel() for p in model.parameters()):,} parameters, "
                 f"{model.num_trainable_parameters():,} trainable under the epoch-0 freeze "
                 f"(img backbone frozen, unc branch + text tower + heads trainable)")

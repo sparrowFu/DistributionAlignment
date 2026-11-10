@@ -1,7 +1,11 @@
 """
 PCME++ Evaluation Script (B5)
 
-Evaluates the trained PCME++ model with the shared project protocols:
+Primary protocol: the official PCME++ COCO test evaluation (vendored
+pcmepp/evaluation.py) -- all 5 captions per test image, CSD similarity,
+i2t (any-of-5 hit) and t2i (per-caption) Recall@1/5/10 + medR.
+
+Also reports the shared project protocols for cross-baseline comparability:
 Protocol A (legacy 1:1 vs the first caption, cosine + CSD) and Protocol B
 (unified multi-caption: N images vs N*K captions, uncertainty-discounted +
 cosine). Features come from the official eval pipeline (official image
@@ -20,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import config
 from models.pcmepp_model import PCMEPPModel
+from pcmepp.evaluation import compute_csd_sims, eval_i2t_val, eval_t2i_val
 from utils.eval_common import build_eval_dataloader, resolve_checkpoint, VALID_DATASETS
 from utils.eval_results import append_eval_results, groups_to_flat, print_recall_groups
 from utils.logger import get_logger, log_exception
@@ -144,6 +149,35 @@ def main():
     )
 
     groups = []
+
+    # --- Official PCME++ COCO test protocol (paper Table 1): N images vs
+    # 5N captions (grouped 5-per-image), CSD similarity from the vendored
+    # official evaluation.py; i2t = any-of-the-5 hit, t2i = per caption.
+    n_imgs = img_mu.shape[0]
+    k_caps = text_mus.shape[1]
+    cap_mu_flat = text_mus.reshape(n_imgs * k_caps, -1)
+    cap_logvar_flat = text_logvars.reshape(n_imgs * k_caps, -1)
+    if k_caps == 5:
+        sims = compute_csd_sims(img_mu, cap_mu_flat, img_logvar, cap_logvar_flat)
+        i2t = eval_i2t_val(n_imgs, sims)
+        t2i = eval_t2i_val(n_imgs, sims)
+        ret_at = {1: 0, 5: 1, 10: 2}  # (r1, r5, r10, medr, meanr)
+        per_k = {}
+        for k in args.recall_at_k:
+            if k not in ret_at:
+                logger.warning(f"official protocol reports R@1/5/10 only; skip k={k}")
+                continue
+            pos = ret_at[k]
+            per_k[k] = {"i2t": i2t[pos], "t2i": t2i[pos],
+                        "mean": (i2t[pos] + t2i[pos]) / 2}
+        groups.append({
+            "family": "official_csd_recall",
+            "label": ("Official CSD Recall@K (5-caption protocol, paper) "
+                      f"medR i2t {i2t[3]:.0f} / t2i {t2i[3]:.0f}"),
+            "per_k": per_k,
+        })
+    else:
+        logger.warning(f"official 5-caption protocol needs K=5 captions, got {k_caps}; skipped")
 
     # --- Protocol A (legacy, kept for comparability): 1:1 retrieval against
     # the FIRST caption of each image. Family keys unchanged. ---------------

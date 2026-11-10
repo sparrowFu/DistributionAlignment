@@ -115,6 +115,42 @@ class PCMEPPModel(nn.Module):
         logger.info("PCME++ model initialized "
                     f"({sum(p.numel() for p in self.parameters()):,} parameters)")
 
+    def enable_grad_checkpoint(self) -> None:
+        """Wrap every ResidualAttentionBlock of the two CLIP towers in
+        torch.utils.checkpoint (use_reentrant=False) so full-fp32 batch-128
+        training fits on one 80GB GPU (uncheckpointed fp32 activations need
+        ~76GB; per-block checkpointing keeps only block-boundary activations
+        plus one block's recompute workspace, ~15GB total).
+
+        Numerically identical to the plain forward: the blocks are pure torch
+        (CLIP attention has no dropout; SizeAugment / token perturbation live
+        outside the towers), so the backward recompute reproduces the forward
+        bit-for-bit in fp32. Skipped automatically per block when no tower
+        parameter requires grad (frozen epochs) or under no_grad (evaluation).
+        """
+        import torch.utils.checkpoint as cp
+        from pcmepp.modules.clip.model import ResidualAttentionBlock
+
+        n_wrapped = 0
+        for tower in (self.img_enc.backbone, self.txt_enc.backbone):
+            for module in tower.modules():
+                if not isinstance(module, ResidualAttentionBlock):
+                    continue
+                orig = module.forward
+                if getattr(orig, "_ckpt_wrapped", False):
+                    continue
+
+                def wrapped(x, _orig=orig, _module=module):
+                    if (torch.is_grad_enabled()
+                            and any(p.requires_grad for p in _module.parameters())):
+                        return cp.checkpoint(_orig, x, use_reentrant=False)
+                    return _orig(x)
+
+                wrapped._ckpt_wrapped = True
+                module.forward = wrapped
+                n_wrapped += 1
+        logger.info(f"Gradient checkpointing enabled on {n_wrapped} CLIP attention blocks")
+
     def process_images(self, images: List) -> torch.Tensor:
         """Official eval transform over a list of PIL images -> (B, 3, 224, 224)."""
         return torch.stack([pcmepp_eval_image_transform(im) for im in images])

@@ -216,7 +216,32 @@ shift/negative_scale=5）+ VIB(1e-4) + 0.1×伪正样本平滑（平滑项按当
 2. 无 torch.compile：官方 engine 调用 `torch.compile` 后丢弃返回值，实际并未编译，跳过即等价。
 3. 无 SWA（官方 swa_start_epoch=16，非论文主表协议）。
 4. 数据：项目 MSCOCO train2017 池（118,287 图 × 5 描述）vs 官方 COCO-2014 Karpathy；图像插值用 PIL BILINEAR 替代 cv2.INTER_LINEAR；验证集用每图 caption[0]（官方 dev split 5k 全描述）。
-5. 非有限损失跳步告警（官方直接 exit）；DataLoader worker 重播种（官方缺失，属修正）。
+5. 非有限损失处理与官方一致（官方 `print('Killed due to NaN!!'); exit(0)`；本项目 log 后 raise，结果相同）；DataLoader worker 重播种（官方缺失，属修正）。
+6. **精度：fp32（官方 32-true，2026-11-10 起为默认）**。曾默认 bf16 autocast（编码器）以省显存——这正是两次训练崩溃的
+   根因（见下方根因调查）；为在单卡 80GB 上跑 fp32 batch 128，对两座 CLIP 塔的 38 个 attention block 启用
+   `torch.utils.checkpoint`（逐 block、fp32 重算，数值上与不加点检完全一致；block 内纯 torch 无 RNG，重算精确），
+   峰值显存 12.6 GiB（未加点检的 fp32 需 ~76 GiB 激活）。`--no-grad-checkpoint` 可关，`--precision bf16-mixed` 保留但不再推荐。
+7. **epochs 5**（官方 25；训练时长预算），epoch 15 的 lr×0.1 降档因此永不触发。
+8. **评估协议（2026-11-10 起）**：主指标改为官方论文协议——官方 `pcmepp/evaluation.py`（已原样搬运，仅
+   eccv_caption 依赖加保护）的 `compute_csd_sims` + `eval_i2t_val/eval_t2i_val`：每图全部 5 条 caption、
+   CSD 相似度、i2t（5 中任一命中）/ t2i（逐 caption）R@1/5/10 + medR。项目协议 A/B 保留用于跨基线对比。
+
+**根因调查（2026-11-10，两次崩溃：25-epoch 跑 epoch 10、5-epoch 跑 epoch 3 batch 1428，均 sigma 支路
+logsigma→+23、loss→1e7~1e14、梯度非有限）**：移植本身无 bug（结构/LR 分组/warmup/冻结/matched 矩阵逐行
+比对官方 yaml+engine.py 一致，含 sigma_ln_init:null、unc 支路 lr 3.5e-6、ViT-L 尾层 0.7^-11、官方多卡
+all-gather 后同为 128×128 匹配矩阵）；350 个训练 batch（含完整 MSDA/SizeAugment）扫描无天然灾难图片；
+bf16 与 fp32 forward 差异 0.006。结论：std 支路（无界 exp(排序池化(无 LN 的 unc 输出))）本就运行在临界
+状态，这是官方设计的固有属性；官方 fp32 下偶发大 loss 的梯度"巨大但有限"，被 clip 2.0 缩放后照样 step、
+把 sigma 拉回（自愈），真 NaN 则 exit；bf16 backward 在该状态产生非有限梯度——无保护时 NaN 步进污染权重
+（第一次崩溃）、加跳步保护后自愈梯度永不生效而死锁（第二次）。修复=回到官方 fp32+官方语义，以逐 block
+梯度检查点解决显存。诊断脚本：tools/diagnose_pcmepp_std.py、tools/repro_pcmepp_explosion.py、
+tools/smoke_fp32_ckpt.py。
+
+**运行记录**：2026-11-09 10:51 首训（25 epochs，bf16）epoch 10 崩溃（epoch 8 权重备份
+`pcmepp_coco_best_crashed25ep_run.pt`，val 0.0487）；2026-11-10 上午复跑（5 epochs，bf16）epoch 3 batch 1428
+死锁（epoch 2 完整状态备份 `pcmepp_coco_last_epoch2_clean.pt`，val 0.0690）；2026-11-10 下午按官方 fp32
+配方（偏差 6）从零重训。该 bf16 epoch-2 权重在官方评估协议下 i2t R@1=65.8 / t2i R@1=49.0（5k 子集，
+供参照；论文 ViT-L/14 COCO 5k test i2t R@1≈74.7）。
 
 **验证状态（2026-11-09）**：单测 21 个全过（含 CSD 手工公式、LLRD 分组含 >1 因子、Mixup 行为、扰动界、
 转换映射）；权重转换自检双塔余弦=1.000000；冒烟训练（20 步）损失 2512→11.7、峰值显存 10.5 GiB
@@ -228,8 +253,8 @@ PY=/home/xpfu/.conda/envs/CudaVersion128Fuxp/bin/python
 # 权重转换（一次性，已生成 PreTrainedModels/clip-vit-large-patch14-openai.pt）
 $PY tools/convert_hf_clip_to_openai.py --self-check
 
-# 正式训练 + 评测
-$PY main.py --task train_pcmepp    # 冒烟实测 ~1.8s/步(冻结期)；25 epochs 全程估 2-3.5 天
+# 正式训练 + 评测（epochs=5，见偏差 7）
+$PY main.py --task train_pcmepp --resume checkpoints/pcmepp_coco_last_epoch2_clean.pt  # 从 epoch 3 续
 $PY main.py --task eval_pcmepp     # 5000 图种子子集，协议 A+B
 ```
 
