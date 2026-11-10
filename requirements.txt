@@ -1,24 +1,58 @@
-# GaussianImageDistribution - Baseline CLIP Fine-tuning Requirements
-# PyTorch and torchvision
-torch>=2.0.0
-torchvision>=0.15.0
+# DistributionAlignment - 迁移用依赖清单
+# 版本与已验证环境 conda env "CudaVersion128Fuxp" (Python 3.10, torch 2.7.0+cu128) 逐项锁定。
+#
+# ==== 安装顺序（新服务器） =============================================
+# 1) PyTorch 栈不要写在本文件里（PyPI 默认源会装成 CPU/错 CUDA 版本），
+#    先单独安装：
+#      pip install torch==2.7.0 torchvision==0.22.0 \
+#          --index-url https://download.pytorch.org/whl/cu128
+#    (国内网络可用镜像: https://mirrors.aliyun.com/pytorch-wheels/cu128 )
+# 2) 其余依赖 + 本地 prolip wheel（prolip-torch 不在 PyPI 上，仓库自带）：
+#      pip install -r requirements.txt
+#
+# ==== 本文件不包含的东西 ===============================================
+# - prolip-torch: 不在 PyPI（官方源 404），已从 github.com/naver-ai/prolip
+#   打好 wheel 放在 third_party/prolip_torch-1.0.0-py3-none-any.whl，
+#   下方以相对路径引用；若 pip -r 报路径错误，改用
+#   `pip install third_party/prolip_torch-1.0.0-py3-none-any.whl`。
+# - 模型权重（PreTrainedModels/: CLIP ViT-L/14、prolip h14/l16、SigLIP
+#   分词器、转换产物 clip-vit-large-patch14-openai.pt）与数据集
+#   （TrainDatasets/）需单独拷贝，见 README "Pre-trained Model" 与
+#   experiments.md §10/§11。
+# - torch/torchvision/torchaudio/triton（见上方第 1 步）。
+# - 可选: eval_llm_vqa.py 需要 openai>=1.0.0（当前环境未装）。
+# =======================================================================
 
-# Transformers for CLIP model
-transformers>=4.30.0
+# ---- B3 ProLIP（不在 PyPI，本地 wheel）----------------------------------
+./third_party/prolip_torch-1.0.0-py3-none-any.whl
 
-# Data processing
-pandas>=2.0.0
-pyarrow>=12.0.0
-Pillow>=9.5.0
+# ---- HuggingFace 栈（CLIP 加载 / tokenizer / safetensors 读写）---------
+transformers==5.13.1
+tokenizers==0.22.2
+huggingface-hub==1.23.0
+safetensors==0.8.0
 
-# Progress bar
-tqdm>=4.65.0
+# ---- ProLIP 分词器运行时（ftfy/regex/sentencepiece/protobuf 为其声明依赖）-
+ftfy==6.3.1
+regex==2026.5.9
+sentencepiece==0.2.2
+protobuf==7.35.1
 
-# Numerical computing
-numpy>=1.24.0
+# ---- vendored pcmepp 包（pkg_resources 替代导入）------------------------
+packaging==26.0
 
-# Metrics and evaluation
-scikit-learn>=1.2.0
+# ---- 科学计算 / 数据 ------------------------------------------------------
+numpy==2.2.6
+scipy==1.15.3
+pandas==2.3.3
+pyarrow==24.0.0
+Pillow==12.2.0
+scikit-learn==1.7.2
+pyyaml==6.0.3
 
-# Optional: accelerate for distributed training
-# accelerate>=0.20.0
+# ---- 可视化 / 进度条 ------------------------------------------------------
+matplotlib==3.10.9
+tqdm==4.68.2
+
+# ---- 测试 ----------------------------------------------------------------
+pytest==9.1.1

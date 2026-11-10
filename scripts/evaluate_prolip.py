@@ -31,9 +31,13 @@ logger = get_logger("eval_prolip", config.EVAL_PROLIP_LOG_PATH)
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate ProLIP (Fine-tuned)")
 
+    parser.add_argument("--backbone", type=str, default="h14",
+                        choices=list(config.PROLIP_VARIANTS),
+                        help="ProLIP backbone variant (h14 legacy default, l14, l16); "
+                             "selects the checkpoint prefix prolip[_{l14,l16}]_{dataset}_best.pt")
     parser.add_argument("--checkpoint", type=str, default=None,
-                        help="Path to checkpoint. If None, auto-selects "
-                             "prolip_{dataset}_best.pt from --dataset "
+                        help="Path to checkpoint. If None, auto-selects the "
+                             "variant's {prefix}_{dataset}_best.pt from --dataset "
                              "(pass a ..._last.pt path to evaluate the last checkpoint).")
     parser.add_argument("--dataset", type=str, default="coco",
                         choices=list(VALID_DATASETS),
@@ -117,11 +121,12 @@ def main():
     args = parse_args()
     set_seed(config.SEED)
 
-    # auto-selects prolip_{dataset}_best.pt
-    checkpoint_path = args.checkpoint or str(resolve_checkpoint("prolip", args.dataset))
-    logger.info(f"Loading model from {checkpoint_path}")
+    variant = config.PROLIP_VARIANTS[args.backbone]
+    # auto-selects {prefix}_{dataset}_best.pt
+    checkpoint_path = args.checkpoint or str(resolve_checkpoint(variant["ckpt_prefix"], args.dataset))
+    logger.info(f"Loading model ({variant['label']}) from {checkpoint_path}")
 
-    model = ProLIPModel()
+    model = ProLIPModel(backbone=args.backbone)
     model.load(checkpoint_path)
     model = model.to(args.device)
 
@@ -189,9 +194,9 @@ def main():
     print_recall_groups(groups, logger)
 
     # Append results (never overwrite prior runs); time is stamped after dataset.
-    output_path = args.output_path or str(config.PROLIP_EVAL_RESULTS_PATH)
+    output_path = args.output_path or str(variant["eval_results"])
     append_eval_results(output_path, {
-        "model": "ProLIP ViT-H/14 (fine-tuned)",
+        "model": f"{variant['label']} (fine-tuned)",
         "checkpoint": str(checkpoint_path),
         "dataset": args.dataset,
         "num_samples": num_eval_samples,

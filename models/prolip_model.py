@@ -1,17 +1,21 @@
 """
 ProLIP Baseline (B3)
 
-Real ProLIP ViT-H/14 (SanghyukChun/ProLIP-ViT-H-14-FT-DC-1B-1_28M) loaded via
-the `prolip` library. Each image/text is modeled as a Gaussian N(mu, sigma^2 I)
-where mu and log(sigma^2) come from ProLIP's pretrained uncertainty heads.
-sigma is learned implicitly via ProLIP's inclusion objective during
-pretraining; unlike our MCDisp_Align, it carries no explicit semantic constraint.
+Real ProLIP loaded via the `prolip` library. Each image/text is modeled as a
+Gaussian N(mu, sigma^2 I) where mu and log(sigma^2) come from ProLIP's
+uncertainty heads. Three backbone variants (config.PROLIP_VARIANTS):
+  - h14 (legacy default): official ProLIP-ViT-H-14-FT weights
+  - l14: self-assembled from the local OpenAI CLIP ViT-L/14 by
+    tools/build_prolip_vit_l14.py (same backbone+init as Ours/B1/B2/B4/B5, but
+    no ProLIP 1.28B probabilistic pretraining)
+  - l16: official ProLIP-ViT-L-16-FT weights (SigLIP architecture: 256px,
+    SigLIP norm, sentencepiece tokenizer, context 64)
 
 Two usage modes (mirror the CLIP baseline):
   - zero_shot : ProLIPModel(freeze=True) -- frozen pretrained weights, no checkpoint
   - fine_tune : ProLIPModel() then .load(config.PROLIP_BEST_CKPT).
 
-Three local artifacts (no network): config.PROLIP_{MODEL,PROCESSOR,TOKENIZER}_PATH.
+Local artifacts only (no network): see config.PROLIP_VARIANTS paths.
 """
 
 import os
@@ -69,38 +73,71 @@ class ProLIPModel(nn.Module):
 
     def __init__(
         self,
+        backbone: str = "h14",
         model_path: Optional[str] = None,
         processor_path: Optional[str] = None,
         tokenizer_path: Optional[str] = None,
         freeze: bool = False,
         context_length: Optional[int] = None,
+        clean: Optional[str] = None,
     ):
         """
         Args:
-            model_path: ProLIPHF weights dir (config.PROLIP_MODEL_PATH if None)
-            processor_path: CLIP image processor dir (config.PROLIP_PROCESSOR_PATH)
-            tokenizer_path: HFTokenizer dir (config.PROLIP_TOKENIZER_PATH)
+            backbone: variant tag in config.PROLIP_VARIANTS ("h14" legacy
+                      default, "l14" self-built CLIP-init, "l16" official
+                      SigLIP-arch). Explicit path/length args below override
+                      the registry (backward compatibility).
+            model_path: ProLIPHF weights dir (variant default if None)
+            processor_path: CLIP image processor dir (variant default; ignored
+                            for the "siglip" processor kind)
+            tokenizer_path: HFTokenizer dir (variant default)
             freeze: freeze all backbone params (zero-shot mode)
-            context_length: tokenizer context length (config.PROLIP_CONTEXT_LENGTH)
+            context_length: tokenizer context length (variant default)
+            clean: HFTokenizer clean function (variant default)
         """
         super().__init__()
 
-        self.model_path = str(model_path or config.PROLIP_MODEL_PATH)
-        self.processor_path = str(processor_path or config.PROLIP_PROCESSOR_PATH)
-        self.tokenizer_path = str(tokenizer_path or config.PROLIP_TOKENIZER_PATH)
-        self.context_length = context_length or config.PROLIP_CONTEXT_LENGTH
+        if backbone not in config.PROLIP_VARIANTS:
+            raise ValueError(
+                f"Unknown ProLIP backbone {backbone!r}; "
+                f"expected one of {sorted(config.PROLIP_VARIANTS)}"
+            )
+        variant = config.PROLIP_VARIANTS[backbone]
+        self.backbone = backbone
+
+        self.model_path = str(model_path or variant["model_path"])
+        self.processor_kind = variant["processor"]
+        self.processor_path = str(processor_path or variant["processor_path"])
+        self.tokenizer_path = str(tokenizer_path or variant["tokenizer_path"])
+        self.context_length = context_length or variant["context_length"]
+        self.clean = clean or variant["clean"]
         self.freeze = freeze
 
-        logger.info(f"Loading ProLIPHF from: {self.model_path}")
+        logger.info(f"Loading ProLIPHF ({backbone}) from: {self.model_path}")
         self.prolip = ProLIPHF.from_pretrained(self.model_path)
 
-        logger.info(f"Loading processor from: {self.processor_path}")
-        self.processor = CLIPProcessor.from_pretrained(
-            self.processor_path, local_files_only=True
-        )
+        if self.processor_kind == "clip":
+            logger.info(f"Loading CLIP processor from: {self.processor_path}")
+            self.processor = CLIPProcessor.from_pretrained(
+                self.processor_path, local_files_only=True
+            )
+        elif self.processor_kind == "siglip":
+            # Official ProLIP ViT-L/16 is SigLIP-arch: 256px, mean/std 0.5,
+            # bicubic -- constructed programmatically (prolip's own PreprocessCfg).
+            from transformers import SiglipImageProcessor
+            self.processor = SiglipImageProcessor(
+                size=256, crop_size=256,
+                do_resize=True, do_center_crop=True, do_normalize=True,
+                image_mean=[0.5, 0.5, 0.5], image_std=[0.5, 0.5, 0.5],
+            )
+            logger.info("Constructed SigLIP image processor (256px, 0.5/0.5 norm)")
+        else:
+            raise ValueError(f"Unknown processor kind {self.processor_kind!r}")
 
-        logger.info(f"Loading tokenizer from: {self.tokenizer_path}")
-        self.tokenizer = HFTokenizer(self.tokenizer_path, context_length=self.context_length)
+        logger.info(f"Loading tokenizer from: {self.tokenizer_path} "
+                    f"(context {self.context_length}, clean '{self.clean}')")
+        self.tokenizer = HFTokenizer(
+            self.tokenizer_path, context_length=self.context_length, clean=self.clean)
 
         # Compat: transformers>=5 removed PreTrainedTokenizer.batch_encode_plus,
         # which prolip's HFTokenizer.__call__ relies on. Alias it to the modern
@@ -137,11 +174,14 @@ class ProLIPModel(nn.Module):
         """Tokenize a list of captions.
 
         Returns a CLIP-style dict {"input_ids", "attention_mask"} for consistency
-        with the rest of the repo. ProLIP's text tower handles padding internally
-        (pad_id=0); ``forward`` ignores ``attention_mask`` -- it is informational.
+        with the rest of the repo. ProLIP's text tower handles padding internally;
+        ``forward`` ignores ``attention_mask`` -- it is informational (built with
+        the tokenizer's real pad id: 0 for CLIP BPE, 1 for SigLIP sentencepiece).
         """
         input_ids = self.tokenizer(texts)                       # (B, context_length)
-        attention_mask = (input_ids != 0).long()
+        pad_id = getattr(self.tokenizer.tokenizer, "pad_token_id", None)
+        pad_id = 0 if pad_id is None else pad_id
+        attention_mask = (input_ids != pad_id).long()
         return {"input_ids": input_ids, "attention_mask": attention_mask}
 
     # --------------------------------------------------------------- encoders
@@ -219,15 +259,29 @@ class ProLIPModel(nn.Module):
         """Save ProLIP weights (processor/tokenizer are fixed local artifacts)."""
         state = {
             "model_state_dict": self.prolip.state_dict(),
-            "embed_dim": config.PROLIP_EMBED_DIM,
+            "embed_dim": int(self.prolip.visual.proj.shape[1]),  # variant-derived
+            "backbone": self.backbone,
             "freeze": self.freeze,
         }
         torch.save(state, path)
         logger.info(f"ProLIP model saved to: {path}")
 
     def load(self, path: str, strict: bool = True) -> None:
-        """Load ProLIP weights saved by ``save``."""
+        """Load ProLIP weights saved by ``save`` (or a train-script ``_last.pt``).
+
+        Refuses to load a checkpoint trained on a different backbone variant
+        (state-dict shapes would mismatch anyway; this fails with a clear error).
+        Legacy files without a backbone tag are accepted with a warning.
+        """
         state = torch.load(path, map_location="cpu", weights_only=False)
+        ckpt_backbone = state.get("backbone")
+        if ckpt_backbone is not None and ckpt_backbone != self.backbone:
+            raise ValueError(
+                f"Checkpoint was trained on backbone {ckpt_backbone!r} but this "
+                f"model is {self.backbone!r}; construct with backbone={ckpt_backbone!r}"
+            )
+        if ckpt_backbone is None:
+            logger.warning(f"{path} has no backbone tag (legacy file); loading anyway")
         self.prolip.load_state_dict(state["model_state_dict"], strict=strict)
         logger.info(f"ProLIP model loaded from: {path}")
 
@@ -241,8 +295,9 @@ if __name__ == "__main__":
     set_seed(config.SEED)
 
     model = ProLIPModel()
+    print(f"Backbone: {model.backbone}")
     print(f"Trainable parameters: {model.num_trainable_parameters():,}")
-    print(f"Embed dim: {config.PROLIP_EMBED_DIM}")
+    print(f"Embed dim: {int(model.prolip.visual.proj.shape[1])}")
 
     from PIL import Image
     dummy_images = [Image.new("RGB", (224, 224)) for _ in range(2)]

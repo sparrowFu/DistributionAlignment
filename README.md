@@ -16,7 +16,7 @@ MCDisp_Align has two modes: a **diagonal mode** (`r=0`, `Σ = diag(σ²)`) and a
 - **Uncertainty-calibrated similarity**: `sim(x,y) = μ_x·μ_y / (τ·√(1+var_x)·√(1+var_y))`
 - **Moment-matching merge**: fuses K per-caption distributions into one set distribution
 - **3-stage training**: Warmup → Main → Full, gradually activating loss terms
-- **3 comparison baselines** (B1–B3) + Ours (MCDisp_Align)
+- **5 comparison baselines** (B1–B5) + Ours (MCDisp_Align)
 
 ## Documentation
 
@@ -40,10 +40,15 @@ GaussianImageDistribution/
 ├── models/
 │   ├── mcdisp_align_model.py          # Ours: MCDisp_Align distribution alignment model
 │   ├── clip_baseline.py             # B2: CLIP fine-tuning baseline
-│   └── prolip_model.py              # B3: ProLIP probabilistic embeddings
+│   ├── prolip_model.py              # B3: ProLIP probabilistic embeddings
+│   ├── probvlm_model.py             # B4: ProbVLM BayesCap adapters on frozen CLIP
+│   └── pcmepp_model.py              # B5: PCME++ (wraps the vendored pcmepp/ package)
 ├── losses/
 │   ├── clip_losses.py               # CLIP contrastive loss
-│   └── mcdisp_align_losses.py         # MCDisp_Align losses (set-NCE + mu + var + cover + cov + reg)
+│   ├── mcdisp_align_losses.py         # MCDisp_Align losses (set-NCE + mu + var + cover + cov + reg)
+│   ├── probvlm_losses.py            # ProbVLM GenGauss/TempComb losses + logvar conversion
+│   └── pcmepp_losses.py             # PCME++ matched-matrix / LLRD / schedule glue
+├── pcmepp/                          # Vendored official PCME++ package (MIT; local-weights loader patch)
 ├── utils/
 │   ├── seed.py, logger.py
 │   ├── image_preprocess.py
@@ -61,6 +66,10 @@ GaussianImageDistribution/
 │   ├── train_prolip.py              # B3 training
 │   ├── evaluate_prolip.py           # B3 evaluation
 │   ├── evaluate_prolip_zero_shot.py # B3 zero-shot evaluation
+│   ├── train_probvlm.py             # B4 training
+│   ├── evaluate_probvlm.py          # B4 evaluation
+│   ├── train_pcmepp.py              # B5 training
+│   └── evaluate_pcmepp.py           # B5 evaluation
 │   ├── build_vqa_expansions.py      # Stage-2: build gemma caption expansions
 │   ├── eval_vqa_retrieval.py        # Stage-2: VQA-as-retrieval evaluation
 │   ├── eval_ood.py                  # Exp4: OOD detection
@@ -121,10 +130,12 @@ Download CLIP ViT-Large-Patch14 into `PreTrainedModels/clip-vit-large-patch14/`.
 |----|--------|----------|------------|
 | B1 | CLIP Zero-Shot | — | No |
 | B2 | CLIP Fine-Tune | — | Yes (CLIP) |
-| B3 | ProLIP | learned log-variance head | Yes (MLP) |
+| B3 | ProLIP (h14 / **l14** / l16) | learned log-variance head | Yes (full fine-tune) |
+| B4 | ProbVLM | learned generalized-Gaussian (α, β) adapter heads | Yes (MLP adapters, frozen CLIP) |
+| B5 | PCME++ | learned log-variance uncertainty branch + GPO | Yes (full fine-tune) |
 | **Ours** | **MCDisp_Align** | **explicit `σ²≈Var(captions)` + covariance** | **Yes (MLP heads)** |
 
-All four methods share a unified feature interface for fair comparison.
+All six methods share a unified feature interface for fair comparison.
 
 ## Usage
 
@@ -141,10 +152,23 @@ python main.py --task eval_mcdisp_align
 python main.py --task train_clip_baseline
 python main.py --task eval_clip_baseline
 
-# B3: ProLIP
-python main.py --task train_prolip
+# B3: ProLIP (three backbone variants via --backbone: h14 legacy default, l14, l16)
+python main.py --task train_prolip --backbone l14   # self-built CLIP ViT-L/14 init (run tools/build_prolip_vit_l14.py --self-check first)
+python main.py --task eval_prolip --backbone l14
+python main.py --task train_prolip --backbone l16   # official SigLIP-arch ViT-L/16 weights
+python main.py --task eval_prolip --backbone l16
+python main.py --task train_prolip                   # h14 (legacy default)
 python main.py --task eval_prolip
-python main.py --task eval_prolip_zero_shot
+python main.py --task eval_prolip_zero_shot --backbone l16
+
+# B4: ProbVLM (frozen CLIP + BayesCap adapters; MSCOCO only)
+python main.py --task train_probvlm
+python main.py --task eval_probvlm
+
+# B5: PCME++ (CLIP ViT-L/14 full fine-tune; run the converter once first)
+python tools/convert_hf_clip_to_openai.py --self-check
+python main.py --task train_pcmepp
+python main.py --task eval_pcmepp
 
 # B1: CLIP Zero-Shot
 python main.py --task eval_clip_zero_shot
@@ -198,7 +222,9 @@ The loss is `L = λ_ctr·L_set-NCE + λ_mu·L_mu + λ_var·L_var + λ_cover_pos�
 |-------|--------|----|-------|
 | Ours (MCDisp_Align) | 10 | MLP 5e-5 / CLIP 1e-6 | frozen CLIP, staged schedule |
 | B2 CLIP Fine-Tune | 5 | 1e-6 | CLIP unfrozen |
-| B3 ProLIP | 5 | 1e-6 | full ProLIP fine-tune, inclusion loss |
+| B3 ProLIP | 5 | 1e-6 | full ProLIP fine-tune, inclusion loss; `--backbone {h14,l14,l16}` (l14 = self-built CLIP ViT-L/14 init, no 1.28B probabilistic pretraining; l16 = official SigLIP-arch, 256px, built/downloaded via tools) |
+| B4 ProbVLM | 100 | 1e-4 (Adam) | frozen CLIP, BayesCap adapters, TempComb + cross-modal loss, ≤2000 batches/epoch, early-stop patience 10 |
+| B5 PCME++ | 25 | 5e-4 (AdamP) | CLIP ViT-L/14 full fine-tune, batch 128, LLRD 0.7, freeze 2 epochs, lr x0.1 @15, MSDA |
 
 ## Output Files
 
@@ -206,6 +232,8 @@ The loss is `L = λ_ctr·L_set-NCE + λ_mu·L_mu + λ_var·L_var + λ_cover_pos�
 - `checkpoints/mcdisp_align_coco_best.pt`, `mcdisp_align_coco_last.pt`
 - `checkpoints/clip_baseline_coco_best.pt`
 - `checkpoints/prolip_coco_best.pt`
+- `checkpoints/probvlm_coco_best.pt`
+- `checkpoints/pcmepp_coco_best.pt`
 
 ### Evaluation Results
 - `outputs/{model}_eval_results.json` — R@K retrieval metrics

@@ -158,3 +158,154 @@ PYTHONPATH=. $PY losses/mcdisp_align_losses.py
 # 查看 ramp 调度
 $PY -c "import sys; sys.path.insert(0,'scripts'); import config; from train_mcdisp_align import stage_multipliers as s; [print(e+1, s(e,30,False)['cov']) for e in range(30)]"
 ```
+
+---
+
+## 9. B4 ProbVLM 基线（新增，待运行）
+
+为 rebuttal 补充的对比基线：ProbVLM（Upadhyay et al., ICCV 2023，[官方代码](https://github.com/ExplainableML/ProbVLM)）。
+本项目实现为冻结 CLIP ViT-L/14（D=768，官方论文用 ViT-B/32，D=512，为骨干对齐改接 ViT-L/14）之上
+的两个 BayesCap MLP 适配器（图像端/文本端各一，hid=256、3 层、dropout 0.1，逐维广义高斯
+(μ, 1/α, β)）。只训练适配器（约 800 万参数），损失为官方 TempComb（T1·L1 + T2·GenGauss NLL，
+T1=1.0、T2=5e-2）+ 跨模态项（λ=1e-4），target 为冻结 CLIP 特征；Adam lr=1e-4、逐 epoch 余弦退火
+（官方代码的调度器缩进 bug 已按意图修正，见 `scripts/train_probvlm.py` docstring）、100 epochs、
+每 epoch ≤2000 batch、早停 patience 10。评测时 (1/α, β) 换算为高斯 logvar
+（σ² = α²·Γ(3/β)/Γ(1/β)），接入与 ProLIP 相同的协议 A/B（cosine、CSD、mc_recall、mc_cos_recall）。
+
+仅做 MSCOCO（COCO-only）：Flickr30K / VQA / 多种子聚合脚本暂不接入（`eval_flickr30k.py`、
+`eval_vqa_retrieval.py`、`aggregate_eval_multiseed.py` 未改动，后续可按需扩展）。
+
+```bash
+PY=/home/xpfu/.conda/envs/CudaVersion128Fuxp/bin/python
+
+# 单测（不需要 CLIP 权重/GPU）
+$PY -m pytest tests/test_probvlm.py -v
+
+# 训练 + 评测（冒烟已通过：模型前向、5-batch 训练、64 图评测、main.py 接线）
+$PY main.py --task train_probvlm    # 可加 --no-early-stop 复现官方完整 100 epochs
+$PY main.py --task eval_probvlm     # 5000 图种子子集，协议 A+B
+```
+
+环境备注：`PreTrainedModels/clip-vit-large-patch14` 已恢复为指向
+`/mnt/disk1/xpfu/PreTrainedModels/clip-vit-large-patch14` 的符号链接（projection_dim=768 已验证）。
+合理性校验：ProbVLM 是保身份适配器，训完 `mc_cos_recall@1` 应接近冻结 CLIP 零基线，差距过大说明适配器训练发散。
+
+---
+
+## 10. B5 PCME++ 基线（新增，待运行）
+
+为 rebuttal 公平性对比新增：PCME++（Chun, ICLR 2024）从 **OpenAI CLIP ViT-L/14 初始化**自训（与
+Ours/B1/B2/B4 同骨干同初始化），官方代码以 `pcmepp/` 包形式原样搬运（MIT；仅三处标记性修改：本地权重
+加载覆盖、`pkg_resources`/`np.bool`/`torch.load` 的 2026 环境兼容），训练循环按项目脚本习惯重写。
+
+**方法**：魔改 CLIP——骨干最后一层分叉为 mean 支路（预训练权重）与 uncertainty 支路（新初始化
+transformer 层，n_unc_layers=1）；输出逐 token 未投影特征经 Linear(1024→1024)+GPO 池化得到
+μ（l2 归一化）与 log σ²。损失为闭式概率距离 `d=‖μi−μj‖²+Σ(σi²+σj²)` 上的 BCE（可学习
+shift/negative_scale=5）+ VIB(1e-4) + 0.1×伪正样本平滑（平滑项按当前 logits 重新标记不差于真样本的对）。
+
+**配方（全部官方 configs/pcmepp.yaml + README ViT-L/14 路线）**：AdamP lr 5e-4、wd 1e-4、逐层 LR 衰减
+0.7（公式硬编码 12——视觉第 12~23 层因子 >1，尾层 lr≈1.8e-4，为官方对 L/14 的实际行为，忠实保留）；
+图像骨干 lr×0.01、文本骨干×0.1；criterion 标量 wd=0；batch 128（=官方 8 卡×16）；caption 级采样
+（每图 5 条描述各成样本）；前 2 epoch 冻结图像骨干（unc 支路保持可训练）；epoch 2 批内线性 warmup
+（乘在损失上）；epoch 15 起 lr×0.1；25 epochs；梯度裁剪 2.0；MSDA（mixup/cutmix α=2、elem 模式、
+25% 元素参与）；图像 token 级 SizeAugment 0.2（模型内部）；文本 token 扰动 0.2（mask 10%/随机替换 2%
+/删除 8%，随机词表 30522=BertTokenizer 词表大小，官方如此）。
+
+**与官方实现的偏差清单**：
+1. 精度默认 bf16 autocast（仅编码器；criterion/GPO 保持 fp32）——为单卡 batch 128 腾显存；`--precision 32-true` 可回到官方 fp32。
+2. 无 torch.compile：官方 engine 调用 `torch.compile` 后丢弃返回值，实际并未编译，跳过即等价。
+3. 无 SWA（官方 swa_start_epoch=16，非论文主表协议）。
+4. 数据：项目 MSCOCO train2017 池（118,287 图 × 5 描述）vs 官方 COCO-2014 Karpathy；图像插值用 PIL BILINEAR 替代 cv2.INTER_LINEAR；验证集用每图 caption[0]（官方 dev split 5k 全描述）。
+5. 非有限损失跳步告警（官方直接 exit）；DataLoader worker 重播种（官方缺失，属修正）。
+
+**验证状态（2026-11-09）**：单测 21 个全过（含 CSD 手工公式、LLRD 分组含 >1 因子、Mixup 行为、扰动界、
+转换映射）；权重转换自检双塔余弦=1.000000；冒烟训练（20 步）损失 2512→11.7、峰值显存 10.5 GiB
+（冻结期，解冻后预计 30-45 GiB）；冒烟评测 64 图四族指标正常；main.py 接线通过。冒烟产物已清理。
+
+```bash
+PY=/home/xpfu/.conda/envs/CudaVersion128Fuxp/bin/python
+
+# 权重转换（一次性，已生成 PreTrainedModels/clip-vit-large-patch14-openai.pt）
+$PY tools/convert_hf_clip_to_openai.py --self-check
+
+# 正式训练 + 评测
+$PY main.py --task train_pcmepp    # 冒烟实测 ~1.8s/步(冻结期)；25 epochs 全程估 2-3.5 天
+$PY main.py --task eval_pcmepp     # 5000 图种子子集，协议 A+B
+```
+
+环境备注：GPU 上另有常驻进程（~9.8 GiB），训练有算力争抢时实际耗时可能更长；正式运行前建议确认
+B4 ProbVLM 训练是否已完成排队（两者串行使用同一张卡）。
+
+---
+
+## 11. B3 ProLIP 骨干变体（l14 主 / l16 辅，2026-11-09 新增）
+
+ProLIP 官方无 ViT-L/14 权重（L/16↔L/14 patch 卷积核与位置网格不同，不可转换），按用户决定同时实现两个变体，
+经 `--backbone {h14,l14,l16}` 选择（h14 为原默认，检查点名/结果路径不变）：
+
+- **l14（主）**：`tools/build_prolip_vit_l14.py` 用本地 OpenAI CLIP ViT-L/14 自搭 ProLIP 检查点——骨干权重映射到
+  ProLIP 布局（text_projection 用 HF 原方向，防方阵转置陷阱，已有回归测试），位置编码视觉 257→258（第 1 行插
+  unc 位）、文本 77→79（末尾追加 2 行），unc 部分按 ProLIP 初始化方案随机（emb N(0,0.01)、proj N(0,width^-0.5)、
+  bias −10），logit_scale=ln(10)/logit_bias=−10（ProLIP 自己的 CLIP 转换约定）。复用 CLIP 224 处理器与 BPE 分词器。
+  **诚实标注**：无 1.28B 概率预训练，表中写 "ProLIP-objective fine-tune from CLIP init"。
+- **l16（辅）**：官方 `SanghyukChun/ProLIP-ViT-L-16-FT-DC-1B-1_28B`（2.57GB，hf-mirror 下载，已校验字节数）。
+  **调研发现是 SigLIP 架构**：256 分辨率、SigLIP 归一化（0.5/0.5）、sentencepiece 32100 词表（timm/ViT-B-16-SigLIP
+  的 tokenizer.json 快速路径）、context 64、clean=canonicalize、无 quick_gelu。处理器用 SiglipImageProcessor 编程
+  构造，分词器文件在 PreTrainedModels/prolip-siglip-tokenizer。
+- 环境：恢复了丢失的 h14 三个符号链接（prolip/prolipProcessor/prolipTokenizer → /mnt/disk1）。
+
+**初始化质量诊断（8 对真实 COCO，匹配对 vs 不匹配对余弦差距）**：h14 +0.288、l16 +0.278（健康）；
+**l14 仅 +0.003**——视觉侧与 CLIP 余弦 0.98（转换正确），**文本侧严重失效**：ProLIP 文本塔强制双向注意力且从
+padding 之后的追加 token 池化，而 CLIP 文本权重是因果掩码训练的（60+ 个 pad token 全参与注意力）。这不是转换
+bug（同一映射已被 PCME++ 自检证到 1.000000），是架构-预训练固有失配。**l14 的文本塔需要靠 COCO 微调恢复，
+官方 B3 配方（lr 1e-6、5 epochs）可能不够，若微调损失平台期高建议试 lr 1e-5**。l14 zero-shot 的 CSD/不确定性
+指标无意义（随机头），仅 cosine 行有效（脚本有警告）。
+
+冒烟（2026-11-09，CPU，GPU 被 B5 训练与外用户占满）：单测 12 个全过；l14 构建+自检通过；l14 训练冒烟
+（3 批）损失 364→339、检查点 prolip_l14_coco_best.pt 命名正确；l16 zero-shot 32 图 mc_cos_recall@1=0.969
+（链路全通）；main.py --backbone 透传正常。l16 训练冒烟待 GPU 空闲补（优化器状态约 10.3GB，当前放不下）。
+
+```bash
+PY=/home/xpfu/.conda/envs/CudaVersion128Fuxp/bin/python
+$PY tools/build_prolip_vit_l14.py --self-check          # 已跑过，产物已生成
+$PY main.py --task train_prolip --backbone l14           # 正式训练（排队等 B5 结束）
+$PY main.py --task eval_prolip --backbone l14
+$PY main.py --task train_prolip --backbone l16
+$PY main.py --task eval_prolip --backbone l16
+```
+
+---
+
+## 12. L_align 组件级消融（rebuttal，2026-11-09 配置完成）
+
+**审稿意见**（3 位审稿人一致）：原 Table 4 只对比了完整模型 vs 移除整条 $\mathcal{L}_{\mathrm{align}}$，要求把
+对齐目标拆分为 KL 对齐、caption 中心覆盖、子空间（方向）对齐、方差正则四个组件分别消融，并补充全协方差 vs
+仅对角的对比，以说明"中心对齐与正则之外，建模 caption 变化方向是否必要"。按 rebuttal 时间预算仅用 MSCOCO。
+
+**实现**：`config.ABLATION_CONFIGS` 由 4 组扩为 6 组（`no_reg`：λ_reg=0；`diag_only`：cov_rank=0 且 λ_cov=0），
+全部走既有 `run_ablation.py` → `MCDispAlignTrainConfig` 单一代码路径（KL 目标、分阶段调度、早停、内置评测），零
+训练代码改动——损失项全部权重门控，`_cov_loss` 在 img_U 为 None 时自动跳过，对角模式训练/评测全链路已验证。
+对照逻辑：`no_direction`（保留低秩分支、只去方向监督）vs `diag_only`（连容量一起去）分别隔离"监督"与"容量"。
+
+| 组 | λ_kl | λ_cover_pos | λ_cov | λ_reg | cov_rank |
+|---|---|---|---|---|---|
+| full_model | 1.0 | 0.5 | 0.2 | 0.01 | 4 |
+| no_kl | **0** | 0.5 | 0.2 | 0.01 | 4 |
+| no_cover | 1.0 | **0** | 0.2 | 0.01 | 4 |
+| no_direction | 1.0 | 0.5 | **0** | 0.01 | 4（分支保留） |
+| no_reg | 1.0 | 0.5 | 0.2 | **0** | 4 |
+| diag_only | 1.0 | 0.5 | **0** | 0.01 | **0** |
+
+```bash
+PY=/home/xpfu/.conda/envs/CudaVersion128Fuxp/bin/python
+$PY scripts/run_ablation.py --config all --dataset coco     # 6 组串行，汇总表直接填 rebuttal 表
+```
+
+排期备注：GPU 现被 B5 PCME++ 训练占用（~2-3 天），本消融排其后；每组 10 epochs 头部训练约 2-3 小时，
+6 组共约 12-18 小时。协议与原 Table 4 一致（--eval-samples 500，种子 42）；结果落
+`outputs/ablation/ablation_results_coco.json` 与 `outputs/ablation/<组名>/checkpoints/`。
+
+**冒烟验证（2026-11-09 完成）**：`no_reg` 与 `diag_only` 各训 1 epoch（`--eval-samples 64` 接线验证）均正常——
+检查点保存/加载（diag_only 为 heads-only 对角模式）、召回选模、结果 JSON、汇总表全通。注意实测单 epoch 约
+75 分钟（GPU 与 B5 训练争抢时），正式 6 组 10 epochs 在无争抢时估 21-30 小时、有争抢时可能 3 天以上，建议排
+B5 结束后跑。冒烟产物已清理。

@@ -338,6 +338,173 @@ PROLIP_PPCL_LAMBDA = 1.0        # probabilistic pairwise contrastive loss (alway
 PROLIP_INCLUSION_ALPHA = 1.0    # inclusion loss weight (image subset text); 0 disables
 PROLIP_VIB_BETA = 1.0e-5        # variational information bottleneck KL weight
 
+# ProLIP backbone variants (B3). All variants share the fine-tuning pipeline
+# (train_prolip.py, ProLIP loss); they differ in the pretrained checkpoint and
+# its preprocessing/tokenization:
+#   h14 : official ProLIP-ViT-H-14-FT-DC-1B-1_28B (legacy default, embed 1024)
+#   l14 : self-assembled from the local OpenAI CLIP ViT-L/14 (built by
+#         tools/build_prolip_vit_l14.py; SAME backbone+init as Ours/B1/B2/B4/B5,
+#         but WITHOUT ProLIP's 1.28B-pair probabilistic pretraining -- label
+#         honestly as "ProLIP-objective fine-tune from CLIP init", embed 768)
+#   l16 : official ProLIP-ViT-L-16-FT-DC-1B-1_28B (SigLIP architecture: 256px
+#         input, SigLIP norm, sentencepiece 32100-vocab tokenizer, context 64,
+#         embed 1024)
+# ckpt_prefix feeds resolve_checkpoint(): h14 keeps the legacy
+# prolip_{dataset}_best.pt names; variants use prolip_{l14,l16}_{dataset}_*.pt.
+PROLIP_VARIANTS = {
+    "h14": dict(
+        model_path=PROLIP_MODEL_PATH,
+        processor="clip",
+        processor_path=PROLIP_PROCESSOR_PATH,
+        tokenizer_path=PROLIP_TOKENIZER_PATH,
+        context_length=77,
+        clean="whitespace",
+        embed_dim=1024,
+        ckpt_prefix="prolip",
+        eval_results=PROLIP_EVAL_RESULTS_PATH,
+        zero_shot_results=PROLIP_ZERO_SHOT_EVAL_RESULTS_PATH,
+        label="ProLIP ViT-H/14 (official, fine-tuned)",
+    ),
+    "l14": dict(
+        model_path=PROJECT_ROOT / "PreTrainedModels" / "prolip-vit-l-14",
+        processor="clip",
+        processor_path=PROLIP_PROCESSOR_PATH,   # same 224 CLIP processor
+        tokenizer_path=PROLIP_TOKENIZER_PATH,   # same CLIP BPE tokenizer
+        context_length=77,
+        clean="whitespace",
+        embed_dim=768,
+        ckpt_prefix="prolip_l14",
+        eval_results=OUTPUT_DIR / "prolip_l14_eval_results.json",
+        zero_shot_results=OUTPUT_DIR / "prolip_l14_zero_shot_eval_results.json",
+        label="ProLIP ViT-L/14 (CLIP init, no 1.28B probabilistic pretraining)",
+    ),
+    "l16": dict(
+        model_path=PROJECT_ROOT / "PreTrainedModels" / "prolip-vit-l-16",
+        processor="siglip",                    # constructed programmatically (256, 0.5/0.5)
+        processor_path=None,
+        tokenizer_path=PROJECT_ROOT / "PreTrainedModels" / "prolip-siglip-tokenizer",
+        context_length=64,
+        clean="canonicalize",
+        embed_dim=1024,
+        ckpt_prefix="prolip_l16",
+        eval_results=OUTPUT_DIR / "prolip_l16_eval_results.json",
+        zero_shot_results=OUTPUT_DIR / "prolip_l16_zero_shot_eval_results.json",
+        label="ProLIP ViT-L/16 (official, SigLIP-arch, 1.28B pretrained)",
+    ),
+}
+
+
+# =============================================================================
+# Baseline B4: ProbVLM Configuration (Upadhyay et al., ICCV 2023)
+# =============================================================================
+# ProbVLM: two BayesCap MLP adapters (image + text) on top of the FROZEN CLIP
+# ViT-L/14 projected embeddings (D=768; the official paper used ViT-B/32,
+# D=512). Trained with the TempComb loss (T1*L1 + T2*GenGauss NLL) plus
+# cross-modal terms against the frozen features; only the adapters are
+# trainable. Official hyperparameters kept as defaults.
+# Checkpoint names satisfy utils/eval_common.resolve_checkpoint("probvlm", dataset).
+PROBVLM_BEST_CKPT = CHECKPOINT_DIR / "probvlm_coco_best.pt"
+PROBVLM_LAST_CKPT = CHECKPOINT_DIR / "probvlm_coco_last.pt"
+PROBVLM_EVAL_RESULTS_PATH = OUTPUT_DIR / "probvlm_eval_results.json"
+TRAIN_PROBVLM_LOG_PATH = LOG_DIR / "train_probvlm.log"
+EVAL_PROBVLM_LOG_PATH = LOG_DIR / "evaluate_probvlm.log"
+
+# Adapter architecture (official BayesCap_for_CLIP defaults)
+PROBVLM_EMBED_DIM = 768             # CLIP ViT-L/14 projection dim
+PROBVLM_HIDDEN_DIM = 256
+PROBVLM_NUM_LAYERS = 3
+PROBVLM_DROPOUT = 0.1
+
+# Training (official train_ProbVLM defaults: Adam over adapter params only,
+# per-epoch cosine annealing, <=2000 batches per epoch). The official code
+# steps its scheduler outside the epoch loop (indentation bug, effectively a
+# constant LR); the intent -- cosine annealing per epoch -- is implemented
+# via the shared apply_lr_for_epoch with warmup 0 / min_lr_ratio 0.0.
+PROBVLM_EPOCHS = 100
+PROBVLM_BATCH_SIZE = 32
+PROBVLM_LR = 1e-4
+PROBVLM_WEIGHT_DECAY = 0.0
+PROBVLM_MAX_BATCHES_PER_EPOCH = 2000
+# The official schedule never early-stops and selects by val MAE; the project
+# pattern selects by val loss. Patience 10 (not the usual 3) because a
+# 100-epoch cosine anneal improves slowly mid-run and patience 3 would
+# truncate it; --no-early-stop reproduces the official full schedule.
+PROBVLM_EARLY_STOP_PATIENCE = 10
+
+# Loss weights (official TempComb / cross-modal defaults)
+PROBVLM_T1 = 1.0
+PROBVLM_T2 = 5e-2
+PROBVLM_CROSS_MODAL_LAMBDA = 1e-4
+
+
+# =============================================================================
+# Baseline B5: PCME++ Configuration (Chun, ICLR 2024)
+# =============================================================================
+# PCME++ (official code github.com/naver-ai/pcmepp, vendored under pcmepp/):
+# probabilistic CLIP whose last backbone layer splits into a mean branch and
+# a freshly-initialized uncertainty branch; per-token features (no CLIP
+# projection) are pooled by Linear+GPO into mu (l2-normalized) and
+# log sigma^2. Trained with the closed-form probabilistic-distance BCE loss
+# with pseudo-positive smoothing. Backbone: OpenAI CLIP ViT-L/14 (converted
+# to the OpenAI state dict layout by tools/convert_hf_clip_to_openai.py).
+# ALL hyperparameters below follow the official configs/pcmepp.yaml +
+# README ViT-L/14 recipe (single-GPU batch 128 == the official 8x16).
+PCMEPP_BEST_CKPT = CHECKPOINT_DIR / "pcmepp_coco_best.pt"
+PCMEPP_LAST_CKPT = CHECKPOINT_DIR / "pcmepp_coco_last.pt"
+PCMEPP_EVAL_RESULTS_PATH = OUTPUT_DIR / "pcmepp_eval_results.json"
+TRAIN_PCMEPP_LOG_PATH = LOG_DIR / "train_pcmepp.log"
+EVAL_PCMEPP_LOG_PATH = LOG_DIR / "evaluate_pcmepp.log"
+
+# OpenAI-format CLIP ViT-L/14 state dict for the vendored loader (~1.7GB,
+# generated by tools/convert_hf_clip_to_openai.py from CLIP_VIT_L_14_PATH)
+PCMEPP_OPENAI_CLIP_PATH = PROJECT_ROOT / "PreTrainedModels" / "clip-vit-large-patch14-openai.pt"
+
+# Model (official COCO recipe: n_unc_layers 1, sigma_ln_init null, embed 1024)
+PCMEPP_EMBED_SIZE = 1024
+PCMEPP_IMG_DIM = 1024              # ViT-L/14 transformer width (pre-projection tokens)
+PCMEPP_N_UNC_LAYERS = 1
+PCMEPP_INIT_SHIFT = 5.0
+PCMEPP_INIT_NEGATIVE_SCALE = 5.0
+PCMEPP_VIB_BETA = 1e-4
+PCMEPP_SMOOTHNESS_ALPHA = 0.1      # pseudo-positive label smoothing
+PCMEPP_PROB_DISTANCE = "csd"
+PCMEPP_IMG_SIZE_AUGMENT = 0.2      # token-level SizeAugment inside the encoder
+
+# Optimizer (official: AdamP + layerwise LR decay; the LLRD formula hardcodes
+# 12 -- for the 24-layer ViT-L vision tower blocks >= 12 get factors > 1,
+# faithfully kept as the official behavior for ViT-L/14)
+PCMEPP_EPOCHS = 5                 # reduced from the official 25 (training budget)
+PCMEPP_BATCH_SIZE = 128            # == official 8 GPUs x 16
+PCMEPP_LR = 5e-4
+PCMEPP_WEIGHT_DECAY = 1e-4
+PCMEPP_LAYERWISE_LR_DECAY = 0.7
+PCMEPP_TXT_BACKBONE_LR_DECAY = 0.1
+PCMEPP_IMG_BACKBONE_LR_DECAY = 0.01
+PCMEPP_GRAD_CLIP = 2.0
+PCMEPP_LR_MILESTONE_EPOCH = 15     # lr x0.1 from epoch 15 (official SequentialLR)
+PCMEPP_IMG_BACKBONE_FREEZE_EPOCHS = 2
+PCMEPP_EMBEDDING_WARMUP_EPOCHS = 2  # intra-epoch loss warmup at epoch 2 (after freeze)
+
+# Augmentation (official)
+PCMEPP_MIXUP = 2.0
+PCMEPP_CUTMIX = 2.0
+PCMEPP_MIXUP_PROB = 1.0
+PCMEPP_MIXUP_SWITCH_PROB = 0.5
+PCMEPP_MIXUP_MODE = "elem"
+PCMEPP_MIX_BATCH_RATIO = 0.25
+PCMEPP_MIXUP_SMOOTHING = 1e-4
+PCMEPP_LABEL_SMOOTHING = 1e-4
+PCMEPP_TXT_SIZE_AUGMENT = 0.2      # caption token perturbation rate
+PCMEPP_TXT_SIZE_AUGMENT_MASKING = 0.5
+PCMEPP_TXT_SIZE_AUGMENT_ERASING = 0.1
+PCMEPP_PERTURB_VOCAB_SIZE = 30522  # official uses len(BertTokenizer vocab)
+
+# Precision: official trains fp32 ("32-true"); bf16 autocast (encoders only,
+# criterion/GPO stay fp32) is the default here to fit batch 128 next to other
+# GPU tenants on a single 85GB card. Use --precision 32-true for the exact
+# official setting.
+PCMEPP_PRECISION = "bf16-mixed"
+
 
 # =============================================================================
 # Flickr30K Dataset Configuration
@@ -364,13 +531,18 @@ OOD_DATA_DIR = PROJECT_ROOT / "TrainDatasets" / "ood"
 ABLATION_RESULTS_DIR = OUTPUT_DIR / "ablation"
 ABLATION_LOG_PATH = LOG_DIR / "ablation.log"
 
-# Ablation configurations per 消融实验方案.md: 4 groups on the KL-objective
-# model (loss_name="kl"). Only the corresponding loss weight is zeroed; every
-# other weight, the model structure (incl. the low-rank branch in every group),
-# the data split and the training settings stay identical across groups. The
-# weak variance prior (lambda_reg) is likewise kept in all groups.
-# Term mapping: KL alignment -> lambda_kl, caption coverage -> lambda_cover_pos,
-# direction alignment (low-rank U supervision) -> lambda_cov (cov_rank kept > 0).
+# Ablation configurations per 消融实验方案.md: 6 groups on the KL-objective
+# model (loss_name="kl"). Only the corresponding loss weight (or cov_rank) is
+# changed; every other weight, the model structure, the data split and the
+# training settings stay identical across groups.
+# Reviewer-term mapping (3 reviewers asked to ablate L_align per component):
+#   KL alignment            -> lambda_kl        (no_kl)
+#   caption-center coverage -> lambda_cover_pos (no_cover)
+#   subspace alignment      -> lambda_cov       (no_direction; low-rank branch
+#                              KEPT so only the direction supervision is removed)
+#   variance regularization -> lambda_reg       (no_reg)
+#   full covariance vs diagonal-only -> cov_rank 4 vs 0 (diag_only; the branch
+#                              is removed entirely, isolating model capacity)
 ABLATION_LOSS_NAME = "kl"
 ABLATION_CONFIGS = {
     "full_model": {
@@ -408,6 +580,25 @@ ABLATION_CONFIGS = {
         "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
         "description": "w/o Direction Alignment (L_cov=0; low-rank branch kept)",
+    },
+    "no_reg": {
+        "loss_name": "kl",
+        "lambda_ctr": 1.0, "lambda_kl": 1.0,
+        "lambda_cover_pos": 0.5, "lambda_cover_neg": 0.0,
+        "lambda_cov": 0.2, "lambda_reg": 0.0,
+        "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
+        "use_uncertainty_sim": True,
+        "description": "w/o Variance Regularization (weak variance prior removed)",
+    },
+    "diag_only": {
+        "loss_name": "kl",
+        "lambda_ctr": 1.0, "lambda_kl": 1.0,
+        "lambda_cover_pos": 0.5, "lambda_cover_neg": 0.0,
+        "lambda_cov": 0.0, "lambda_reg": 0.01,
+        "cov_rank": 0,
+        "num_captions": 5,
+        "use_uncertainty_sim": True,
+        "description": "Diagonal-only (no low-rank covariance branch; r=0)",
     },
 }
 

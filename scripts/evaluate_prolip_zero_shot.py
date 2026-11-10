@@ -32,6 +32,13 @@ logger = get_logger("eval_prolip_zero_shot", config.EVAL_PROLIP_ZERO_SHOT_LOG_PA
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate ProLIP Zero-Shot Baseline")
 
+    parser.add_argument("--backbone", type=str, default="h14",
+                        choices=list(config.PROLIP_VARIANTS),
+                        help="ProLIP backbone variant (h14 legacy default, l14, l16). "
+                             "NOTE for l14: the uncertainty heads are randomly "
+                             "initialized (no probabilistic pretraining), so "
+                             "CSD / uncertainty-discounted metrics are meaningless; "
+                             "only the cosine rows are informative.")
     parser.add_argument("--dataset", type=str, default="coco",
                         choices=list(VALID_DATASETS),
                         help="Dataset to evaluate on (coco=MSCOCO, flickr=flickr30k). Zero-shot "
@@ -114,9 +121,14 @@ def main():
     args = parse_args()
     set_seed(config.SEED)
 
+    variant = config.PROLIP_VARIANTS[args.backbone]
     # Frozen pretrained ProLIP (zero-shot, no checkpoint)
-    logger.info("Loading frozen ProLIP model (zero-shot, no training)...")
-    model = ProLIPModel(freeze=True)
+    logger.info(f"Loading frozen ProLIP model ({variant['label']}; zero-shot, no training)...")
+    if args.backbone == "l14":
+        logger.warning("l14 zero-shot: uncertainty heads are randomly initialized -- "
+                       "CSD / uncertainty-discounted metrics are MEANINGLESS; "
+                       "only cosine rows are informative.")
+    model = ProLIPModel(backbone=args.backbone, freeze=True)
     model = model.to(args.device)
     logger.info(f"Trainable parameters: {model.num_trainable_parameters():,} (expect 0)")
 
@@ -177,9 +189,9 @@ def main():
     print_recall_groups(groups, logger)
 
     # Append results (never overwrite prior runs); time is stamped after dataset.
-    output_path = args.output_path or str(config.PROLIP_ZERO_SHOT_EVAL_RESULTS_PATH)
+    output_path = args.output_path or str(variant["zero_shot_results"])
     append_eval_results(output_path, {
-        "model": "ProLIP ViT-H/14 (zero-shot, frozen)",
+        "model": f"{variant['label']} (zero-shot, frozen)",
         "dataset": args.dataset,
         "num_samples": num_eval_samples,
         "metrics": groups_to_flat(groups),

@@ -41,6 +41,12 @@ apply_cpu_affinity()
 def parse_args():
     parser = argparse.ArgumentParser(description="Train ProLIP Baseline (B3)")
 
+    parser.add_argument("--backbone", type=str, default="h14",
+                        choices=list(config.PROLIP_VARIANTS),
+                        help="ProLIP backbone variant: h14 (official ViT-H/14, legacy "
+                             "default), l14 (self-built CLIP ViT-L/14 init -- no 1.28B "
+                             "probabilistic pretraining), l16 (official SigLIP-arch "
+                             "ViT-L/16). Sets the checkpoint-name prefix.")
     parser.add_argument("--captions-path", type=str, default=None,
                         help="Path to captions parquet file (uses config default if None)")
     parser.add_argument("--images-dir", type=str, default=None,
@@ -81,6 +87,9 @@ def parse_args():
                         help="Random seed")
     parser.add_argument("--num-workers", type=int, default=config.NUM_WORKERS,
                         help="Number of data loading workers")
+    parser.add_argument("--max-batches-per-epoch", type=int, default=0,
+                        help="Cap on processed batches per epoch (<=0: no cap; "
+                             "smoke-run convenience, same as the B4/B5 scripts)")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
                         help="Device to use")
 
@@ -134,8 +143,9 @@ def train_epoch(
     criterion: ProLIPLoss,
     device: torch.device,
     epoch: int,
+    max_batches: int = 0,
 ) -> Dict[str, float]:
-    """Train for one epoch."""
+    """Train for one epoch (<= max_batches if capped)."""
     model.train()
 
     total_loss = 0.0
@@ -145,6 +155,8 @@ def train_epoch(
     pbar = tqdm(dataloader, desc=f"Epoch {epoch + 1}")
 
     for batch_idx, batch in enumerate(pbar):
+        if max_batches > 0 and batch_idx >= max_batches:
+            break
         if batch is None:
             continue
         processed_batches += 1
@@ -229,7 +241,14 @@ def main():
     logger.info(f"Random seed set to {args.seed}")
 
     logger.info("=" * 60)
-    logger.info("ProLIP (B3) Fine-tuning")
+    variant = config.PROLIP_VARIANTS[args.backbone]
+    logger.info(f"ProLIP (B3) Fine-tuning -- backbone {args.backbone} "
+                f"({variant['label']})")
+    if args.backbone == "l14":
+        logger.info("NOTE: l14 is initialized from OpenAI CLIP ViT-L/14 with randomly "
+                    "initialized ProLIP uncertainty heads -- it carries NO ProLIP "
+                    "1.28B-pair probabilistic pretraining. Label results honestly as "
+                    "'ProLIP-objective fine-tune from CLIP init'.")
     logger.info("=" * 60)
     logger.info(f"Epochs: {args.epochs}")
     logger.info(f"Batch size: {args.batch_size}")
@@ -243,7 +262,7 @@ def main():
 
     # full fine-tuning, nothing frozen
     logger.info("Creating model...")
-    model = ProLIPModel(freeze=False)
+    model = ProLIPModel(backbone=args.backbone, freeze=False)
     model = model.to(args.device)
     logger.info(f"Model created with {model.num_trainable_parameters():,} trainable parameters")
 
@@ -328,7 +347,8 @@ def main():
                            args.warmup_epochs, args.min_lr_ratio,
                            args.lr_scheduler, logger)
 
-        train_metrics = train_epoch(model, train_dataloader, optimizer, criterion, args.device, epoch)
+        train_metrics = train_epoch(model, train_dataloader, optimizer, criterion, args.device, epoch,
+                                    max_batches=args.max_batches_per_epoch)
 
         val_metrics = evaluate(model, val_dataloader, criterion, args.device)
 
@@ -340,7 +360,7 @@ def main():
 
         if val_metrics["loss"] < best_val_loss:
             best_val_loss = val_metrics["loss"]
-            best_checkpoint_path = checkpoint_dir / f"prolip_{args.dataset}_best.pt"
+            best_checkpoint_path = checkpoint_dir / f"{variant['ckpt_prefix']}_{args.dataset}_best.pt"
             model.save(str(best_checkpoint_path))
             logger.info(f"Best model saved (val_loss: {best_val_loss:.4f}) -> {best_checkpoint_path}")
             patience_counter = 0
@@ -353,9 +373,10 @@ def main():
             break
 
     # Save final model with full training state for resumption
-    final_checkpoint_path = checkpoint_dir / f"prolip_{args.dataset}_last.pt"
+    final_checkpoint_path = checkpoint_dir / f"{variant['ckpt_prefix']}_{args.dataset}_last.pt"
     final_state = {
         "model_state_dict": model.prolip.state_dict(),
+        "backbone": args.backbone,
         "optimizer_state_dict": optimizer.state_dict(),
         "epoch": last_epoch + 1,
         "best_val_loss": best_val_loss,

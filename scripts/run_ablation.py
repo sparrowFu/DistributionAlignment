@@ -11,12 +11,16 @@ differing only in the loss weights / ``cov_rank`` / ``num_captions`` overrides,
 the ``--dataset`` (coco or flickr), and the per-variant checkpoint path. So
 ablation results are directly comparable to a full training run.
 
-Ablation configurations (only the named weight is zeroed; the low-rank branch
-and the weak variance prior are kept in every group):
+Ablation configurations (only the named weight -- or cov_rank for diag_only --
+is changed; everything else is identical across groups):
     - Full MCDisp-Align (set-NCE + KL + cover + cov + reg)
     - w/o KL Alignment (lambda_kl = 0)
     - w/o Caption Coverage (lambda_cover_pos = 0)
     - w/o Direction Alignment (lambda_cov = 0, low-rank branch kept)
+    - w/o Variance Regularization (lambda_reg = 0)
+    - Diagonal-only (cov_rank = 0: no low-rank covariance branch; contrasts
+      with no_direction, which keeps the branch and removes only the
+      direction supervision -- together they isolate supervision vs capacity)
 
 Sensitivity grids (``--config sensitivity``): lambda_kl / lambda_cover / tau.
 

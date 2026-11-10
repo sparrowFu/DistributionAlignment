@@ -36,6 +36,10 @@ Available tasks:
     train_prolip           Train ProLIP baseline model (B3)
     eval_prolip            Evaluate ProLIP baseline model (B3)
     eval_prolip_zero_shot  Evaluate ProLIP Zero-Shot baseline (B3)
+    train_probvlm          Train ProbVLM baseline model (B4)
+    eval_probvlm           Evaluate ProbVLM baseline model (B4)
+    train_pcmepp           Train PCME++ baseline model (B5)
+    eval_pcmepp            Evaluate PCME++ baseline model (B5)
     eval_clip_zero_shot    Evaluate CLIP Zero-Shot baseline (B1)
 
   Stage 2 (VQA Downstream):
@@ -75,6 +79,8 @@ Examples:
             "train_mcdisp_align", "eval_mcdisp_align",
             "eval_mcdisp_coverage",
             "train_prolip", "eval_prolip", "eval_prolip_zero_shot",
+            "train_probvlm", "eval_probvlm",
+            "train_pcmepp", "eval_pcmepp",
             "eval_clip_zero_shot",
             # Stage 2: VQA-as-retrieval downstream (gemma caption)
             "build_vqa_expansions",
@@ -90,6 +96,16 @@ Examples:
     )
 
     # Pass-through arguments
+    parser.add_argument(
+        "--backbone",
+        type=str,
+        default=None,
+        choices=["h14", "l14", "l16"],
+        help="ProLIP backbone variant for train_prolip / eval_prolip / "
+             "eval_prolip_zero_shot (h14 legacy default, l14 self-built CLIP "
+             "ViT-L/14 init, l16 official SigLIP-arch)"
+    )
+
     parser.add_argument(
         "--model-type",
         type=str,
@@ -190,6 +206,8 @@ def run_python_script(script_path: Path, args: argparse.Namespace) -> int:
 
     if args.model_type:
         cmd.extend(["--model-type", args.model_type])
+    if getattr(args, "backbone", None):
+        cmd.extend(["--backbone", args.backbone])
     if args.model:
         cmd.extend(["--model", args.model])
     if args.captions_path:
@@ -279,6 +297,10 @@ TASK_SCRIPTS = {
     "train_prolip":          "train_prolip.py",
     "eval_prolip":           "evaluate_prolip.py",
     "eval_prolip_zero_shot": "evaluate_prolip_zero_shot.py",
+    "train_probvlm":         "train_probvlm.py",
+    "eval_probvlm":          "evaluate_probvlm.py",
+    "train_pcmepp":          "train_pcmepp.py",
+    "eval_pcmepp":           "evaluate_pcmepp.py",
     # Stage 1: Zero-shot
     "eval_clip_zero_shot":   "evaluate_clip_zero_shot.py",
     # Stage 2: VQA-as-retrieval downstream (gemma caption)
