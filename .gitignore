@@ -6,7 +6,7 @@ baseline/
 # Documentation
 docs/
 *.pdf
-*.html
+# *.html
 
 # Dataset
 TrainDatasets/

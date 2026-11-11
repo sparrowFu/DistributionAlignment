@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCDisp-Align | Rebuttal 补充实验方案</title>
+<style>
+:root{color-scheme:light;--ink:#14253b;--muted:#526277;--line:#d8e2ea;--paper:#fff;--bg:#eff4f7;--teal:#005f5b;--soft:#e5f4ef;--amber:#704406;--warm:#fff2d9}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.67 "Microsoft YaHei","PingFang SC","Noto Sans CJK SC",system-ui,sans-serif}
+a{color:#075c77;text-underline-offset:3px}a:focus-visible{outline:2px solid #04746b;outline-offset:4px}header{background:#122d44;color:white;border-bottom:5px solid #55c7ac}
+.shell{width:min(1180px,100% - 48px);margin:auto}.hero{padding:52px 0 36px}.eyebrow{color:#9ee7d6;font-size:.8rem;letter-spacing:.12em;font-weight:700}
+h1,h2,h3,h4{line-height:1.32;margin:0 0 .65em}h1{font-size:clamp(2rem,5vw,3.55rem);letter-spacing:-.035em;margin:.17em 0 .35em}
+.hero p{max-width:840px;color:#deebf3;font-size:1.09rem;margin:.45em 0 1.4em}.hero .tags{display:flex;flex-wrap:wrap;gap:8px}.tag{display:inline-block;border-radius:999px;padding:3px 10px;font-size:.77rem;font-weight:700;white-space:nowrap}
+.tag{background:#26465b;color:#f3fbff}.badge{background:var(--soft);color:var(--teal)}.badge.optional{background:var(--warm);color:var(--amber)}
+nav{background:white;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:2}nav .shell{display:flex;gap:8px 20px;flex-wrap:wrap;padding:12px 0}nav a{font-size:.85rem;font-weight:700;text-decoration:none}
+main{padding:26px 0 54px}section{scroll-margin-top:100px;margin-bottom:24px;padding:29px;background:var(--paper);border:1px solid var(--line);border-radius:15px}
+h2{font-size:1.65rem}h3{font-size:1.18rem;margin-top:1.3em}h3[id]{scroll-margin-top:90px}h4{font-size:1rem;margin-top:1em}p{margin:.6em 0 .8em}ul,ol{margin:.55em 0 1em;padding-left:1.45em}li+li{margin-top:.35em}
+.refs,footer{color:var(--muted)}.refs{font-size:.85rem;margin-top:1em}.kicker{display:block;color:var(--teal);font-size:.76rem;font-weight:800;letter-spacing:.08em;margin-bottom:7px}
+.note,.outcome{border:1px solid var(--line);padding:13px 16px;border-radius:9px;margin:16px 0}.note{background:#f6f9fb}.outcome{background:var(--soft);border-color:#b9ddd1;border-left:4px solid #0d8b78}.outcome strong,.question strong{color:var(--teal);margin-right:.6em}
+.question{font-size:1.04rem;margin:.55em 0 1em}.steps>li{padding-left:.25em;margin:.55em 0}.steps>li::marker{font-weight:800;color:var(--teal)}
+.table{overflow-x:auto;margin:12px 0 17px;border:1px solid var(--line);border-radius:9px}table{border-collapse:collapse;width:100%;min-width:660px;text-align:left}thead{background:#edf4f7}th,td{padding:10px 13px;vertical-align:top;border-bottom:1px solid var(--line)}tbody tr:last-child td{border-bottom:none}tbody tr:nth-child(even){background:#fafcfd}th{font-size:.85rem;color:#244157}td{font-size:.91rem}.id{white-space:nowrap;font-weight:800;color:var(--teal)}
+.eq{font-family:"Cambria Math","Times New Roman",serif;background:#edf4f7;padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}.datum{font-variant-numeric:tabular-nums;white-space:nowrap}
+details{border-top:1px solid var(--line);padding:12px 0 0;margin:14px 0}summary{font-weight:750;cursor:pointer;color:#075c77}footer{font-size:.86rem;padding:0 0 22px}
+.guide{border:1px solid var(--line);border-radius:10px;padding:12px 16px;background:#f8fbfd}.guide[open] summary{margin-bottom:10px}.guide h4{margin:.9em 0 .3em}.guide p:last-child,.guide ul:last-child,.guide ol:last-child{margin-bottom:0}
+pre{margin:.7em 0 1em;padding:12px;background:#eaf1f6;border-radius:7px;overflow-wrap:anywhere;white-space:pre-wrap;font-size:.84rem;line-height:1.55}
+.checkpoint{font-size:.94rem;border-left:3px solid #b47518;background:#fff8e9;padding:9px 12px;margin:.85em 0}
+@media(max-width:720px){.shell{width:calc(100% - 24px)}.hero{padding:30px 0 23px}nav{position:static}nav .shell{gap:7px 13px}section{padding:17px;border-radius:10px;scroll-margin-top:12px}.grid{grid-template-columns:1fr}h2{font-size:1.35rem}th,td{padding:8px 10px}}
+@media screen and (max-width:580px){
+  .table[aria-label="逐项消融矩阵"]{--field2:"改动";--field3:"对照与目的"}
+  .table[aria-label="执行顺序"]{--field2:"现在做什么";--field3:"解决什么"}
+  table,tbody,tr,td{display:block;min-width:0}thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+  tbody tr{border-bottom:1px solid var(--line);padding:10px 12px}tbody tr:last-child{border:0}
+  tbody td{padding:3px 0;border:0}tbody td:first-child{font-weight:750;color:var(--teal)}
+  tbody td:nth-child(2)::before,tbody td:nth-child(3)::before{font-weight:750;color:#244157;margin-right:.55em}
+  tbody td:nth-child(2)::before{content:var(--field2)}tbody td:nth-child(3)::before{content:var(--field3)}
+}
+@media print{body{background:white;color:#111;font-size:10.5pt}.shell{width:100%}header{background:white;color:#111;border-bottom:2px solid #333}.hero{padding:8pt 0}.hero p,.eyebrow{color:#333}.tag{background:#eee;color:#333}nav{display:none}main{padding:10pt 0}section{margin-bottom:12pt;padding:12pt;box-shadow:none;border-radius:0}.card,.note,tr{break-inside:avoid}h2,h3,h4{break-after:avoid}.table{overflow:visible}table{min-width:0}a{color:#111}}
+</style>
+</head>
+<body>
+<header><div class="shell hero">
+  <div class="eyebrow">MCDisp-Align · REBUTTAL</div>
+  <h1>补充实验执行方案</h1>
+  <p>先确定评估数据，再用已有权重补表。需要重训的部分集中在 MSCOCO。每一步都写明用什么、怎么跑、交什么结果，以及这份结果能回答哪条评审意见。</p>
+  <div class="tags"><span class="tag">主实验 · MSCOCO</span><span class="tag">Flickr30K · 只补标准检索</span><span class="tag">新结果 · 待测</span></div>
+</div></header>
+<nav aria-label="方案目录"><div class="shell">
+  <a href="#map">先看顺序</a><a href="#setup">0 定数据</a><a href="#e2">1 补基线</a><a href="#e1">2 对齐训练目标</a><a href="#ablation">3 做消融</a><a href="#semantics">4 查语义错误</a><a href="#captions">5 测描述数量</a><a href="#execution">写回信</a>
+</div></nav>
+<main class="shell">
+<section id="map">
+  <span class="kicker">执行总览</span>
+  <h2>先做什么，哪些要重训</h2>
+  <div class="table" tabindex="0" role="region" aria-label="执行顺序"><table>
+    <thead><tr><th scope="col">步骤</th><th scope="col">现在可以做什么</th><th scope="col">做完解决什么问题</th></tr></thead><tbody>
+      <tr><td class="id"><a href="#setup">0 · 定评估数据</a></td><td>先做。固定测试图、描述和打分规则。<strong>无需训练。</strong></td><td>保证表里的结果来自同一个未见图库，可以直接比较。</td></tr>
+      <tr><td class="id"><a href="#e2">1 · 补基线表</a></td><td>等在训的 ProbVLM、PCME++、CLIP 权重可用，先用它们跑标准检索。Flickr30K 先找现有权重。</td><td>补上概率基线、同骨干比较和 Flickr30K 标准检索。对应 R1 W3。</td></tr>
+      <tr><td class="id"><a href="#e1">2 · 给 CLIP 同样的集合训练</a></td><td>先核对在训 CLIP 用的 loss。缺集合对照时，<strong>新增 CLIP-SetFT</strong>。ProLIP 同类对照排在后面。</td><td>判断差距有多少来自看了同一组描述，有多少与分布对齐有关。对应 R1 W2、R3。</td></tr>
+      <tr><td class="id"><a href="#ablation">3 · 查损失，再逐项关掉</a></td><td>先用日志和权重查梯度与覆盖。用已更新的消融代码补跑缺失配置。</td><td>确认每个模块是否实际生效，去掉后分数怎么变。对应 R1 W1/W4、R2 Q3。</td></tr>
+      <tr><td class="id"><a href="#semantics">4 · 查具体错例</a></td><td>在现有 MSCOCO 图中标注高低互补组和难负例。<strong>复用前面权重，无需训练。</strong></td><td>展示哪些属性或关系被错认、哪些被纠正，以及高互补组是否获益更多。对应 R2 W1/W2、Q1/Q2。</td></tr>
+      <tr><td class="id"><a href="#captions">5 · 改变训练描述数</a></td><td><strong>只训 MCDisp-Align</strong>，先跑每图 3 条，后补 1 条，复用 5 条的 Full。</td><td>判断增加训练描述在已测范围内是否有收益。对应 R3。</td></tr>
+    </tbody></table></div>
+  <div class="note"><strong>现有进度。</strong> ProbVLM、PCME++、CLIP ViT-L/14 和你提到的 CLIP ViT-L/16 继续按现有计划训练。消融代码已更新，先盘点哪些配置已经有权重。ViT-L/16 以实际配置为准，和 ViT-L/14 分开列。文中的 R1、R2、R3 对应 Review.md 里的三组意见。</div>
+  <div class="note"><strong>怎么用这份指导。</strong> 每个实验先按“开跑前”核对输入，再照配置或样本规则执行，最后按“验收”检查。模板里的文件名、运行编号和样本量都是建议，可映射到现有训练与评估入口。结果统一从实际日志和逐查询记录填写。</div>
+</section>
+
+<section id="setup">
+  <span class="kicker">步骤 0 · 先做 · 无需训练</span>
+  <h2>固定一份所有模型共用的评估清单</h2>
+  <ol class="steps">
+    <li><strong>选图。</strong> 从 MSCOCO 的未见图中固定一批，预算紧可先选约 1,000 张。保存图像 ID、每张图对应的五条真实描述及采样 seed。Flickr30K 单独准备一份清单，仅供步骤 1B 使用。</li>
+    <li><strong>查重。</strong> 把清单与每个模型实际用过的训练图 ID 求交集，要求为零。若用的是早停或选模的验证集，表头写“开发集”。先定好清单，再看模型得分。</li>
+    <li><strong>定两种评估输入。</strong> 集合检索把五条描述作为一个候选，N 张图对 N 个集合。标准检索每条描述单独编码与打分，N 张图对 5N 条描述。前者用于目标对照和消融，后者用于基线补表与错例。</li>
+    <li><strong>登记权重。</strong> 每行填模型、骨干、初始化、训练目标、微调或冻结范围、seed、最佳 epoch 和权重路径。旧表的划分或候选数不同，就用这份清单把同表各行一起重评。</li>
+  </ol>
+  <div class="outcome"><strong>交付</strong> 两份数据清单、一张模型权重台账、每个模型的训练图与评估图交集计数。<br><strong>解决</strong> 后续差值不会因为换了图库、把训练图混进评估，或把集合和单条描述当成同一种任务而失去可比性。</div>
+  <details class="guide" open><summary>执行细节 · 怎样建清单、做评估自检、算差值</summary>
+    <h4>0.1 把数据和权重写成两张清单</h4>
+    <p>用原始图像 ID 连接训练集与评估集。同一图即使路径或文件名变了，仍用同一个 ID。逐模型算交集并保存命中列表。先检查图片能否读取、五条描述是否齐全及归属是否正确，在看分数之前定下排除项。任何一个模型额外丢图，先查原因。确需排除时，更新共用清单并把同表各行一起重评。</p>
+    <pre><code>评估清单  dataset, split, image_id, image_path, caption_id, caption_slot, caption_text
+权重台账  run_id, checkpoint, backbone, init_id, train_split, objective,
+          seed, trainable_modules, image_batch, optimizer_steps, best_epoch, selection_metric
+去重记录  run_id, n_train_images, n_eval_images, overlap_count, overlapping_ids, manifest_version</code></pre>
+    <h4>0.2 先用几张图验证正例关系</h4>
+    <ol>
+      <li>集合检索要求每张图对应一个集合，打分矩阵为 N×N。标准检索打分矩阵为 N×5N，记录每列 caption 的图像 ID。用 ID 判正例，方便检查重排后是否还对齐。</li>
+      <li>做一个小样本自检，把已知正例分数设成最高。集合 I2T/T2I 的 R@1 都应为 100%。标准 I2T 让任一条正 caption 居首即可命中，T2I 验证逐条 caption 各自指向正确的图。打乱候选列并同步重排 ID，结果应保持一致。</li>
+      <li>每次正式跑完核对有效样本数。集合任务两向各有 N 个查询。标准任务 I2T 有 N 个，T2I 有 5N 个。排序出现同分时，所有方法用同一套规则。图库太小以致无法定义相应 K 时，该格标为不适用。</li>
+    </ol>
+    <h4>0.3 保存每条查询的排名，再汇总</h4>
+    <pre><code>逐查询结果  run_id, manifest_version, protocol, direction, query_id,
+            owner_image_id, best_positive_rank, hit_at_1, hit_at_5, hit_at_10
+R@K（%）    = 100 × 正例排名 ≤ K 的查询数 / 有效查询数
+差值（百分点） = 实验行的 R@K − 指定对照行的 R@K</code></pre>
+    <p>关键差值用固定图库的配对 bootstrap。每次有放回地抽图像 ID，两个模型用完全相同的抽样。标准 T2I 把同一图的五条查询一起带入。重复约 2,000 次，用差值的 2.5% 与 97.5% 分位作区间。这个区间反映固定权重下的查询抽样误差，重训波动另用多 seed 报告。</p>
+    <div class="checkpoint"><strong>验收</strong> 主表各行使用同一版本清单，图像 ID 交集为零，候选数与实际查询数可核对。原验证集参与过选模时，结果标成开发集。划分无法核实时，该行先列为待核验。</div>
+  </details>
+  <p class="refs">原稿 <a href="./38145_MCDisp_Align_Multi_Capti.pdf#page=6">p.6 §3.1–3.2</a> · <a href="./38145_MCDisp_Align_Multi_Capti.pdf#page=7">p.7 §3.3</a></p>
+</section>
+
+<section id="e2">
+  <span class="kicker">步骤 1 · R1 W3 · 先复评已有权重</span>
+  <h2>补两张标准检索表</h2>
+  <h3 id="e2a">1A · MSCOCO · ProbVLM、PCME++ 和 CLIP 同骨干比较</h3>
+  <ol class="steps">
+    <li><strong>拿权重。</strong> 收集 MCDisp Full、w/o ℒ<sub>align</sub>、CLIP-FT、ProbVLM 和 PCME++。步骤 2 的 CLIP-SetFT 跑完后，再加进这张表。</li>
+    <li><strong>跑同一评估。</strong> 每个模型独立编码图与描述，统一用中心 cosine 排序。用步骤 0 的同一批图和描述，填 I2T/T2I R@1/5/10。</li>
+    <li><strong>按骨干分表。</strong> 同一 ViT-L/14 及初始化权重放主表，标出训练预算和哪些参数可训练。ProLIP H/14、其他骨干和各方法原生不确定性打分放补表。</li>
+  </ol>
+  <div class="outcome"><strong>交付</strong> MSCOCO 同骨干标准检索表。<br><strong>解决</strong> 补上遗漏的概率基线，并判断去掉对齐后的下降能否在统一协议下复现。原稿 w/o 的 I2T/T2I R@1 为 <span class="datum">60.8 / 48.1</span>，CLIP-FT 为 <span class="datum">67.6 / 54.6</span>，Full 为 <span class="datum">69.6 / 55.3</span>。补测后用新表数值解释这一差距。</div>
+  <h3 id="e2b">1B · Flickr30K · 只补漏掉的标准检索</h3>
+  <ol class="steps">
+    <li>找原稿已经使用的 Flickr30K CLIP-FT、ProLIP-FT、GroVE 权重，加上 Full 和 w/o ℒ<sub>align</sub>。</li>
+    <li>在同一 Flickr30K 划分跑一次标准检索。若某行只有 MSCOCO 权重，把结果单列为“MSCOCO → Flickr30K”迁移，Flickr30K 微调行标为待补。</li>
+  </ol>
+  <div class="outcome"><strong>交付</strong> Flickr30K 标准检索补表。<br><strong>解决</strong> 补齐原稿 Table 2 缺少的 Flickr30K 方法间比较，同时把数据集内微调和跨数据集迁移分开。</div>
+  <details class="guide" open><summary>执行细节 · 权重跑完怎么入表，缺一行怎么办</summary>
+    <ol>
+      <li><strong>先填运行号，再跑评估。</strong> 分别为 Full、w/o、CLIP-FT、ProbVLM、PCME++ 登记权重。确认各模型的最佳轮次及选模指标来自自己的开发集。正式评估时用已选中的权重，测试结果只用于报告。</li>
+      <li><strong>先跑统一打分。</strong> 每个模型各自抽取图像中心和单条文本中心，归一化后用 cosine 排序。不同方法的向量维度可不同，逐模型在自己的表示空间评分。原生打分作为另一张表，注明是否用了方差。</li>
+      <li><strong>保留训练配方差别。</strong> 在同骨干表写清是否冻结主干、是否只训练 adapter、训练图数和步数。同骨干意味着初始化可比，冻结与训练预算仍需读者知道。只有 H/14 或其他骨干的结果单列。</li>
+      <li><strong>缺权重时按原因处理。</strong> 在训尚未结束写“待评估”；骨干或初始化不同放补表；Flickr30K 只有跨数据集权重就写“迁移”。任何缺行都保留明确状态。</li>
+    </ol>
+    <pre><code>1A / 1B 表头  模型 | 骨干/初始化 | 训练数据与可训练模块 | 评估图数 N |
+             I2T R@1/5/10 | T2I R@1/5/10 | 对 CLIP-FT 的 R@1 差值 | 备注
+原稿数字另列来源。新表各行使用统一的清单、打分和正例规则。</code></pre>
+    <div class="checkpoint"><strong>验收</strong> 表 1A 至少包括同口径的 Full、w/o 和 CLIP-FT，合格的 PCME++ 与 ProbVLM 权重到齐即填。表 1B 使用单独的 Flickr30K 评估清单。若 w/o 的下降复现，再结合步骤 2 判断是集合目标变化还是对齐项带来的差别。</div>
+  </details>
+  <p class="refs">原稿 <a href="./38145_MCDisp_Align_Multi_Capti.pdf#page=6">p.6 Table 1</a> · <a href="./38145_MCDisp_Align_Multi_Capti.pdf#page=7">p.7 Table 2</a> · <a href="./38145_MCDisp_Align_Multi_Capti.pdf#page=8">p.8 Table 4</a></p>
+</section>
+
+<section id="e1">
+  <span class="kicker">步骤 2 · R1 W2 / R3 · 先做 CLIP 对照</span>
+  <h2>让 CLIP 也用五条描述一起训练</h2>
+  <p class="question"><strong>要回答</strong> 如果 CLIP 也按描述集合训练，MCDisp-Align 还领先多少？</p>
+  <ol class="steps">
+    <li><strong>先看在训 CLIP 的配置。</strong> 确认训练是单条描述配图，还是五条先聚合。原稿只明确了各方法评估时用同一组五条描述，回信里按实际配置说明训练目标。</li>
+    <li><strong>补训练目标对照。</strong> 用相同的 ViT-L/14 初始化和图像 batch。CLIP-PairFT 每图也读五条描述，按描述位置分别算五个 B×B 双向对比 loss 后取平均。CLIP-SetFT 独立编码五条描述，先取平均中心，再按 Eq. (5) 算一个 B×B 双向对比 loss。固定图像、描述、温度和更新步数。若已有权重符合其中一项，直接复用。预算只够跑 SetFT 时，明确原 CLIP-FT 的描述曝光差异，结论限定为两种训练配方的比较。</li>
+    <li><strong>把四行放在同一张集合检索表。</strong> 用 MSCOCO、固定五条描述分组和共同中心 cosine，比较 PairFT、SetFT、MCDisp w/o ℒ<sub>align</sub>、MCDisp Full。组成员由标注提前确定。再用步骤 1A 的独立描述结果看优势是否延伸到无预聚合的任务。</li>
+    <li><strong>有余力再做 ProLIP-SetFT。</strong> 保留 ProLIP 的头，只换成 Eq. (2)、(4)–(5) 的集合匹配。与同骨干原目标 ProLIP 配对，单列 H/14 的结果。</li>
+  </ol>
+  <div class="outcome"><strong>交付</strong> 四行集合检索主表，加一列同协议的百分点差。<br><strong>解决</strong> PairFT → SetFT 衡量集合监督的收益。MCDisp w/o → Full 在同架构下衡量对齐 loss 的收益。若描述曝光量相同且 SetFT 追平 Full，可说明集合监督已能弥合这项差距。若 Full 仍领先，再用同架构消融单独说明对齐项贡献。</div>
+  <details class="guide" open><summary>执行细节 · 把 PairFT 和 SetFT 做成只改训练目标的对照</summary>
+    <p><strong>输入。</strong> 每步用同样的 B 张不同图及各自的五条描述。两行用同一个预训练权重、同样的可训练层、图像 batch、更新步数、学习率、温度与选模规则。先记下原 CLIP-FT 是否符合这些条件，再决定复用还是补训。</p>
+    <pre><code>PairFT  对第 k 个描述槽位（k = 1…5）：
+        logits[i,j] = cosine(image[i], caption[j,k]) / 温度
+        以 i = j 为正例，算图到文、文到图的交叉熵后取平均
+        最后对 5 个槽位的 loss 再取平均
+
+SetFT   对每张图的 5 个文本中心取平均，得到 set_center[j]
+        logits[i,j] = cosine(image[i], set_center[j]) / 同一个温度
+        以 i = j 为正例，算两向交叉熵后取平均
+
+MCDisp  w/o 和 Full 都使用原稿 Eq. (4)–(5)
+        两行的区别是是否加入 Eq. (6) 的对齐损失</code></pre>
+    <p><strong>开跑前抽一批。</strong> 检查两组读到的图像 ID 和五条描述 ID 是否相同，每个打分矩阵是否为 B×B，正例是否都在对角线。跑少量更新，确认 loss、梯度和权重更新有限，再开始正式训练。若显存限制导致需要调小图像 batch，两行一起调整并记录。</p>
+    <p><strong>评估及读表。</strong> 四行都在固定的 MSCOCO 图库做集合检索，统一中心 cosine。先填 PairFT→SetFT 和 w/o→Full 的两项差值，再看 Full 与 SetFT 的余量。若 SetFT 与 Full 很接近但区间较宽，写“当前评估无法区分”，避免把证据不足解释为等效。若 Step 1A 的逐条检索没有同样增益，明确限定收益发生在集合任务。</p>
+    <pre><code>模型              I2T R@1/5/10   T2I R@1/5/10   预先指定的差值
+CLIP-PairFT       [待填]         [待填]         CLIP 对照
+CLIP-SetFT        [待填]         [待填]         减 PairFT
+MCDisp w/o align  [待填]         [待填]         MCDisp 对照
+MCDisp Full       [待填]         [待填]         减 w/o align
+另报 Full−SetFT 的差值及区间，作为完整配方之间的比较。</code></pre>
+    <div class="checkpoint"><strong>验收</strong> 同一个 CLIP 初始权重、相同图像与描述曝光、相同选择规则、相同测试集合。若只复用了原单描述 CLIP-FT 加新 SetFT，这仍是有价值的配方比较，但需要同时报告文本曝光量差异。</div>
+  </details>
+  <p class="refs">原稿 <a href="./38145_MCDisp_Align_Multi_Capti.pdf#page=4">pp.4–5 Eq. (2)、(4)–(6)</a> · <a href="./38145_MCDisp_Align_Multi_Capti.pdf#page=6">p.6 §3.2</a></p>
+</section>
+
+<section id="ablation">
+  <span class="kicker">步骤 3 · R1 W1/W4、R2 Q3 · 先查生效再跑消融</span>
+  <h2>先确认损失项有信号，再量化关掉的影响</h2>
+  <h3 id="e3a">3A · 用固定一小批 MSCOCO 数据查梯度与数值</h3>
+  <ol class="steps">
+    <li><strong>确认轮次。</strong> 从日志记下 KL、覆盖、方向项第一次启用的轮次和最佳 checkpoint 的轮次。原稿第 5 轮开启覆盖，第 9 轮方向项才开始，第 10 轮到满权重。如果最佳权重在第 9 轮前，就用同样训满 10 轮的 Full 和去方向模型另做配对。</li>
+    <li><strong>逐项求梯度。</strong> 用已有 checkpoint，在同一批图上分别对各项 loss 求梯度，只记录结果，不更新权重。记下加权 loss、梯度范数和非零比例，重点看低秩 U 和文本方差头。缺少早期权重时标为缺测，后续运行再补采。覆盖未激活时先记录比例，单纯增大 β 不会让零梯度出现。</li>
+    <li><strong>查方差有没有被加大两次。</strong> 同一批样本记录基础方差、低秩 U 增加的边际方差和 caption 目标边际。用“完整图像边际减目标边际”判断是否系统性偏大。记录文本方差围绕 0.04 的分布，并在同一权重上把文本方差固定成 0.04，看集合排序改变多少。</li>
+  </ol>
+  <div class="outcome"><strong>交付</strong> 一张诊断表，列出启用轮次、覆盖激活率、U 与文本方差的梯度、方差误差及排序变化。<br><strong>解决</strong> 区分“公式有梯度路径”“本次训练真的有梯度”“推理打分直接用到了它”。覆盖长期为零或方向没有启用时，按日志直接说明。</div>
+  <details class="guide" open><summary>执行细节 · 在哪些轮次测，怎么区分零梯度和没有梯度路径</summary>
+    <ol>
+      <li><strong>固定诊断输入。</strong> 在开发集预先选固定的几批图，保存图像和描述 ID。优先读取已保存的第 2、5、8、9、10 轮及实际最佳 checkpoint。缺哪些轮就登记哪些轮缺测。用同一输入比较各轮，并记录每一项当时的实际系数。把固定批次的复算与真实训练日志分列，实际生效步数以训练记录为准。</li>
+      <li><strong>单独计算每项。</strong> 对匹配、KL、覆盖、方向、方差正则分别求梯度。先记未加权 loss，再乘该轮的实际系数。对 U、图像方差输出和文本方差输出分别记梯度是否连接、范数与非零比例。同一批的各项使用同一次前向或完全相同的输入。</li>
+      <li><strong>标明为何为零。</strong> 路径不存在写“未连接”，轮次权重为零写“未启用”，有路径且测得为零写“本批为零”。对覆盖再记正 caption 中 d²/D&gt;1 的比例。某一批没激活时，只对该批和该 checkpoint 作结论。</li>
+      <li><strong>留两条推理检查。</strong> 同权重把 U 置零，原 Eq. (4) 和标准中心 cosine 的排名应一致。另一次将文本方差固定为 0.04，保留相同文本中心与中心间协方差，只重算集合分数，记录 top-1 翻转率和 R@1 变化。</li>
+    </ol>
+    <pre><code>轮次 | 是否最佳权重 | loss 项 | 实际系数 | 原始值 | 加权值 |
+      U 梯度状态/范数 | 图像方差梯度 | 文本方差梯度 | 覆盖激活率
+方差检查  目标边际、基础边际、低秩增量、完整边际偏差、低秩占总方差比例
+覆盖检查  d²/D 的 P50、P90、P99，超过 1 的比例及对应样本数</code></pre>
+    <p>方差诊断逐维比较两组误差。基础误差为图像基础方差减目标边际，完整误差为基础方差加 diag(UU<sup>⊤</sup>) 后减目标边际。分别报告平均有符号误差和平均绝对误差，避免正负误差抵消。</p>
+    <div class="checkpoint"><strong>验收</strong> 回答“U 是否生效”时，至少给出一条梯度记录、一条评分路径检查和一条重训对照。三条分别说明训练时的信号、推理时的直接使用和移除后的影响。</div>
+  </details>
+  <details><summary>回信里怎么直接回答四个数学问题</summary>
+    <ul>
+      <li><strong>U 用在哪里。</strong> 原稿 Eq. (4)、标准中心余弦和 KL<sub>diag</sub> 都不直接用 U。覆盖项用完整协方差，hinge 激活时可向 U 回传。方向项约束 U 的列空间，未约束幅度。设 z=(Σ<sup>v</sup>+εI)<sup>−1</sup>δ，则 ∂d²/∂U=−2zz<sup>⊤</sup>U。可用同一权重在评分时置零 U 验证评分路径，再由 3B 的对角重训检验训练作用。</li>
+      <li><strong>覆盖怎么算。</strong> 报 d²/D 的 P50/P90/P99 和超过 1 的比例，再报加权 hinge 与梯度。若要改阈值，把它单列为新增实验。</li>
+      <li><strong>方差是否重复。</strong> Eq. (2) 的混合矩包含 caption 内方差和中心间协方差。潜在问题在 Eq. (6)，对角 KL 把基础方差拟合到完整目标边际，随后完整协方差还加 UU<sup>⊤</sup>。若实测超配，再将“扣除低秩边际贡献”作为单独修订。</li>
+      <li><strong>文本方差为什么接近 0.04。</strong> 这是方差正则的锚点。前三个对齐项的 sg 截断 caption 目标梯度，方差正则仍训练文本方差。ℒ<sub>match</sub> 的方差梯度在前两轮关闭，再逐步开启。接近锚点时，结合跨样本变化和固定方差后的排序变化判断实际作用。</li>
+    </ul>
+    <p>原稿默认 α=1、β=0.5、γ=0.01、η=0.01、r=4、v₀=0.04、ε=10<sup>−6</sup>。用实测的加权梯度回答不同损失尺度如何平衡。若某项实际有信号但移除前后差异很小，再考虑单独调大对应的 β 或 γ，保持其他项不变。</p>
+  </details>
+  <h3 id="ablations">3B · 用已更新的消融代码补跑缺失行</h3>
+  <p>主任务是 <strong>MSCOCO 五描述集合检索</strong>。先复用合格的 Full 和 w/o 权重，补中间四行，再做对角与 sg 对照。各行用相同初始化、图像、batch、步数和图库。如果改用固定的小训练子集，Full 也按相同预算重跑。</p>
+  <div class="table" tabindex="0" role="region" aria-label="逐项消融矩阵"><table>
+    <thead><tr><th scope="col">配置</th><th scope="col">具体改哪里</th><th scope="col">和谁比，回答什么</th></tr></thead><tbody>
+      <tr><td class="id">A0 / A1</td><td>完整模型 / 关掉整个 ℒ<sub>align</sub>，只保留 ℒ<sub>match</sub>。</td><td>两行直接比较，回答整体对齐对集合检索有多大影响。标准检索结果放步骤 1A。</td></tr>
+      <tr><td class="id">A2 · 去 KL</td><td>α=0，其他项保留。</td><td>对 A0，检查中心和对角方差匹配的贡献。</td></tr>
+      <tr><td class="id">A3 · 去覆盖</td><td>β=0，其他项保留。</td><td>对 A0，结合正描述覆盖率与召回判断覆盖项的贡献。</td></tr>
+      <tr><td class="id">A4 · 去方向</td><td>γ=0，保留 U、r=4 和完整协方差覆盖。</td><td>对 A0，检查方向 loss 是否有贡献。确认 A0 实际经过第 9–10 轮的方向训练。</td></tr>
+      <tr><td class="id">A5 · 去方差正则</td><td>η=0，其他项保留。</td><td>对 A0，检查方差锚点对召回与方差分布的影响。</td></tr>
+      <tr><td class="id">A6 · 只用对角</td><td>r=0，移除 U 和方向项，覆盖改用对角协方差。</td><td>对 A4，两行都无方向 loss，比较低秩容量本身。资源够再加 r=2，记实际有效秩。</td></tr>
+      <tr><td class="id">A7 · 去 sg</td><td>取消前三项 caption 目标的 detach，保留原有方差梯度日程。</td><td>对 A0，检查让对齐项更新文本后，召回和细粒度区分如何变化。反向不稳定时记录发生位置。</td></tr>
+    </tbody></table></div>
+  <div class="outcome"><strong>交付</strong> 一张双向 R@1/5/10 消融表，每行标对应对照、百分点差和各项实际生效步数。<br><strong>解决</strong> 哪些损失项在主任务上带来收益，哪些只改变几何，哪些在当前设置下没有可测贡献。</div>
+  <details class="guide" open><summary>执行细节 · 先跑哪些行，怎么确认每行只改了指定项</summary>
+    <ol>
+      <li><strong>先盘点 A0–A7。</strong> 逐个查已有运行配置和 checkpoint。符合共同数据、初始化、训练和选模口径的行直接复评。给每个缺失行从同一个 Full 配方复制配置，单独记录本行改动。</li>
+      <li><strong>用少量 batch 检查每个改动。</strong> 关闭项的加权值应为零，其他项按原日程运行。A4 必须仍保留 U 和全协方差覆盖。A6 检查没有低秩项且方向项跳过。A7 检查允许梯度流向 caption 目标，先观察反向是否有限。各行用独立运行号和 checkpoint 目录。</li>
+      <li><strong>训练和选模成对。</strong> 同一个 seed 先补齐 A2–A5，再跑 A6、A7。按原方案选最佳轮次时记录两行的最佳 epoch。针对晚启用的方向项，额外比较同样跑到第 10 轮的 A0、A4，两个模型取同一轮比较。原方案最佳权重和第 10 轮诊断分别报。</li>
+      <li><strong>按预先指定的对照算差。</strong> A2–A5、A7 都减 A0。A6 优先减 A4，这样两行都关方向项。给相同图库上的双向差值和区间，附上步骤 3A 对应的梯度或几何记录。</li>
+    </ol>
+    <pre><code>消融表  run_id | 改动 | 对照行 | 选中轮次 | 覆盖/方向实际生效步数 |
+        I2T R@1/5/10 | T2I R@1/5/10 | ΔR@1（百分点）及区间 | 诊断结论</code></pre>
+    <div class="checkpoint"><strong>验收</strong> 方向尚未启用的 A0 不能用来判断 γ 的作用。出现训练异常时保留该行并标注失败位置。移除后差值接近零时写“当前设置下未测到明确收益”，并结合该项有没有实际激活。</div>
+  </details>
+  <p class="refs">原稿 <a href="./38145_MCDisp_Align_Multi_Capti.pdf#page=5">p.5 Eq. (6)</a> · <a href="./38145_MCDisp_Align_Multi_Capti.pdf#page=8">p.8 Tables 4–5</a> · <a href="./38145_MCDisp_Align_Multi_Capti.pdf#page=12">p.12 Appendix A</a></p>
+</section>
+
+<section id="semantics">
+  <span class="kicker">步骤 4 · R2 W1/W2、Q1/Q2 · 只评估，不重训</span>
+  <h2>找能看清属性和关系的例子</h2>
+  <h3 id="e4a">4A · MSCOCO 集合 T2I · 比较高低互补两组</h3>
+  <ol class="steps">
+    <li><strong>给描述标事实。</strong> 在步骤 0 的图中试标约 30 张。标出每条描述里能从图上确认的对象、属性和关系，同义词算同一事实。举例，两条描述分别提到“马的颜色”和“车上的乘客”，各自补了一条信息，算一对互补描述。</li>
+    <li><strong>分两组。</strong> 一图五条描述共有 10 对。数有多少对的两条描述各自提供至少一条对方没有的事实。根据试标定好高低组阈值，再抽样，每组建议约 100 张。记录实际数量，尽量匹配图像复杂度和描述长度。标注时不看模型得分。</li>
+    <li><strong>只换查询组，图库固定。</strong> 用同一图库比较 Full、CLIP-FT 和 CLIP-SetFT，报高组和低组各自的 T2I R@1。每组算 Full 减 SetFT，再比较高组差值是否更大，并给配对区间。</li>
+  </ol>
+  <div class="outcome"><strong>交付</strong> 一张高低组对比图，附每组图数、分组规则和增益差。<br><strong>解决</strong> 看方法是否在描述真正互补的样本上更有帮助。两组差异不清楚时，只报告这批样本的观察。</div>
+  <details class="guide" open><summary>执行细节 · 标注员手里拿什么，最后怎样算高低组差值</summary>
+    <ol>
+      <li><strong>做一张盲标表。</strong> 标注员只看图和五条原描述。逐条填事实类型、文字片段、图中是否可确认和同义事实 ID。一个人初标，另一人核对边界样本，有分歧的条目复核后再计数。</li>
+      <li><strong>先用试标定规则。</strong> 例如“棕色马”和“乘客”是可区分事实；同一个对象用两个近义词描述仍算同一事实。对每张图遍历五条描述的 10 个配对，每对双方各有独有事实才计 1。汇总成 0–10 的互补分数。根据试标后的分布固定高低组阈值，分界模糊的样本单列。</li>
+      <li><strong>固定图库再评分。</strong> 高低组都在步骤 0 的同一个 MSCOCO 图库查图。每个模型保存逐组的查询命中。每组计算 Full 减 CLIP-SetFT，得到 Δ高和 Δ低。主报告 Δ高−Δ低，并在两组内分别按图像 ID 配对重抽样，给这个差值的区间。</li>
+    </ol>
+    <pre><code>标注表  image_id | caption_id | 原文片段 | 事实 ID | 对象/属性/关系 |
+        可见/不可确认 | 标注者 | 复核说明
+分组表  image_id | 互补对数（共 10 对） | 高/低/中间 | 纳入或排除原因
+结果表  组别 | 查询数 | CLIP-FT R@1 | SetFT R@1 | Full R@1 |
+        Full−SetFT（百分点） | 区间</code></pre>
+    <div class="checkpoint"><strong>验收</strong> 阈值和纳入清单在看分数前冻结。实际样本少于目标时报告实际数。高组与低组差值的区间覆盖零时，回复说明目前未能分辨互补性带来的额外收益。</div>
+  </details>
+
+  <h3 id="e4b">4B · MSCOCO 独立描述检索 · 看模型具体错在哪里</h3>
+  <ol class="steps">
+    <li><strong>选约 30–50 对难例。</strong> 先找对象相同、属性或关系不同的真实图像对，各配一条能区分它们的真实描述。找不到合适图对时，才用只改一个事实的描述做负例，并人工确认改后的事实与原图冲突。</li>
+    <li><strong>看谁排对。</strong> CLIP-FT、CLIP-SetFT 和 Full 都用同样的独立描述和中心余弦。两张图都把各自描述排在对方描述前才算一对正确。记录正确率、正例减负例的分差，以及“CLIP 错、Full 对”和“CLIP 对、Full 错”各有多少。</li>
+    <li><strong>再看概率模型有没有把负例也盖进去。</strong> 对 Full、w/o 和 A6，计算真实描述的 d²/D、每图最远的真实描述、难负例减正例的距离差，再记整体方差大小。CLIP 没有协方差，只比较余弦分差。</li>
+    <li><strong>画一页可复核的例子。</strong> 每例放图、描述中的关键属性或关系、两个模型的排名和分差。按预定规则展示纠正、仍错和变差的案例。原稿 WSD/BSD/RSD 继续当辅助统计。</li>
+  </ol>
+  <div class="outcome"><strong>交付</strong> 难例准确率表、正负间隔和覆盖表、带文字与排名的案例图。<br><strong>解决</strong> 给出真实属性或关系被错认与被纠正的证据。若只看到方差或 WSD 增大，正负间隔没有改善，回信只报告几何变化。</div>
+  <details class="guide" open><summary>执行细节 · 从一对图得到判分、覆盖和可视化证据</summary>
+    <ol>
+      <li><strong>固定难例清单。</strong> 为每对保存图 A、图 B、两条真实描述，以及真正区分它们的事实，例如同样是自行车，只有颜色不同。真实图对和人工改一句的反事实分别统计。若一句描述对两图都成立，就剔除该对并写明原因。尽量避免同一张图重复进多个配对。</li>
+      <li><strong>算两条分差。</strong> 每个模型计算图 A 与两句的分数、图 B 与两句的分数。图 A 的正确句分数减错误句分数得 mA，图 B 同理得 mB。mA 和 mB 都大于 0 才算这对正确，平分按未分出记。人工反事实只有一张图，就只算一条分差并单独报。</li>
+      <li><strong>查完整协方差覆盖。</strong> 对有协方差的模型，用原稿 Eq. (6) 相同的 d²/D 计算正描述与难负描述的距离。每图记录最远正例和最近难负例，“最近负例距离 − 最远正例距离”越大越好。并列正例覆盖率、难负例误覆盖率和协方差迹。跨不同方差尺度的模型，优先比较正负排序，若要比较覆盖率则先在开发集校准同一负例误覆盖率。</li>
+      <li><strong>用配对记录选图。</strong> 按固定规则各展示“修复”“两者仍错”“退化”。每张图标出区分事实、对应 caption、CLIP 与 Full 的分差和排名。表里保留全部样本，正文示例图只承担解释作用。</li>
+    </ol>
+    <p><strong>有余力再补几何对照。</strong> 在同一图中，把同事实的近义描述和提供不同事实的描述分开，分别算 1−cosine，再比较两组距离差。使用同一个概率模型时，可把完整协方差与保留其相同边际方差的对角矩阵比较，隔离维度相关性的作用。这两项与重训的 A6 分开报告。</p>
+    <pre><code>难例记录  pair_id | 图 A/B ID | caption A/B ID | 关键事实 | 属性/关系 |
+          负例核实说明 | 模型 | mA | mB | 配对是否正确 | 正/负例距离
+结果表    组别 | 有效对数 | CLIP-FT 正确率 | SetFT 正确率 | Full 正确率 |
+          CLIP 错→Full 对计数 | CLIP 对→Full 错计数 | 分差中位数</code></pre>
+    <div class="checkpoint"><strong>验收</strong> 每个例子都能回查原图和具体事实。覆盖扩大但最近难负例也更接近时，回信同时报告这两项变化。正负间隔和错误修复共同改善时，再说明它们支持哪类语义区别被保留。</div>
+  </details>
+  <p class="refs">原稿 <a href="./38145_MCDisp_Align_Multi_Capti.pdf#page=2">p.2 Fig. 1</a> · <a href="./38145_MCDisp_Align_Multi_Capti.pdf#page=5">p.5 覆盖项</a> · <a href="./38145_MCDisp_Align_Multi_Capti.pdf#page=8">p.8 Table 5</a></p>
+</section>
+
+<section id="captions">
+  <span class="kicker">步骤 5 · R3 · 只新增 MCDisp-Align 配置</span>
+  <h2>用 1、3、5 条描述训练，测试都用 5 条</h2>
+  <ol class="steps">
+    <li><strong>固定每张图的描述顺序。</strong> 用同一 seed 给五条描述排序。1 条组取第一条，3 条组取前三条，5 条组全用。图像、初始化、图像 batch 和更新步数保持相同，记录文本曝光量和训练耗时。</li>
+    <li><strong>先跑 3 条，再补 1 条。</strong> 复用步骤 3 的 5 条 Full。每图只有一条时，中心之间没有方差，跳过方向项。3 条最多有两个方向，5 条最多四个，记下实际有效秩。</li>
+    <li><strong>统一评估。</strong> 三个权重都在同一 MSCOCO 图库做五描述集合检索。画横轴为训练描述数、纵轴为双向 R@1 的图。若要单看推理描述数量，再用同一个五描述模型做附表。</li>
+  </ol>
+  <div class="outcome"><strong>交付</strong> 1/3/5 条训练描述的双向 Recall 表和曲线。<br><strong>解决</strong> 判断更多训练描述在测试条件相同时是否带来收益。结果上升只说明这三个已测配置的趋势。若 3 到 5 条进入平台，也直接报告。</div>
+  <details class="guide" open><summary>执行细节 · 固定训练描述清单，避免把训练数量和测试数量混在一起</summary>
+    <ol>
+      <li><strong>保存嵌套清单。</strong> 给每张训练图保存一份 5 条描述的固定顺序。整个训练期间，K=1 只访问这个顺序的第 1 条，K=3 只访问前 3 条。先抽几张图检查 K=1 的 ID 都属于 K=3，K=3 都属于 K=5。</li>
+      <li><strong>从同一个 Full 配方复制。</strong> 三组固定图像、初始化、图像 batch、优化更新数、损失权重和生效轮次。记录总描述曝光量随 K 的变化。K=1 时仍保留单条文本预测方差，中心间协方差为零，方向项跳过。K=3、5 核对实际有效秩上限。</li>
+      <li><strong>先做 3 对 5。</strong> K=3 完成后，先在固定五描述测试图库对照 Full K=5。两行口径确认后再补 K=1。若只能完成 3 对 5，就在 rebuttal 报这个对比，单条描述边界标为待补。</li>
+      <li><strong>结果分成两类。</strong> 主表和曲线横轴都是训练 K，测试 K 固定为 5。可选的推理数量实验固定 K=5 的同一个训练权重，再改测试 K，另起一张表。</li>
+    </ol>
+    <pre><code>训练描述数 | 测试描述数 | 训练图数 | 描述曝光量 | 有效秩 | 选中轮次 |
+           I2T R@1/5/10 | T2I R@1/5/10 | 对 5 条的差值及区间</code></pre>
+    <div class="checkpoint"><strong>验收</strong> 三组拿到完全相同的测试图和测试描述。主结论表述为“在固定图像预算下改变每图可用描述数的效果”，同时交代文本曝光和方向容量都随 K 变化。</div>
+  </details>
+  <details><summary>有余力再区分描述数和方向数</summary><p>在 K=3 与 K=5 都使用 r=2，再比较两组。这样可以检查 3 到 5 条的差异有多少仍出现在方向数上限相同的情况下。</p></details>
+  <p class="refs">原稿 <a href="./38145_MCDisp_Align_Multi_Capti.pdf#page=4">p.4 Eq. (2)</a> · <a href="./38145_MCDisp_Align_Multi_Capti.pdf#page=5">p.5 有效秩定义</a> · <a href="./38145_MCDisp_Align_Multi_Capti.pdf#page=12">p.12 Appendix A</a></p>
+</section>
+
+<section id="execution">
+  <span class="kicker">提交前 · 把实验结果写回对应评审</span>
+  <h2>先答问题，再给数字，最后写改稿位置</h2>
+  <ol class="steps">
+    <li><strong>现在并行做。</strong> 定评估清单，盘点在训基线与消融权重，检查 U 和覆盖的日志，开始标注语义样本。准备缺失的 CLIP-SetFT 对照。</li>
+    <li><strong>权重一可用就出首批表。</strong> 先补 MSCOCO 标准检索和集合目标对照，拿到四个逐项消融结果。并行用已有权重做互补性分组和少量难例。然后补对角、sg、描述数量及已有权重能支持的 Flickr30K 结果。</li>
+    <li><strong>按问题填回信。</strong> R1 W1/W4 用步骤 3 的日志和消融，R1 W2 与 R3 的训练目标用步骤 2，R1 W3 用步骤 1，R2 用步骤 3–4，R3 的描述数用步骤 5。每段写清数据集、任务、有效样本数、对照、指标和差值。只填已跑完的数字。</li>
+  </ol>
+  <div class="note"><strong>回信写法示例。</strong> “原稿的集合检索对各方法使用相同的五描述组。为单独检验训练目标，我们在同一 MSCOCO 划分上增加了 CLIP-SetFT。将结果填为 PairFT <code>[待填]</code>、SetFT <code>[待填]</code>、Full <code>[待填]</code>，再根据差值说明集合监督和对齐分别提供了什么证据。”</div>
+  <p><strong>论文改哪里。</strong> §2.3 补梯度路径与损失生效条件。§3.2–3.3 分开写集合与标准检索，加入目标对照和基线补表。§3.4 加具体错例与分层结果。§3.5 加逐项消融和描述数量对照。</p>
+  <details class="guide" open><summary>提交前清单 · 什么时候可以入表，哪些证据先交</summary>
+    <ol>
+      <li><strong>先交无需新增训练的证据。</strong> 数据和权重清单、同图库复评、现有 checkpoint 的梯度诊断和第一批难例图。权重没到齐时，表中写待评估的行及原因。</li>
+      <li><strong>把首批训练留给直接回答评审的对照。</strong> 先补 CLIP 的匹配目标和缺失的四个损失消融。将 A0/A4 的第 9–10 轮检查与方向项实验一起安排，避免短跑后还要重来。A6、A7、K=3 和 K=1 按资源继续补齐。</li>
+      <li><strong>主表结果可追溯。</strong> 每个数字能定位到数据清单版本、运行号、checkpoint、逐查询结果和汇总方式。训练交集非零、候选错位、关键配置未生效的行先修复再入表。故障和缺测分别标记，区间覆盖零也保留实际数值。</li>
+      <li><strong>优先复验最关键结论。</strong> 算力有余时，对决定 rebuttal 结论的那一对配置补训练 seed。语义案例有余力时增加核实后的难例数，仍用原规则和原图库。</li>
+    </ol>
+    <pre><code>分工记录  实验编号 | 负责人 | 复用/新增训练 | 依赖权重 |
+          状态（待核对/在训/待评估/通过/失败） | 输出位置 | 下一步
+证据记录  评审编号 | 回答的具体问题 | 表/图与对应行 | 任务与数据 |
+          有效 N | 对照差值与区间 | 能支持的结论 | 改稿位置</code></pre>
+  </details>
+  <details class="guide" open><summary>回信提纲 · 按评审的问题选证据</summary>
+    <ul>
+      <li><strong>R1 W1 / W4。</strong> 先承认 U 在原打分式中的直接使用范围，再填覆盖激活率、方向项生效轮次和 A0/A4/A6 的差值。逐项列出 KL、覆盖、方向、方差正则及 sg 的变化。若某项没有激活，结论写成“在当前设定下未激活”。</li>
+      <li><strong>R1 W2 / R3 训练目标。</strong> 说明原 CLIP-FT 的真实目标和曝光量，给 PairFT→SetFT 与 w/o→Full 两个差值。若只在集合检索上改善，保留逐条检索结果，明确适用范围。</li>
+      <li><strong>R1 W3。</strong> 说明原稿 w/o 的下降，然后引统一中心 cosine 的同骨干主表与 Flickr30K 补表。标出方法之间的冻结和训练预算差异。若缺 Flickr30K 权重，把迁移结果放补充位置。</li>
+      <li><strong>R2。</strong> 先填高低互补组的增益之差，再填难例的纠正数和退化数，引用具体属性或关系例子。若只有 WSD、覆盖或方差变化，回复范围限定为几何观察。</li>
+      <li><strong>R3 描述数。</strong> 写明三组测试都用五条描述，再填各组 R@1 及差值。只有 3 对 5 跑完时先报告这两点。平台和下降都如实写。</li>
+    </ul>
+  </details>
+</section>
+</main>
+<footer class="shell">方案依据 <a href="./Review.md">Review.md 及中文注释</a> · <a href="./38145_MCDisp_Align_Multi_Capti.pdf">论文原稿</a> · 你提供的训练进度。补充结果均待实测。</footer>
+</body>
+</html>

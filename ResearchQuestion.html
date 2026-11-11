@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="围绕粗粒度语义一致性与细粒度语义保持，讨论一对多、不完整描述监督下的视觉—语言表示学习研究问题。">
+  <meta name="color-scheme" content="light">
+  <title>Research Question · 不完整描述监督下的细粒度图文对齐</title>
+  <style>
+    :root {
+      --paper: #fffefb;
+      --canvas: #f1f2ef;
+      --ink: #202b35;
+      --muted: #63717b;
+      --line: #dce2de;
+      --accent: #196958;
+      --accent-soft: #edf5f0;
+      --warm: #f7f2e9;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 32px; }
+    body {
+      margin: 0; background: var(--canvas); color: var(--ink);
+      font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+      font-size: 16px; line-height: 1.9; -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    a:hover { color: #104b40; }
+    a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+    .layout { max-width: 1232px; margin: 42px auto 72px; padding: 0 28px; display: grid; grid-template-columns: 204px minmax(0, 1fr); gap: 32px; align-items: start; }
+    aside { position: sticky; top: 34px; padding-top: 14px; }
+    .rail-label { font-size: 11px; letter-spacing: .16em; font-weight: 700; color: var(--accent); }
+    .rail-title { margin: 12px 0 24px; font-size: 17px; font-weight: 600; line-height: 1.6; }
+    nav { border-top: 1px solid var(--line); padding-top: 16px; }
+    nav a { display: block; margin: 0 0 12px; color: var(--muted); text-decoration: none; font-size: 13px; line-height: 1.55; }
+    nav a span { display: inline-block; width: 24px; color: var(--accent); font-size: 11px; }
+    .rail-note { margin-top: 28px; font-size: 12px; line-height: 1.8; color: var(--muted); }
+    main { min-width: 0; background: var(--paper); border: 1px solid var(--line); padding: 48px 58px 42px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 11px; color: var(--muted); letter-spacing: .06em; }
+    .meta .type { color: var(--accent); font-weight: 700; }
+    h1 { margin: 22px 0 15px; font-size: 34px; line-height: 1.4; letter-spacing: -.025em; font-weight: 750; }
+    .subtitle { margin: 0 0 28px; color: var(--muted); font-size: 17px; line-height: 1.7; }
+    .lead { border-left: 3px solid var(--accent); background: var(--accent-soft); margin: 28px 0 0; padding: 18px 22px; }
+    .lead p { margin: 0; }
+    section { margin-top: 40px; }
+    h2 { display: flex; gap: 12px; align-items: baseline; font-size: 22px; line-height: 1.5; margin: 0 0 18px; padding-top: 22px; border-top: 1px solid var(--line); }
+    h2 .num { color: var(--accent); font-size: 12px; letter-spacing: .05em; flex: 0 0 auto; }
+    h3 { font-size: 17px; margin: 26px 0 9px; line-height: 1.65; }
+    p { margin: 0 0 16px; }
+    strong { font-weight: 650; }
+    ul, ol { padding-left: 23px; margin: 12px 0 20px; }
+    li { margin-bottom: 9px; padding-left: 3px; }
+    .question { margin: 22px 0; padding: 23px 25px; border-top: 2px solid var(--accent); border-bottom: 1px solid var(--line); background: var(--accent-soft); }
+    .question .label { color: var(--accent); font-weight: 700; font-size: 11px; letter-spacing: .12em; margin-bottom: 10px; }
+    .question p { font-size: 21px; line-height: 1.75; font-weight: 600; margin: 0; }
+    .example { background: var(--warm); border-left: 2px solid #b89159; padding: 15px 20px; margin: 20px 0; font-size: 14px; color: #4d514e; }
+    .example .label { display: block; font-size: 11px; font-weight: 700; color: #85643d; letter-spacing: .07em; margin-bottom: 7px; }
+    .example p { margin: 0; }
+    .table-wrap { overflow-x: auto; margin: 18px 0 22px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 1.75; }
+    th, td { text-align: left; vertical-align: top; padding: 13px 14px; border-bottom: 1px solid var(--line); }
+    th { background: #f1f5f2; font-weight: 650; font-size: 12px; color: var(--accent); }
+    td:first-child { font-weight: 600; }
+    .note { color: var(--muted); font-size: 13px; line-height: 1.8; }
+    .hypothesis { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 13px; margin: 18px 0; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+    .hypothesis:last-child { border-bottom: 0; }
+    .hypothesis .tag { font-weight: 700; color: var(--accent); font-size: 12px; padding-top: 4px; }
+    .hypothesis p { margin: 0; }
+    .references { font-size: 13px; line-height: 1.8; }
+    .references li { margin-bottom: 13px; }
+    .references .detail { color: var(--muted); display: block; }
+    footer { border-top: 1px solid var(--line); margin-top: 34px; padding-top: 18px; color: var(--muted); font-size: 11px; line-height: 1.8; }
+    .source-path { overflow-wrap: anywhere; }
+    @media (max-width: 1040px) {
+      .layout { grid-template-columns: 160px minmax(0, 1fr); gap: 22px; padding: 0 20px; }
+      main { padding: 38px 34px; }
+      h1 { font-size: 30px; }
+    }
+    @media (max-width: 760px) {
+      .layout { display: block; margin: 0; padding: 0; }
+      aside { position: static; padding: 20px 22px 15px; }
+      .rail-title { margin: 6px 0 12px; font-size: 15px; }
+      nav { display: flex; flex-wrap: wrap; gap: 8px 15px; padding-top: 12px; }
+      nav a { margin: 0; font-size: 12px; }
+      nav a span { width: auto; margin-right: 5px; }
+      .rail-note { display: none; }
+      main { padding: 30px 23px; border-left: 0; border-right: 0; }
+      h1 { font-size: 27px; }
+      .subtitle { font-size: 15px; }
+      body { font-size: 15px; }
+      h2 { font-size: 20px; }
+      .question { padding: 18px; }
+      .question p { font-size: 18px; }
+      th, td { padding: 10px 9px; }
+    }
+    @media print {
+      @page { size: A4; margin: 18mm 17mm; }
+      html { scroll-behavior: auto; }
+      body { background: white; font-size: 10.5pt; line-height: 1.75; color: black; }
+      .layout { display: block; max-width: none; margin: 0; padding: 0; }
+      aside { display: none; }
+      main { padding: 0; border: 0; }
+      h1 { font-size: 24pt; }
+      h2 { font-size: 16pt; break-after: avoid; }
+      h3 { font-size: 12pt; break-after: avoid; }
+      section { margin-top: 25px; }
+      .subtitle { font-size: 12pt; }
+      .question p { font-size: 14pt; }
+      .lead, .question, .example, .hypothesis, tr { break-inside: avoid; }
+      .table-wrap { overflow: visible; }
+      table { font-size: 9pt; }
+      a { color: inherit; }
+      .references { font-size: 9pt; }
+      p { orphans: 3; widows: 3; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside aria-label="文档目录">
+      <div class="rail-label">RESEARCH QUESTION</div>
+      <div class="rail-title">多模态表示学习<br>研究问题讨论稿</div>
+      <nav aria-label="章节导航">
+        <a href="#motivation"><span>01</span>共性问题与研究动机</a>
+        <a href="#question"><span>02</span>核心科学问题</a>
+        <a href="#connection"><span>03</span>与原工作的联系</a>
+        <a href="#approach"><span>04</span>可研究的解决思路</a>
+        <a href="#hypotheses"><span>05</span>可检验的研究假设</a>
+        <a href="#evaluation"><span>06</span>实验与评价设计</a>
+        <a href="#novelty"><span>07</span>已有工作与创新边界</a>
+        <a href="#references"><span>08</span>参考资料</a>
+      </nav>
+      <div class="rail-note">以共性科学问题组织论述。<br>例子仅用于辅助解释。<br><br>2026 年 10 月 14 日</div>
+    </aside>
+
+    <main>
+      <header>
+        <div class="meta"><span class="type">VISION–LANGUAGE REPRESENTATION LEARNING</span><span>2026.10.14</span><span>基于 MCDisp-Align 的后续研究</span></div>
+        <h1>粗粒度语义一致性<br>与细粒度语义保持</h1>
+        <p class="subtitle">一对多、不完整描述监督下的细粒度视觉—语言对齐</p>
+        <div class="lead">
+          <p>图像与文本在整体内容上匹配，并不意味着模型保留了对象属性、实体绑定和关系结构。值得进一步研究的是：<strong>如何在实现全局图文对齐的同时，保留可区分、具有视觉依据的细粒度语义，尤其是描述没有充分覆盖的部分。</strong></p>
+        </div>
+      </header>
+
+      <section id="motivation">
+        <h2><span class="num">01</span>共性问题：整体匹配成功，细节仍可能缺失</h2>
+        <p>视觉—语言表示学习通常通过匹配图像和描述来建立跨模态对应关系。在粗粒度对齐中，主要训练信号来自整张图像与整句文本的相似度。主体类别、主要动作或场景信息，往往已经足以区分大量正负样本。</p>
+        <p>然而，实际理解和检索还需要区分颜色、数量、局部部件、属性归属、主客体角色和空间关系。这些信息可能不显著影响整体匹配得分，却决定两幅相似图像是否满足同一查询。因此，<strong>全局匹配目标的改善，不能直接证明细粒度语义被完整保留。</strong></p>
+
+        <h3>1. 全局对齐对局部对应关系的约束不足</h3>
+        <p>如果训练目标主要奖励主体和场景的一致性，模型就可能优先利用这些容易匹配的线索。不同图像具有相同主体，却在某个属性或关系上不同；不同描述共享主体，却关注不同局部内容。仅靠整体相似度，并没有明确要求模型准确区分这些差异。</p>
+        <p class="note">这里的判断是“目标没有充分约束细节保持”，而不是“单个全局向量必然无法表达细节”。高维全局表示可以携带丰富信息，问题在于这些信息是否被训练目标稳定保留，并被跨模态匹配实际使用。</p>
+
+        <h3>2. 图像与描述的覆盖范围不对称</h3>
+        <p>图像可以同时呈现多个对象、属性和关系，一条描述通常只表达其中一部分。多条描述能够增加覆盖，但仍可能反复关注主体，遗漏局部部件、背景或不常被讲述的关系。描述中的这种选择偏好已经得到研究验证。<a href="#ref-reporting">[1]</a></p>
+        <p>因此，细粒度对齐同时面临两项任务：准确对齐已经被描述的内容，以及保留清楚可见但尚未被描述的内容。后者缺少直接的图文监督，不能简单通过增加描述数量保证解决。</p>
+
+        <h3>3. 同图描述的差异具有不同性质</h3>
+        <p>描述之间的差异可能来自不同对象、不同属性或不同关系，也可能只是同义改写、语气和语言风格。前一类差异携带互补的视觉语义，需要保留；后一类变化通常不应改变事实判断。若统一压缩所有差异，可能损失细节；若统一保留所有差异，也可能把表达噪声或错误描述纳入表示。</p>
+
+        <div class="example">
+          <span class="label">辅助理解的例子</span>
+          <p>两幅图都可以被描述为“一个人和一匹马”，但其中一幅是“人骑着马”，另一幅是“人站在马旁”。粗粒度主体匹配在两幅图上都成立，准确理解仍需要区分人与马的关系。这个例子对应的是普遍的“主体一致、细粒度结构不同”问题。</p>
+        </div>
+      </section>
+
+      <section id="question">
+        <h2><span class="num">02</span>核心科学问题</h2>
+        <div class="question">
+          <div class="label">CENTRAL RESEARCH QUESTION</div>
+          <p>在一对多且描述覆盖不完整的图文对应关系中，如何兼顾全局语义一致性与细粒度语义可区分性，并使保留的对象、属性和关系能够被视觉证据验证？</p>
+        </div>
+        <p>研究对象是<strong>细粒度语义在跨模态对齐过程中的保留与使用</strong>。重点关注：整体对齐可能弱化哪些细节，描述遗漏会怎样改变这种过程，以及什么约束能够使模型保留有效细节而避免错误扩张。</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col">子问题</th><th scope="col">需要回答的科学问题</th></tr></thead>
+            <tbody>
+              <tr><td>保留什么</td><td>如何区分具有视觉依据的互补语义、保持事实不变的表达变化，以及不被图像支持的陈述？</td></tr>
+              <tr><td>对齐到哪里</td><td>如何把文本中的对象、属性和关系，分别对应到正确的视觉区域及区域之间的结构，而非只提高整体相似度？</td></tr>
+              <tr><td>遗漏时怎么办</td><td>当部分可见细节缺少直接描述监督时，如何利用已有视觉知识和跨样本对应关系保留它们，并区分描述遗漏与证据不足？</td></tr>
+              <tr><td>怎样证明有效</td><td>如何证明收益来自真实细节的保持与正确对齐，而非更多标注、更大模型、更宽匹配范围或语言偏差？</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>这里要求保留的概念可以已经由预训练或其他训练样本学到。研究目标是检验它们能否在缺少该实例直接描述的新图像中继续被识别和使用，并不要求模型恢复完全没有学习来源、也没有可见证据的事实。</p>
+      </section>
+
+      <section id="connection">
+        <h2><span class="num">03</span>与 MCDisp-Align 的联系</h2>
+        <p>MCDisp-Align 已经关注到：同一图像的多条描述具有互补语义，将这些描述统一拉向单一中心，可能弱化它们的差异。原工作用描述集合的中心、散布和变化方向监督图像分布，并通过覆盖约束容纳不同描述的语义。</p>
+        <p>这为后续研究提供了直接基础，但描述集合的几何散布仍主要是<strong>全局文本表示之间的差异</strong>。它并不直接说明差异对应哪个对象、哪个属性或哪种关系，也不能单独证明某个分布方向具有具体的视觉依据。</p>
+        <p>新的研究可以把原来的“覆盖不同描述语义”进一步推进为：<strong>保留并对齐不同描述所对应的细粒度视觉事实，同时维护尚未被描述、但具有可见证据的内容。</strong></p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col">原工作已经提供的基础</th><th scope="col">下一步需要回答的问题</th></tr></thead>
+            <tbody>
+              <tr><td>描述差异指导图像的语义范围</td><td>哪些差异来自真实视觉细节，哪些来自表达变化？</td></tr>
+              <tr><td>覆盖多条正确描述的中心</td><td>能否同时排除属性置换、角色互换和错误关系？</td></tr>
+              <tr><td>对齐描述散布的主要方向</td><td>这些方向能否对应可定位、可检验的对象和关系？</td></tr>
+              <tr><td>集合检索与标准检索改善</td><td>改善是否延伸到局部细节、未被讲述事实和未见组合？</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">上述内容是后续研究需要验证的边界，并非已经证实的原方法失败。当前代码已有覆盖打分、逐句对比和困难负样本扩展，可作为新研究的基线或组成部分。</p>
+      </section>
+
+      <section id="approach">
+        <h2><span class="num">04</span>可研究的解决思路</h2>
+        <p>建议围绕<strong>具有视觉依据的细粒度语义覆盖</strong>设计方法。首先明确每条描述覆盖了哪些视觉内容，再决定哪些语义应被对齐、哪些信息应被保留，以及哪些陈述应被拒绝。下面是待验证的设计思路，而非已经得到实验支持的结论。</p>
+
+        <h3>1. 将描述差异落实到局部视觉内容</h3>
+        <p>利用视觉区域或图像 token 表达对象和局部部件；属性需要绑定到对应对象，关系需要结合相关对象的位置与结构。多条描述通过这些局部对应关系提供互补监督，使“语义差异”具有可检查的来源。</p>
+        <p>对于关系信息，不能只确认两个对象都存在。模型还应区分对象之间的角色和联系，避免将对象词汇一致误当作整条陈述成立。</p>
+
+        <h3>2. 根据描述覆盖范围实施对齐</h3>
+        <p>训练时估计一条描述实际约束了哪些内容。对被描述且具有视觉依据的部分建立细粒度匹配；对未被描述的部分，利用预训练局部表征、图像自身的一致性约束和其他样本中的对应关系维护其信息。未提及的区域不能仅因缺少描述就被当作错误或无关内容。</p>
+        <p>为了解描述遗漏的规律，可以在少量训练图像上收集主体、属性和关系等不同关注点的描述，并核验一部分局部事实。这些数据用于学习监督覆盖的差异，不要求为所有图像补齐所有细节。</p>
+
+        <h3>3. 同时约束语义覆盖与语义排错</h3>
+        <p>正确描述的覆盖与错误描述的排除应一起评价和优化。明确可见却未被描述的事实应得到支持；与视觉证据矛盾的陈述应被拒绝；被遮挡或无法辨认的内容应保持不确定。这样才能避免通过扩大分布或降低阈值获得表面的召回提升。</p>
+        <p>若延续概率表示，可以研究以对象或关系为单位的分布，并区分“多个真实语义方面”与“对某个事实判断缺乏证据”。采用局部分布或更复杂分布只是实现选择，主要贡献仍应来自监督覆盖的处理方式和可验证的细节保持。</p>
+      </section>
+
+      <section id="hypotheses">
+        <h2><span class="num">05</span>可检验的研究假设</h2>
+        <div class="hypothesis"><div class="tag">H1</div><p><strong>整体对齐与细节能力可能出现分离。</strong> 在主体信息足以区分训练样本时，全局检索得分改善，可能伴随属性或关系区分能力的下降。应先验证这一现象及其发生条件；若没有出现，研究动机需要相应调整。</p></div>
+        <div class="hypothesis"><div class="tag">H2</div><p><strong>视觉依据可以帮助区分应保留的语义变化与表达变化。</strong> 对同一事实的改写，判断应保持稳定；对实际属性、对象绑定或关系的改变，模型应保持敏感。保留全部描述差异或抑制全部差异，都可能不如有依据的选择。</p></div>
+        <div class="hypothesis"><div class="tag">H3</div><p><strong>处理监督遗漏能够提升未被讲述细节的匹配。</strong> 在相同描述与标注预算下，考虑描述覆盖范围的训练方式，应在新图像的遗漏细节查询上表现更好，同时不增加错误事实的接受率。</p></div>
+        <div class="hypothesis"><div class="tag">H4</div><p><strong>细节表示对训练描述的关注偏好应更稳定。</strong> 用同样的训练图像、不同关注点的描述分别训练模型，在同一组新图像与细节查询上，新方法应较少依赖训练描述是否经常讲述该类细节。</p></div>
+      </section>
+
+      <section id="evaluation">
+        <h2><span class="num">06</span>实验与评价设计</h2>
+        <p>实验应从上述假设推导，而不是只增加几个标准检索榜单。首先保留原始预训练模型作为参照，再比较普通图文微调、MCDisp-Align 和具有局部对齐能力的方法，判断细节是否在训练过程中发生变化。</p>
+
+        <h3>受控训练与独立测试</h3>
+        <ol>
+          <li><strong>按图像划分训练与测试。</strong> 同一图像的改写、裁剪和描述变体保留在同一划分中，防止通过记住图像产生虚假的细节泛化。</li>
+          <li><strong>固定训练图像，控制描述关注点。</strong> 构造主体优先、属性优先、关系优先等版本，尽量匹配描述数量、长度和训练预算；加入遗漏数量相同的随机遗漏对照，检验影响是否来自系统性关注偏好，并保留同义改写对照。</li>
+          <li><strong>独立核验测试图像的细节。</strong> 对对象、属性、绑定和关系建立明确的事实标注，区分可见但未被相应训练策略覆盖的细节与无法确认的细节。</li>
+          <li><strong>加入经过核验的相近错误陈述。</strong> 使用属性置换、数量变化或角色互换等干扰，确认这些陈述对当前图片确实为假，避免把另一个真实事实误作负例。</li>
+        </ol>
+        <p>DCI 的人工区域描述适合作为细节核验的起点，但它也不是全部视觉事实的穷尽标注；未标注内容仍需审计。<a href="#ref-dci">[5]</a></p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col">评价项目</th><th scope="col">它检验什么</th></tr></thead>
+            <tbody>
+              <tr><td>属性、绑定和关系匹配</td><td>具有相同主体的样本，能否因真实细节差异被准确区分？</td></tr>
+              <tr><td>遗漏细节的召回</td><td>相应训练描述经常忽略的细节，能否在新图像上被识别并检索？</td></tr>
+              <tr><td>固定错误接受率下的正确覆盖</td><td>是否提高了有效语义覆盖，而不是同时放宽了对错误陈述的接受？</td></tr>
+              <tr><td>不同描述策略下的性能变化</td><td>模型对细节的使用是否过度依赖训练文字的关注偏好？</td></tr>
+              <tr><td>局部视觉干预</td><td>移除相关证据是否影响对应判断，改变无关区域是否尽量保持判断？</td></tr>
+              <tr><td>全局检索与计算成本</td><td>细节改善是否伴随整体能力或实用检索成本的显著损失？</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>基线应包括：原始 CLIP、普通多正例微调、MCDisp-Align、局部对齐方法，以及相同预算下补充详细描述的方法。加入文本单模态基线，检查结果是否可以由正负描述的语言差异解释。不同方法尽量使用相同骨干和训练数据，额外局部标注应单独配平。</p>
+        <p><strong>需要否定方法主张的情况：</strong>若普通局部对齐在相同预算下已获得同等收益，说明新机制可能没有额外价值；若打乱描述覆盖信息仍保持全部收益，说明覆盖建模未被证明有效；若正确召回提高的同时错误接受显著上升，则不能称为可靠的细节保持。</p>
+      </section>
+
+      <section id="novelty">
+        <h2><span class="num">07</span>已有工作与创新边界</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col">已有研究</th><th scope="col">已经覆盖的内容</th><th scope="col">本研究需要额外证明的内容</th></tr></thead>
+            <tbody>
+              <tr><td>FLAIR / FG-CLIP <a href="#ref-flair">[2]</a><a href="#ref-fgclip">[3]</a></td><td>局部表示、细粒度图文对齐、丰富描述与相关训练信号。</td><td>在相同监督预算下，处理描述遗漏是否能额外改善未被讲述的细节保持和跨描述策略泛化。</td></tr>
+              <tr><td>Reporting Bias <a href="#ref-reporting">[1]</a></td><td>发现并分析描述的系统性遗漏，验证定向标注的作用。</td><td>把遗漏规律纳入表示学习机制，并证明收益不只是新增标注内容带来的。</td></tr>
+              <tr><td>TPC <a href="#ref-tpc">[4]</a></td><td>从多描述学习共识核心，并抑制正交残差对匹配的影响。</td><td>识别并保留具有视觉依据的互补细节，同时减弱表达变化与错误内容的影响。</td></tr>
+              <tr><td>MCDisp-Align</td><td>利用多描述散布监督图像的整体语义范围。</td><td>将范围扩展落实到可定位、可区分、可排错的细粒度语义，而不只验证全局几何变化。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>相对于已核查的文献，值得重点验证的候选贡献是：<strong>将描述覆盖范围与局部视觉证据共同纳入细粒度对齐，改善不完整语言监督下的细节保持，并用遗漏事实、错误组合和跨描述策略实验验证其有效性。</strong></p>
+        <p>更换分布形式、加入区域特征、增加描述或困难负样本，都可以作为实现组件，但不足以单独支撑这一贡献。研究价值应由明确的失败现象、针对该现象的机制，以及排除替代解释的实验共同建立。</p>
+      </section>
+
+      <section id="references">
+        <h2><span class="num">08</span>参考资料</h2>
+        <ol class="references">
+          <li id="ref-reporting"><a href="https://aclanthology.org/2026.tacl-1.41/" target="_blank" rel="noopener noreferrer">Scale Can’t Overcome Pragmatics: The Impact of Reporting Bias on Vision-Language Reasoning</a><span class="detail">TACL 2026 · 描述选择偏好与计数、否定、时空关系的监督缺口。</span></li>
+          <li id="ref-flair"><a href="https://openaccess.thecvf.com/content/CVPR2025/papers/Xiao_FLAIR_VLM_with_Fine-grained_Language-informed_Image_Representations_CVPR_2025_paper.pdf" target="_blank" rel="noopener noreferrer">FLAIR: VLM with Fine-grained Language-informed Image Representations</a><span class="detail">CVPR 2025 · 文本引导的局部视觉表示与细粒度对齐。</span></li>
+          <li id="ref-fgclip"><a href="https://arxiv.org/abs/2505.05071" target="_blank" rel="noopener noreferrer">FG-CLIP: Fine-Grained Visual and Textual Alignment</a><span class="detail">2025 · 区域与文本的细粒度对齐，丰富描述及困难负例。</span></li>
+          <li id="ref-tpc"><a href="https://arxiv.org/html/2607.03143v1" target="_blank" rel="noopener noreferrer">Text as Partial Constraint: Core–Residual Alignment for Robust Vision–Language Learning</a><span class="detail">2026 年 7 月预印本 · 多描述共识核心、不完整监督与残差抑制。</span></li>
+          <li id="ref-dci"><a href="https://openaccess.thecvf.com/content/CVPR2024/papers/Urbanek_A_Picture_is_Worth_More_Than_77_Text_Tokens_Evaluating_CVPR_2024_paper.pdf" target="_blank" rel="noopener noreferrer">A Picture is Worth More Than 77 Text Tokens: Evaluating CLIP-Style Models on Dense Captions</a><span class="detail">CVPR 2024 · DCI 人工区域描述，可用于细粒度事实审计。</span></li>
+        </ol>
+      </section>
+
+      <footer>
+        <div>本文为研究问题讨论稿。所述方法与假设尚未经过新的训练实验验证；文献定位不等同于绝对首次声明。</div>
+        <div class="source-path">工作依据：D:\code\paper\main.tex；D:\code\DistributionAlignment。</div>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>
