@@ -14,9 +14,14 @@ seeds (plan §8 unified training controls):
     (``select_by="mr"``), on the same dev manifest with the same K for every
     config (plan §8 fallback clause).
 
-``LAMBDA_COV_FULL`` is the single place to change the Full-model cov weight
-(D1 decision: method target 0.2; drop to 0.01 here ONLY if the Full stage
-proves unstable -- and then for every variant alike).
+``LAMBDA_COV_FULL`` is the single place to change the Full-model cov weight.
+Per the rebuttal plan (MCDisp-Align_Rebuttal §3A/§3B), the ablation Full
+recipe is fixed to the PAPER defaults -- gamma = 0.01 = the global
+config.MCDISP_ALIGN_LAMBDA_COV -- so every ablation row (this framework AND
+scripts/run_ablation.py's ABLATION_CONFIGS) is comparable with the paper's
+Full / w-o checkpoints. (The earlier D1 "method target 0.2" is superseded;
+if the method is ever retrained at 0.2, change MCDISP_ALIGN_LAMBDA_COV so
+both frameworks move together.)
 """
 
 from pathlib import Path
@@ -30,7 +35,7 @@ from utils.mcdisp_align_trainer import MCDispAlignTrainConfig
 SEEDS = [42, 43, 44]
 EXPAND_TO_5_SEEDS = ["full", "no_var", "no_cover", "no_cov"]
 
-LAMBDA_COV_FULL = 0.2  # D1: single switch for the Full-model L_cov weight
+LAMBDA_COV_FULL = config.MCDISP_ALIGN_LAMBDA_COV  # paper default gamma=0.01
 K_EVAL = 5             # uniform dev protocol K for checkpoint selection
 
 

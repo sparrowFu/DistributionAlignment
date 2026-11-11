@@ -109,6 +109,15 @@ def parse_args():
                              "unchanged; blocks the caption norm/spread "
                              "collapse gradient channel (default off = exact "
                              "paper gradient path)")
+    parser.add_argument("--no-detach-targets", dest="detach_caption_targets",
+                        action="store_false", default=True,
+                        help="A7 ('no sg') ablation, --loss kl only: cancel the "
+                             "stop-gradient on the caption-derived targets of "
+                             "the three alignment terms (KL target, L_cover "
+                             "anchors, L_cov deviation subspace), so L_align "
+                             "also updates the caption side. Default (flag "
+                             "off) keeps the paper's sg[.] path; the variance "
+                             "gradient schedule is unchanged either way.")
     parser.add_argument("--lambda-cap-nce", type=float, default=config.MCDISP_ALIGN_LAMBDA_CAP_NCE,
                         help="Weight of the auxiliary per-caption NCE term "
                              "(only with --loss kl_capnce; 0 reduces to plain KL)")
@@ -194,6 +203,7 @@ def main():
         loss_name=args.loss,
         lambda_kl=args.lambda_kl,
         sg_set_variance=args.sg_set_variance,
+        detach_caption_targets=args.detach_caption_targets,
         lambda_cap_nce=args.lambda_cap_nce,
         tau_cap=args.tau_cap,
         lambda_cover_pos=args.lambda_cover_pos,

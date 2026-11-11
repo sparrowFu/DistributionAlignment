@@ -11,16 +11,21 @@ differing only in the loss weights / ``cov_rank`` / ``num_captions`` overrides,
 the ``--dataset`` (coco or flickr), and the per-variant checkpoint path. So
 ablation results are directly comparable to a full training run.
 
-Ablation configurations (only the named weight -- or cov_rank for diag_only --
-is changed; everything else is identical across groups):
-    - Full MCDisp-Align (set-NCE + KL + cover + cov + reg)
-    - w/o KL Alignment (lambda_kl = 0)
-    - w/o Caption Coverage (lambda_cover_pos = 0)
-    - w/o Direction Alignment (lambda_cov = 0, low-rank branch kept)
-    - w/o Variance Regularization (lambda_reg = 0)
-    - Diagonal-only (cov_rank = 0: no low-rank covariance branch; contrasts
+Ablation configurations (only the named weight -- or cov_rank for diag_only,
+or the sg[.] detach for no_sg -- is changed; everything else is identical
+across groups; rebuttal-plan rows A0-A7, see config.ABLATION_CONFIGS):
+    - A0 Full MCDisp-Align (set-NCE + KL + cover + cov + reg)
+    - A1 w/o L_align (lambda_kl = lambda_cover_pos = lambda_cov = lambda_reg = 0;
+      only L_match remains)
+    - A2 w/o KL Alignment (lambda_kl = 0)
+    - A3 w/o Caption Coverage (lambda_cover_pos = 0)
+    - A4 w/o Direction Alignment (lambda_cov = 0, low-rank branch kept)
+    - A5 w/o Variance Regularization (lambda_reg = 0)
+    - A6 Diagonal-only (cov_rank = 0: no low-rank covariance branch; contrasts
       with no_direction, which keeps the branch and removes only the
       direction supervision -- together they isolate supervision vs capacity)
+    - A7 w/o sg (detach_targets = False: caption-derived targets of the three
+      alignment terms are NOT stop-gradiented; variance schedule unchanged)
 
 Sensitivity grids (``--config sensitivity``): lambda_kl / lambda_cover / tau.
 
@@ -112,6 +117,7 @@ def _config_from_ablation(config_name, ablation_config, args, best_path, last_pa
         use_uncertainty_sim=ablation_config.get("use_uncertainty_sim", True),
         seed=args.seed,
         device=args.device,
+        detach_caption_targets=ablation_config.get("detach_targets", True),
         best_ckpt_path=best_path,
         last_ckpt_path=last_path,
         skip_training=args.skip_training,

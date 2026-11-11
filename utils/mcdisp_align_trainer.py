@@ -587,6 +587,12 @@ class MCDispAlignTrainConfig:
     tau_cap: float = field(default_factory=lambda: config.MCDISP_ALIGN_CAP_NCE_TAU)
     lambda_kl: float = 1.0                        # KL term weight ("kl" only)
     sg_set_variance: bool = False                 # sg[.] on the L_set text-set variance discount
+    # Rebuttal-plan ablation A7 ("no sg"): cancel the stop-gradient on the
+    # caption-derived targets of the three alignment terms (KL target,
+    # L_cover anchors, L_cov deviation subspace), letting L_align update the
+    # caption side too. The variance ramp / alpha schedule is unchanged.
+    # Default True = the paper's sg[.] gradient path ("kl" loss only).
+    detach_caption_targets: bool = True
 
     # --- Schedule / selection ---
     no_staged: bool = False
@@ -750,10 +756,14 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             use_uncertainty_sim=cfg.use_uncertainty_sim,
             kl_var_clamp=cfg.kl_var_clamp,
             sg_set_variance=cfg.sg_set_variance,
+            kl_detach_target=cfg.detach_caption_targets,
+            cover_detach_target=cfg.detach_caption_targets,
+            cov_detach_target=cfg.detach_caption_targets,
         )
         log.info(f"{prefix}Using MCDisp_Align KL-variant loss "
                  f"(lambda_kl={cfg.lambda_kl}; mu/var terms folded into the KL; "
-                 f"sg_set_variance={cfg.sg_set_variance})")
+                 f"sg_set_variance={cfg.sg_set_variance}; "
+                 f"detach_caption_targets={cfg.detach_caption_targets})")
     elif cfg.loss_name == "kl_capnce":
         from losses.mcdisp_align_losses_kl_capnce import MCDispAlignKLCapNCELoss
         criterion = MCDispAlignKLCapNCELoss(
@@ -998,6 +1008,7 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             "freeze_clip": cfg.freeze_clip,
             "mu_residual": cfg.mu_residual,
             "sg_set_variance": cfg.sg_set_variance,
+            "detach_caption_targets": cfg.detach_caption_targets,
         }
         torch.save(final_state, str(last_path))
         log.info(f"{prefix}Final model saved to {last_path}")

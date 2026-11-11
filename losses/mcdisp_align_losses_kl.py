@@ -137,6 +137,8 @@ class MCDispAlignKLLoss(nn.Module):
         kl_var_clamp: float = 0.01,
         kl_symmetric: bool = False,
         kl_detach_target: bool = True,
+        cover_detach_target: bool = True,
+        cov_detach_target: bool = True,
         kl_normalize_by_dim: bool = True,
         sg_set_variance: bool = False,
     ):
@@ -165,6 +167,13 @@ class MCDispAlignKLLoss(nn.Module):
             kl_detach_target: stop-gradient on the KL target distribution
                 (the caption set is a fixed reference, matching the
                 detach-everything-caption philosophy of MCDispAlignLoss).
+            cover_detach_target: stop-gradient on the L_cover caption anchors
+                (per-caption means and the set center). Default True = paper
+                path. False = rebuttal-plan ablation A7 ("no sg"): the coverage
+                loss may also pull the caption anchors toward the image.
+            cov_detach_target: stop-gradient on the L_cov caption-deviation
+                subspace target. Default True = paper path. False = ablation
+                A7 ("no sg"): the direction loss also trains the caption side.
             kl_normalize_by_dim: divide the KL by D so its scale matches the
                 per-D-normalized L_cover and does not drift with D.
             sg_set_variance: stop-gradient on the merged text-set variance
@@ -193,6 +202,8 @@ class MCDispAlignKLLoss(nn.Module):
         self.kl_var_clamp = float(kl_var_clamp)
         self.kl_symmetric = kl_symmetric
         self.kl_detach_target = kl_detach_target
+        self.cover_detach_target = cover_detach_target
+        self.cov_detach_target = cov_detach_target
         self.kl_normalize_by_dim = kl_normalize_by_dim
         self.sg_set_variance = sg_set_variance
 
@@ -360,8 +371,11 @@ class MCDispAlignKLLoss(nn.Module):
         # MCDispAlignLoss: without the detach, cover_pos pulls every mu_tk
         # toward mu_v through the 1/sigma_v^2-amplified Mahalanobis metric and
         # collapses the between-caption spread the KL target is built from).
-        text_mus = text_mus.detach()
-        text_mu = text_mu.detach()
+        # cover_detach_target=False (rebuttal-plan ablation A7, "no sg")
+        # re-enables that gradient channel.
+        if self.cover_detach_target:
+            text_mus = text_mus.detach()
+            text_mu = text_mu.detach()
 
         B, K, D = text_mus.shape
 
@@ -399,7 +413,9 @@ class MCDispAlignKLLoss(nn.Module):
 
         ||P_v - P_t||_F^2 = 2r - 2 ||Q_v^T Q_t||_F^2. Caption deviation
         directions are a stop-gradient target (detach), exactly like the KL
-        target. Non-finite values (from near-degenerate QR/eigh) are zeroed.
+        target -- unless cov_detach_target=False (rebuttal-plan ablation A7,
+        "no sg"), which lets L_cov also train the captions. Non-finite values
+        (from near-degenerate QR/eigh) are zeroed.
         """
         if img_U is None or self.lambda_cov <= 0:
             return img_mu.new_zeros(())
@@ -413,7 +429,9 @@ class MCDispAlignKLLoss(nn.Module):
 
         Qv, _ = torch.linalg.qr(img_U)            # (B, D, r)
         Qv = Qv[:, :, :r_eff]
-        dev = (text_mus - text_mus.mean(dim=1, keepdim=True)).detach()   # (B, K, D)
+        dev = text_mus - text_mus.mean(dim=1, keepdim=True)              # (B, K, D)
+        if self.cov_detach_target:
+            dev = dev.detach()
         G = dev @ dev.transpose(-1, -2) + self.eps * torch.eye(K, device=dev.device)  # (B, K, K)
         eigvals, eigvecs = torch.linalg.eigh(G)   # ascending
         top_vals = eigvals[:, -r_eff:].clamp(min=self.eps)
@@ -656,5 +674,44 @@ if __name__ == "__main__":
     missing = [k for k in required if k not in d]
     print(f"   missing keys: {missing if missing else 'none'}")
     assert not missing
+
+    print("\n10. A7 ('no sg'): detach off opens the caption-target gradient channel")
+    # Only the three alignment terms enabled; L_set/L_reg carry no text_mus
+    # gradient here, so any gradient on text_mus must come via cover/cov.
+    a7_weights = dict(lambda_ctr=0.0, lambda_kl=0.0,
+                      lambda_cover_pos=0.5, lambda_cover_neg=0.0,
+                      lambda_cov=0.2, lambda_reg=0.0)
+    crit_sg = MCDispAlignKLLoss(**a7_weights)   # defaults: all targets detached
+    tm_sg = text_mus.clone().requires_grad_(True)
+    loss_sg, _ = crit_sg(img_mu, img_logvar, img_U, text_mu, text_logvar,
+                         tm_sg, text_logvars)
+    loss_sg.backward()
+    g_sg = 0.0 if tm_sg.grad is None else tm_sg.grad.norm().item()
+    print(f"   grad text_mus via cover/cov, detach ON : {g_sg} (expect 0)")
+    assert g_sg == 0.0
+    crit_a7 = MCDispAlignKLLoss(kl_detach_target=False,
+                                cover_detach_target=False,
+                                cov_detach_target=False, **a7_weights)
+    tm_a7 = text_mus.clone().requires_grad_(True)
+    loss_a7, _ = crit_a7(img_mu, img_logvar, img_U, text_mu, text_logvar,
+                         tm_a7, text_logvars)
+    loss_a7.backward()
+    g_a7 = tm_a7.grad.norm().item()
+    print(f"   grad text_mus via cover/cov, detach OFF: {g_a7:.4f} (expect > 0)")
+    assert g_a7 > 0
+    # forward values identical with/without detach (same loss, same ranking)
+    print(f"   forward identical: {math.isclose(loss_sg.item(), loss_a7.item(), rel_tol=1e-6)}")
+    assert math.isclose(loss_sg.item(), loss_a7.item(), rel_tol=1e-6)
+    # kl_detach_target=False also opens the one-directional KL target channel
+    crit_kl_nosg = MCDispAlignKLLoss(lambda_ctr=0.0, lambda_kl=1.0,
+                                     lambda_cover_pos=0.0, lambda_cover_neg=0.0,
+                                     lambda_cov=0.0, lambda_reg=0.0,
+                                     kl_detach_target=False)
+    t_mu3 = text_mu.clone().requires_grad_(True)
+    loss_kl3, _ = crit_kl_nosg(img_mu, img_logvar, None, t_mu3, text_logvar,
+                               text_mus, text_logvars)
+    loss_kl3.backward()
+    print(f"   grad text_mu via KL, detach OFF    : {t_mu3.grad.norm():.4f} (expect > 0)")
+    assert t_mu3.grad.norm() > 0
 
     print("\nAll MCDisp_Align KL-variant loss tests passed.")

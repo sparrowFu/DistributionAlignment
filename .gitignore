@@ -62,3 +62,6 @@ api_config.json
 
 # Shell Scripts
 *.sh
+
+# Private Key Files
+*.id

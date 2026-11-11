@@ -1,0 +1,162 @@
+{
+  "runs": {
+    "coco": {
+      "epochs": [
+        {
+          "epoch": 1,
+          "train_loss": 0.0681,
+          "nce": 0.0617,
+          "mc_mr": 0.629,
+          "between": 0.0301,
+          "variance_cv": 0.067,
+          "negative_in_spherical_proxy_percent": 0.0
+        },
+        {
+          "epoch": 2,
+          "train_loss": 0.0248,
+          "nce": 0.0246,
+          "mc_mr": 0.635,
+          "between": 0.0265,
+          "variance_cv": 0.063,
+          "negative_in_spherical_proxy_percent": 0.0
+        },
+        {
+          "epoch": 3,
+          "train_loss": 0.0601,
+          "nce": 0.0209,
+          "mc_mr": 0.606,
+          "between": 0.0207,
+          "variance_cv": 0.04,
+          "negative_in_spherical_proxy_percent": 8.1
+        },
+        {
+          "epoch": 4,
+          "train_loss": 0.0951,
+          "nce": 0.0188,
+          "mc_mr": 0.606,
+          "between": 0.0166,
+          "variance_cv": 0.039,
+          "negative_in_spherical_proxy_percent": 25.5
+        },
+        {
+          "epoch": 5,
+          "train_loss": 0.0962,
+          "nce": 0.016,
+          "mc_mr": 0.607,
+          "between": 0.0141,
+          "variance_cv": 0.039,
+          "negative_in_spherical_proxy_percent": 45.3
+        }
+      ],
+      "best_saved_epoch": 2,
+      "best_cosine_mr": 0.6364
+    },
+    "flickr": {
+      "epochs": [
+        {
+          "epoch": 1,
+          "train_loss": 0.1507,
+          "nce": 0.1243,
+          "mc_mr": 0.882,
+          "between": 0.0357,
+          "variance_cv": 0.079,
+          "negative_in_spherical_proxy_percent": 0.0
+        },
+        {
+          "epoch": 2,
+          "train_loss": 0.018,
+          "nce": 0.0175,
+          "mc_mr": 0.885,
+          "between": 0.0321,
+          "variance_cv": 0.065,
+          "negative_in_spherical_proxy_percent": 0.0
+        },
+        {
+          "epoch": 3,
+          "train_loss": 0.067,
+          "nce": 0.0147,
+          "mc_mr": 0.867,
+          "between": 0.0262,
+          "variance_cv": 0.038,
+          "negative_in_spherical_proxy_percent": 0.6
+        },
+        {
+          "epoch": 4,
+          "train_loss": 0.117,
+          "nce": 0.0124,
+          "mc_mr": 0.861,
+          "between": 0.021,
+          "variance_cv": 0.039,
+          "negative_in_spherical_proxy_percent": 1.7
+        },
+        {
+          "epoch": 5,
+          "train_loss": 0.1199,
+          "nce": 0.0106,
+          "mc_mr": 0.859,
+          "between": 0.0179,
+          "variance_cv": 0.041,
+          "negative_in_spherical_proxy_percent": 5.9
+        }
+      ],
+      "best_saved_epoch": 2,
+      "best_cosine_mr": 0.8858
+    }
+  },
+  "source": {
+    "model_constructor_line": 717,
+    "model_constructor_keywords": [
+      "freeze_clip",
+      "distribution_merging",
+      "dropout_rate",
+      "cov_rank"
+    ],
+    "mu_residual_forwarded": false,
+    "no_staged_forwarded_to_train_epoch": false
+  },
+  "mechanisms": {
+    "joint_scale_path": [
+      {
+        "scale": 1.0,
+        "cosine_nce": 0.0002325539295516782,
+        "discounted_nce": 0.0003935215675859898,
+        "kl_mean": 0.08129017285167531,
+        "kl_var": 0.05774545233722457,
+        "caption_spread": 0.026401933733404756
+      },
+      {
+        "scale": 0.5,
+        "cosine_nce": 0.0002325539295516782,
+        "discounted_nce": 0.0003584489711895716,
+        "kl_mean": 0.027339568359033322,
+        "kl_var": 0.00710681633708319,
+        "caption_spread": 0.006600483433351189
+      },
+      {
+        "scale": 0.25,
+        "cosine_nce": 0.0002325539295516782,
+        "discounted_nce": 0.0003500522855537527,
+        "kl_mean": 0.007580544855276296,
+        "kl_var": 0.0005766828723176587,
+        "caption_spread": 0.0016501208583377973
+      }
+    ],
+    "text_scale_nce_derivative": 9.674976455837507e-05,
+    "query_variance_does_not_change_ranking": true,
+    "coverage_u_inflation_path": [
+      {
+        "u_scale": 0.1,
+        "mahal_per_dim": 18.13629780196665
+      },
+      {
+        "u_scale": 1.0,
+        "mahal_per_dim": 0.8719373943253195
+      },
+      {
+        "u_scale": 10.0,
+        "mahal_per_dim": 0.009064523091746624
+      }
+    ],
+    "scope": "Synthetic forward/finite-difference checks; not a training replay or a measured gradient conflict."
+  }
+}

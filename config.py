@@ -534,46 +534,66 @@ OOD_DATA_DIR = PROJECT_ROOT / "TrainDatasets" / "ood"
 ABLATION_RESULTS_DIR = OUTPUT_DIR / "ablation"
 ABLATION_LOG_PATH = LOG_DIR / "ablation.log"
 
-# Ablation configurations per 消融实验方案.md: 6 groups on the KL-objective
-# model (loss_name="kl"). Only the corresponding loss weight (or cov_rank) is
-# changed; every other weight, the model structure, the data split and the
-# training settings stay identical across groups.
-# Reviewer-term mapping (3 reviewers asked to ablate L_align per component):
-#   KL alignment            -> lambda_kl        (no_kl)
-#   caption-center coverage -> lambda_cover_pos (no_cover)
-#   subspace alignment      -> lambda_cov       (no_direction; low-rank branch
-#                              KEPT so only the direction supervision is removed)
-#   variance regularization -> lambda_reg       (no_reg)
-#   full covariance vs diagonal-only -> cov_rank 4 vs 0 (diag_only; the branch
-#                              is removed entirely, isolating model capacity)
+# Ablation configurations per the rebuttal plan (MCDisp-Align_Rebuttal
+# §3B 逐项消融矩阵, rows A0-A7) on the KL-objective model (loss_name="kl").
+# Every row copies the SAME Full recipe -- the paper defaults
+# alpha=1 (lambda_ctr), beta=0.5 (lambda_cover_pos), gamma=0.01 (lambda_cov =
+# MCDISP_ALIGN_LAMBDA_COV), eta=0.01 (lambda_reg), r=4, v0=0.04, eps=1e-6 --
+# and changes ONLY the knob named in the plan; every other weight, the model
+# structure, the data split and the training settings stay identical.
+# Row mapping (rebuttal-plan numbering; descriptions carry the row ID so
+# results tables map back unambiguously):
+#   A0 full_model   : Full recipe (all terms on)
+#   A1 no_align     : w/o the whole L_align (kl/cover/cov/reg all 0); only
+#                     L_match remains. Compare against A0.
+#   A2 no_kl        : KL alignment            -> lambda_kl = 0
+#   A3 no_cover     : caption-center coverage -> lambda_cover_pos = 0
+#   A4 no_direction : subspace alignment      -> lambda_cov = 0 (low-rank
+#                     branch KEPT so only the direction supervision is removed)
+#   A5 no_reg       : variance regularization -> lambda_reg = 0
+#   A6 diag_only    : full covariance vs diagonal-only -> cov_rank 4 vs 0 (the
+#                     branch is removed entirely; compare against A4, both
+#                     without direction loss, to isolate capacity)
+#   A7 no_sg        : cancel sg[.] on the caption targets of the three
+#                     alignment terms (detach_targets=False); the variance
+#                     gradient schedule is unchanged
 ABLATION_LOSS_NAME = "kl"
 ABLATION_CONFIGS = {
     "full_model": {
         "loss_name": "kl",
         "lambda_ctr": 1.0, "lambda_kl": 1.0,
         "lambda_cover_pos": 0.5, "lambda_cover_neg": 0.0,
-        "lambda_cov": 0.2, "lambda_reg": 0.01,
+        "lambda_cov": MCDISP_ALIGN_LAMBDA_COV, "lambda_reg": 0.01,
         "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
-        "description": "Full MCDisp-Align (KL + coverage + direction)",
+        "description": "A0: Full MCDisp-Align (KL + coverage + direction)",
+    },
+    "no_align": {
+        "loss_name": "kl",
+        "lambda_ctr": 1.0, "lambda_kl": 0.0,
+        "lambda_cover_pos": 0.0, "lambda_cover_neg": 0.0,
+        "lambda_cov": 0.0, "lambda_reg": 0.0,
+        "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
+        "use_uncertainty_sim": True,
+        "description": "A1: w/o L_align (only L_match; the whole alignment loss disabled)",
     },
     "no_kl": {
         "loss_name": "kl",
         "lambda_ctr": 1.0, "lambda_kl": 0.0,
         "lambda_cover_pos": 0.5, "lambda_cover_neg": 0.0,
-        "lambda_cov": 0.2, "lambda_reg": 0.01,
+        "lambda_cov": MCDISP_ALIGN_LAMBDA_COV, "lambda_reg": 0.01,
         "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
-        "description": "w/o KL Alignment (no direct image<-caption-set center/range supervision)",
+        "description": "A2: w/o KL Alignment (no direct image<-caption-set center/range supervision)",
     },
     "no_cover": {
         "loss_name": "kl",
         "lambda_ctr": 1.0, "lambda_kl": 1.0,
         "lambda_cover_pos": 0.0, "lambda_cover_neg": 0.0,
-        "lambda_cov": 0.2, "lambda_reg": 0.01,
+        "lambda_cov": MCDISP_ALIGN_LAMBDA_COV, "lambda_reg": 0.01,
         "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
-        "description": "w/o Caption Coverage (per-caption coverage loss removed)",
+        "description": "A3: w/o Caption Coverage (per-caption coverage loss removed)",
     },
     "no_direction": {
         "loss_name": "kl",
@@ -582,16 +602,16 @@ ABLATION_CONFIGS = {
         "lambda_cov": 0.0, "lambda_reg": 0.01,
         "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
-        "description": "w/o Direction Alignment (L_cov=0; low-rank branch kept)",
+        "description": "A4: w/o Direction Alignment (L_cov=0; low-rank branch kept)",
     },
     "no_reg": {
         "loss_name": "kl",
         "lambda_ctr": 1.0, "lambda_kl": 1.0,
         "lambda_cover_pos": 0.5, "lambda_cover_neg": 0.0,
-        "lambda_cov": 0.2, "lambda_reg": 0.0,
+        "lambda_cov": MCDISP_ALIGN_LAMBDA_COV, "lambda_reg": 0.0,
         "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
         "use_uncertainty_sim": True,
-        "description": "w/o Variance Regularization (weak variance prior removed)",
+        "description": "A5: w/o Variance Regularization (weak variance prior removed)",
     },
     "diag_only": {
         "loss_name": "kl",
@@ -601,7 +621,17 @@ ABLATION_CONFIGS = {
         "cov_rank": 0,
         "num_captions": 5,
         "use_uncertainty_sim": True,
-        "description": "Diagonal-only (no low-rank covariance branch; r=0)",
+        "description": "A6: Diagonal-only (no low-rank covariance branch; r=0)",
+    },
+    "no_sg": {
+        "loss_name": "kl",
+        "lambda_ctr": 1.0, "lambda_kl": 1.0,
+        "lambda_cover_pos": 0.5, "lambda_cover_neg": 0.0,
+        "lambda_cov": MCDISP_ALIGN_LAMBDA_COV, "lambda_reg": 0.01,
+        "cov_rank": MCDISP_ALIGN_COV_RANK, "num_captions": 5,
+        "use_uncertainty_sim": True,
+        "detach_targets": False,
+        "description": "A7: no sg (L_align caption targets not detached; variance schedule unchanged)",
     },
 }
 

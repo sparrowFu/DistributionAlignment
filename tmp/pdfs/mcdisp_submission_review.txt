@@ -1,0 +1,968 @@
+      Under review as a conference paper at ICLR 2027
+
+
+
+
+000
+001
+      MCD ISP -A LIGN :       M ULTI -C APTION S EMANTIC
+002   D ISPERSION -G UIDED D ISTRIBUTION A LIGNMENT
+003
+004   FOR O NE - TO -M ANY V ISION -L ANGUAGE R EPRESENTA -
+005
+006
+      TION L EARNING
+007
+008     Anonymous authors
+009     Paper under double-blind review
+010
+011
+012
+                                                                                A BSTRACT
+013
+014
+015
+                     Vision-language representation learning supports multimodal applications by align-
+                     ing visual and textual semantics, but existing methods face two challenges. Deter-
+016
+                     ministic methods embed samples as single points; aligning semantically distinct
+017
+                     captions to a single image point may compress their differences and cause semantic
+018                  distortion. Conversely, while probabilistic methods model samples as distributions,
+019                  directly aligning an image distribution with individual caption distributions that
+020                  primarily contain semantically similar points can restrict the image’s semantic
+021                  range, leading to semantic collapse. To address these challenges, we propose
+022                  MCDisp-Align, a probabilistic framework that leverages multi-caption seman-
+023                  tic dispersion to guide image distribution learning. MCDisp-Align constructs a
+024                  caption-set distribution that captures the shared semantic center, semantic range,
+025                  and dominant directions of variation across captions. By combining set-level dis-
+026
+                     tribution alignment with caption-center coverage, MCDisp-Align aims to reduce
+                     semantic distortion by preserving meaning differences between captions, and to
+027
+                     reduce semantic collapse by guiding the image distribution to cover the meanings
+028
+                     expressed by those captions. On MSCOCO and Flickr30K, MCDisp-Align achieves
+029                  the best or tied-best one-to-many retrieval scores among all compared methods and
+030                  improves all six standard retrieval scores over fine-tuned CLIP on MSCOCO. Geo-
+031                  metric analysis further shows that caption representations retain variation within
+032                  each image while remaining well separated across images, supporting the utility of
+033                  caption-set supervision. Code will be released upon acceptance.
+034
+035
+036   1      I NTRODUCTION
+037
+038   Recent advances in large-scale vision-language models have substantially improved multimodal
+039   representation learning, enabling visual and textual information to be aligned in a shared semantic
+040   space (Li et al., 2021). This progress has supported applications including image-text retrieval (Lee
+041   et al., 2018), multimodal understanding (Kim et al., 2021), and other cross-modal tasks. The
+042   effectiveness of these applications depends on the quality of semantic alignment: related visual
+043   and textual content should be brought together, while meaningful semantic differences should be
+044
+      preserved and unrelated content should remain well separated.
+045   Vision-language representation methods typically use deterministic representations, which map each
+046   image and caption to a point in an embedding space and align them via point-to-point matching (Rad-
+047   ford et al., 2021). However, as illustrated in Figure 1(a), these captions share the main visual content
+048   but differ in their semantic focus. Figure 1(b) shows that aligning these captions with a single image
+049   point may compress their semantic distinctions, potentially leading to semantic distortion in the
+050
+      representation space. In practice, such distortion could reduce sensitivity to fine-grained information:
+      retrieval systems may miss captions that emphasize specific attributes or relations, and multimodal
+051
+      question answering systems may overlook visual evidence needed to distinguish similar answers.
+052
+053   Probabilistic representation methods offer a more flexible alternative by modeling images and captions
+      as distributions (Chun et al., 2025; Venkataramanan et al., 2025). However, distributional modeling
+
+
+                                                                                           1
+      Reviewers: please read the Reviewer Guidelines (iclr.cc/Conferences/2027/ReviewerGuidelines) and the AI Policy for Reviewers (iclr.cc/Conferences/2027/AIPolicyForReviewers).
+      If you used AI to expand, edit, or polish your review, please provide the input text to the LLM. Better still, consider skipping the LLM and submitting your original text: we,
+      and the authors, are much more interested in your unedited thoughts than in what an LLM has to say. AI-assisted or not, you are putting your name and reputation behind
+      your review: LLM-generated falsehoods, hallucinations or misrepresentations are subject to disciplinary action, which may include desk-rejecting all papers you have authored.
+      Under review as a conference paper at ICLR 2027
+
+
+
+
+054
+055                                           [1] A couple of horses pulling a carriage on a road.
+056                                           [2] A horse drawn carriage with two horses and white carriage.
+057                                           [3] Two brown horses is pulling a carriage with some passengers.
+058                                           [4] Two horses pulling a carriage with tourists on board.
+059                                           [5] Two horses pulling a carriage with people in it.
+060
+061                                                    (a) MSCOCO Example
+062
+                                 Semantic                                        Semantic
+063
+                                 Distortion                                      Collapse
+064
+065
+066
+067
+068
+069     (b) Deterministic Representations        (c) Probabilistic Representations                     (d) MCDisp-Align (Ours)
+070
+              Text Embedding   Image Embedding   Individual Caption                            Unrelated Semantic Set   Caption Set
+071                                                                       Image Distribution
+               & Text Center    & Image Center      Distribution                                    Distribution        Distribution
+072
+073   Figure 1: Motivation for MCDisp-Align. Comparison of (b) deterministic representations, (c)
+074   probabilistic representations, and (d) MCDisp-Align on the multi-caption example in (a).
+075
+076   alone may not fully capture the semantic differences among an image’s captions. An image contains
+077   rich semantic content, including objects, attributes, relations, and background details, whereas an
+078   individual caption typically describes only part of this content. The image distribution is intended
+079   to accommodate multiple semantic aspects, whereas an individual caption distribution primarily
+080   contains points with meanings similar to that of the caption. As shown in Figure 1(c), directly
+081
+      aligning these distributions without accounting for this difference can restrict the image distribution’s
+      semantic range and suppress information beyond an individual caption’s scope. We call this loss
+082
+      of semantic coverage in the image representation semantic collapse. This motivates using multiple
+083
+      complementary captions to guide the image distribution to cover their distinct semantic aspects.
+084
+085   Semantic distortion and semantic collapse highlight a central challenge for vision-language alignment:
+086   preserving the semantic diversity across an image’s captions while maintaining separation from other
+087
+      images. To address this issue, we observe that multiple captions for the same image provide structural
+      guidance. While individual captions emphasize different aspects, together they capture three key
+088
+      properties: a shared semantic center, a semantic range of complementary meanings, and dominant
+089
+      directions of variation that reflect how these meanings differ.
+090
+091   Based on this observation, we propose MCDisp-Align, a probabilistic representation learning
+092   framework that uses the caption-set structure to guide image distribution learning. Specifically,
+093
+      MCDisp-Align constructs a caption-set distribution that captures the shared semantic center, semantic
+      range, and dominant directions of variation across captions. As illustrated in Figure 1(d), MCDisp-
+094
+      Align allows the image distribution to cover the different meanings expressed by multiple captions
+095
+      without directly pulling their text representations toward the same point. This helps preserve semantic
+096   differences across captions and reduce semantic distortion. The caption set further provides its
+097   semantic range and variation directions to guide image distribution learning, which helps mitigate
+098   semantic collapse while keeping different images well separated.
+099
+      MCDisp-Align consists of three modules. First, the probabilistic representation module maps each
+100
+      image and caption to a Gaussian distribution, so that the image representation can capture a semantic
+101
+      range rather than a single point. Second, the caption-set distribution construction module merges
+102   the caption distributions of an image into one Gaussian through moment matching. The merged
+103   Gaussian captures both the overall center and the spread of the captions, providing a supervision
+104   target for the image distribution. Third, the distribution matching and alignment module aligns the
+105   image distribution with this target and encourages coverage of each individual caption center, while
+106   bidirectional contrastive matching keeps distinct images and caption sets well separated. Since the
+107   caption-derived targets are detached, these alignment constraints guide the image distribution without
+      directly contracting the caption space, thereby preserving the diversity of caption representations.
+
+
+                                                                      2
+      Under review as a conference paper at ICLR 2027
+
+
+
+
+108                    Probabilistic Representation                                 Caption-Set Distribution Construction                                 Distribution Matching and Alignment
+                                                                 pv(z|xi)                      Caption-set semantic statistics                     Set-level distribution matching
+109                                                                                             (from caption distributions)
+110                                Vision       MLP
+                                                                                        Shared              Semantic             Principal
+                                                                                        center               range               directions
+                                                                                                                                                                       Bidirectional
+111                               Encoder       Head                                                                                                                    matching                                                       ···
+112                                    trainable
+                                                                                                                                                      pv(z|xi)                              pC(z|Ci)                   {pC(z|Cj)}j ≠ i
+                 xi
+              (image)                                                                                                                                 (image)                       (positive caption set) (negative caption sets)
+113                                                                                                                                                Alignment constraints
+      Ci = {ci,1, …, ci,K}                                         pt(z|ci,k)
+                                                                                                                                                      (1) Center &         (2) Caption-center         (3) Direction         (4) Variance
+114       A carriage on a road.                                                                                                                    variance alignment           coverage               alignment           regularization
+                                                                                                                                                   image center & range
+          Two brown horses.                                                                                 Moment
+115    With tourists on board.
+                                   Text         MLP                                                         Matching
+                                                                                                                                                   match the caption set
+
+                                  Encoder       Head
+116    A horse drawn carriage.
+                                                                       ···              pt(z|ci,k)                               pC(z|Ci)
+                 ···                   trainable                                                                                                                             cover each caption     ellipse aligned with    Well-Shaped
+117        (caption set)                                                                                                                                                   center without pulling   how captions differ     Distribution
+
+            Images and captions are mapped into a shared probabilistic space.         Construct caption-set supervision from caption statistics.       Overall Objective: separate image groups + shape image distributions
+118
+119
+120                                                                             Figure 2: Overview of MCDisp-Align.
+121
+122   To evaluate MCDisp-Align, we focus on image-text retrieval, where each image is annotated with
+123   multiple captions and the task naturally exhibits a one-to-many cross-modal setting, using the
+124
+      benchmark datasets MSCOCO (Lin et al., 2014) and Flickr30K (Young et al., 2014). MCDisp-Align
+      achieves the best or tied-best one-to-many retrieval scores on both benchmarks and improves over
+125
+      fine-tuned CLIP on all reported standard retrieval metrics on MSCOCO.
+126
+127   Our contributions are summarized as follows:
+128
+129                      • We highlight two potential limitations in existing vision-language representations: semantic
+130
+                           distortion in deterministic methods and semantic collapse in probabilistic methods.
+131                      • We propose MCDisp-Align, which leverages multi-caption semantic dispersion to supervise
+132                        image distribution learning, combining caption-level coverage with set-level alignment.
+133
+                         • We evaluate retrieval and caption geometry on MSCOCO and Flickr30K, demonstrating
+134                        one-to-many matching and standard-retrieval gains over fine-tuned CLIP on MSCOCO.
+135
+136
+137   2           M ETHOD : M ULTI -C APTION S EMANTIC D ISPERSION -G UIDED
+138               D ISTRIBUTION A LIGNMENT
+139
+140   To mitigate semantic distortion and semantic collapse, MCDisp-Align uses the semantic variation
+141   across an image’s captions to guide image distribution learning. As shown in Figure 2, MCDisp-Align
+142   consists of three modules: (1) Probabilistic Representation maps images and individual captions
+143   to Gaussian distributions, whose means represent semantic centers and covariances model variation
+144   around them; (2) Caption-Set Distribution Construction aggregates all caption distributions of an
+145   image via moment matching, summarizing their shared center, per-dimension spread, and principal
+146
+      directions of variation; and (3) Distribution Matching and Alignment distinguishes matching
+      image-caption groups while using these statistics to supervise the image mean, diagonal variance, and
+147
+      low-rank covariance. A caption-level coverage constraint further encourages the image distribution
+148
+      to include the centers of its individual captions.
+149
+150
+151   2.1             P ROBABILISTIC R EPRESENTATION
+152
+      Each caption has a particular descriptive focus, while the image representation needs to accommodate
+153
+      differences across captions. We use diagonal covariances to model variation around individual caption
+154   centers. For images, an additional low-rank component models correlations across dimensions,
+155   allowing the distribution to extend along directions in which its captions differ.
+156
+157
+      Formally, for each image xi and its associated caption set Ci = {ci,k }K
+                                                                             k=1 , we extract visual and
+      textual features using encoders. Lightweight projection heads then parameterize the corresponding
+158
+      Gaussian distributions in a shared D-dimensional space:
+159
+160                                                  pv (z | xi ) = N (µvi , Σvi ),                                       Σvi = Diag(viv ) + Ui U⊤
+                                                                                                                                                 i ,
+161                                                                                                                                                                                                                                    (1)
+                                                                                                                   t
+                                                                                 pt (z | ci,k ) = N (µti,k , Diag(vi,k )),
+
+                                                                                                                    3
+      Under review as a conference paper at ICLR 2027
+
+
+
+
+162
+      where µvi , µti,k ∈ RD denote the semantic centers of the image and the k-th caption, respectively.
+163          t
+      viv , vi,k                                                                     t
+                 ∈ (0, ∞)D denote the positive variance vectors, and Σti,k = Diag(vi,k ) denotes the caption
+164
+                                                       D×r
+165
+      covariance. For the image distribution, Ui ∈ R        is a low-rank factor with r ≪ D.
+166   For an individual caption, the covariance describes the range of points with meanings similar to that of
+167   the caption. Differences between captions are reflected in their centers. For images, viv specifies the
+168   diagonal base component, while Ui U⊤   i adds both marginal variance and cross-dimension correlations.
+169   This parameterization lets the image distribution cover different caption meanings while avoiding the
+170   cost of learning a full D × D covariance matrix.
+171   Based on these individual caption distributions, we next construct a set-level distribution that summa-
+172   rizes the semantic variation across captions associated with the same image.
+173
+174   2.2   C APTION -S ET D ISTRIBUTION C ONSTRUCTION
+175
+176   To guide an image distribution beyond an individual caption’s content, we summarize the location and
+177   spread of the caption set. Averaging caption centers provides a shared center but loses information
+178   about their dispersion. We therefore form an equally weighted mixture of the K caption distributions
+179   and approximate it with a single Gaussian that preserves the mixture’s mean and covariance:
+180                                          pC (z | Ci ) = N (µCi , ΣCi ).
+181
+                                       K                          K                                          (2)
+182                                1 X t                       1 X t
+183                        µCi =      µi,k ,          ΣCi =       Σi,k + Covk (µti,k ),
+                                   K                           K
+                                      k=1                        k=1
+184
+185   where Covk denotes the covariance of the caption centers around their set mean, computed with
+186   normalization 1/K. The mean µCi is the average of the caption centers, while the covariance ΣCi
+187   combines two sources of semantic variation. The first term averages the learned covariances of the
+188   individual caption distributions, reflecting the spread of similar meanings around each caption center.
+189
+      The second term measures the dispersion of caption centers around their shared mean, capturing
+      differences in what the captions describe, such as the horses’ color or the passengers in a carriage.
+190
+      Together, these terms summarize the range of meanings expressed by the caption set and guide the
+191
+      image covariance to accommodate this range, helping mitigate semantic collapse.
+192
+193   These statistics shape the image distribution: the set mean provides a target for its center, the marginal
+194   variances control its base spread, and differences between caption centers determine the directions of
+195
+      its low-rank component. While this guidance shapes each image distribution individually, training
+      must also distinguish matching image-caption-set pairs from mismatched ones. The next module
+196
+      combines caption-guided alignment with contrastive matching to achieve both goals.
+197
+198
+      2.3   D ISTRIBUTION M ATCHING AND A LIGNMENT
+199
+200   While the caption-set statistics define how an image distribution should accommodate its captions,
+201   training must keep different images well separated. We therefore optimize MCDisp-Align using two
+202   complementary objectives: a set-level matching loss Lmatch to separate distinct image-caption groups
+203   across the batch, and an alignment loss Lalign to shape each image distribution using its caption set:
+204
+                                               L = Lmatch + Lalign ,                                         (3)
+205
+206   We describe the objective for one image and its caption set. We average caption-center coverage and
+207   caption variance regularization over the K captions; training averages the overall objective across
+208   the mini-batch. For image xi in a mini-batch of B images, its own caption set is the positive target
+209   and the other B − 1 sets are negatives. We score each image and caption-set pair using center cosine
+210   similarity scaled by their average variances:
+211
+                                                   cos(µvi , µCj )
+212                                         sij = p                  ,
+                                                           q                                                 (4)
+213                                              τ 1 + v̄iv 1 + v̄jC
+214
+215   where τ is a fixed temperature, and v̄iv and v̄jC denote the average image base and caption-set variance,
+      respectively. The centers indicate how well the image and caption set match. The variance terms
+
+
+                                                           4
+      Under review as a conference paper at ICLR 2027
+
+
+
+
+216
+      adjust the strength of this judgment: when either distribution has greater spread, the score reflects a
+217   weaker preference for or against the pair. We then apply bidirectional contrastive matching:
+218
+219                                  1       exp(sii )            exp(sii )
+                           Lmatch = − [log PB             + log PB             ],                         (5)
+220                                  2      j=1 exp(sij )        j=1 exp(sji )
+221
+222   which pulls matched images and caption sets together while pushing unmatched pairs apart.
+223   Lalign guides the image distribution to cover the different meanings expressed by these captions. It
+224   combines four terms. KL alignment guides the image center and base variances, while coverage
+225   encourages the image distribution to include individual caption centers. Subspace alignment guides
+226   the low-rank component toward directions in which captions differ, and variance regularization
+227   discourages excessively large or small image base and caption variances. We detach the caption
+228   targets in the first three terms using sg(·), so these constraints update only the image branch without
+229   directly changing the caption representations. Matching and variance regularization update both
+230   modalities. Omitting sample indices, we define:
+231                              α                       d2
+232                   Lalign =     KLdiag (pv ∥pC ) + β[ − 1]+ + 2γ(r0 − ∥Q⊤     2
+                                                                           v QC ∥F )
+                                 D                       D
+233                                                                                                       (6)
+                                          η         vv 2         vt
+234                                    + (∥ log        ∥2 + ∥ log ∥22 ),
+                                         D          v0           v0
+235
+236   where α, β, γ, η weight the four terms, D is the embedding dimension.
+237
+      The first term brings the image center and base variances closer to the caption-set mean and variances.
+238
+      We compute KLdiag from the diagonal image Gaussian with parameters (µv , vv ) to the diagonal
+239
+      caption-set target with parameters (µC , diag(ΣC )). We stop gradients through the caption-set targets
+240   and set a lower bound of 0.01 for each target variance for numerical stability.
+241
+242   The coverage term encourages the image distribution to include each caption center within the region
+243
+      d2 ≤ D. Here, d2 is the squared Mahalanobis distance between the caption and image centers,
+      computed using the full image covariance Σv + ϵI. The small positive constant ϵ improves numerical
+244
+      stability. A caption center outside this region adds a penalty that encourages the image distribution to
+245
+      move its center or adjust its spread. Once covered, the penalty becomes zero, and this term no longer
+246   encourages the two centers to move closer.
+247
+248   The third term helps the image’s low-rank component follow the main directions in which caption
+249
+      centers differ. It compares the caption directions in QC with the image directions in Qv , both of size
+      D × r0 . We form QC from the leading r0 principal directions of the centered caption means. To
+250
+      obtain Qv , we take the first r0 columns of the orthonormal basis from the QR decomposition of U,
+251
+      where r0 = min(r, K − 1, D). Maximizing ∥Q⊤              2
+                                                         v QC ∥F encourages the two subspaces to become
+252   more similar. This term does not match individual axes or set the variance along each direction.
+253
+254   The final term encourages the image base and caption variances to stay near v0 = 0.04 by penalizing
+255
+      their differences from this value in log space. This discourages overly small or large variances. It
+      does not directly limit the extra variance from UU⊤ . Matching and variance regularization update
+256
+      the distribution heads and backbone encoders in both modalities throughout training. KL, coverage,
+257
+      and subspace alignment are scheduled in stages, and the matching loss is gradually allowed to update
+258   the variance predictions. The training-details appendix gives the full schedule.
+259
+260   For standard retrieval, caption sets are needed only during training. At inference, images and captions
+261
+      are encoded separately and matched via the cosine similarity between their distribution centers.
+      For one-to-many evaluation, we aggregate the captions for each image into a single caption-set
+262
+      representation, so bidirectional matching reduces to a one-to-one comparison at the set level.
+263
+264
+265   3    E XPERIMENTS
+266
+267   We evaluate MCDisp-Align on one-to-many retrieval, matching images with representations of their
+268   caption sets. We then examine whether learning from caption-set distributions retains the ability to
+269   retrieve individual captions and images in standard retrieval. Caption-space analysis and ablations
+      further assess the preservation of caption variation and the contribution of distribution alignment.
+
+
+                                                         5
+      Under review as a conference paper at ICLR 2027
+
+
+
+
+270
+      3.1   E XPERIMENTAL S ETUP
+271
+272   We use MSCOCO (Lin et al., 2014) and Flickr30K (Young et al., 2014), each with five reference
+273   captions per image. Our baselines include deterministic model CLIP (Radford et al., 2021) and
+274   probabilistic models ProLIP (Chun et al., 2025) and GroVE (Venkataramanan et al., 2025). CLIP and
+275   ProLIP are evaluated in zero-shot and fine-tuned settings; FT denotes fine-tuning on the target dataset.
+276   MCDisp-Align, CLIP, and GroVE use ViT-L/14, while ProLIP uses ViT-H/14 (Dosovitskiy et al.,
+277   2020). All methods use the same image pools, with text candidates defined by the retrieval setting.
+278   We fine-tune the encoders and train the MCDisp-Align distribution heads with a batch size of 32 and
+279   a head learning rate of 5 × 10−5 . We stop training after three consecutive epochs without validation
+280   improvement and retain the best checkpoint. Images and captions are encoded independently at
+281   inference time. We report Recall@1/5/10 (R@1/5/10) for image-to-text (I2T) and text-to-image (T2I)
+282   retrieval as fractions, with differences expressed in percentage points.
+283
+284   3.2   O NE - TO -M ANY R ETRIEVAL
+285
+286   Our main experiment evaluates one-to-many retrieval through bidirectional matching between images
+287   and caption sets. Given N images and their N caption sets, each set is treated as one item. The
+288   evaluation measures whether the correct image or caption set is retrieved. All methods use the
+289   same sets of five reference captions per image: I2T retrieves the corresponding caption set for an
+290   image, while T2I retrieves the corresponding image for a caption set. All methods match each
+291   image against an aggregated representation of its caption set: the probabilistic baselines ProLIP and
+292
+      GroVE aggregate caption distribution features; the deterministic baseline CLIP aggregates caption
+      embedding features, and MCDisp-Align aggregates its caption distributions via moment matching.
+293
+294
+      Table 1: Bidirectional One-to-Many retrieval on MSCOCO and Flickr30K. Best results are in bold.
+295
+296                              I2T R@1    I2T R@5      I2T R@10    T2I R@1     T2I R@5     T2I R@10
+297                                                   MSCOCO
+298
+            CLIP (zero-shot)      0.625       0.844          0.910     0.511       0.751        0.839
+299         CLIP-FT               0.825       0.951          0.979     0.761       0.932        0.966
+300         ProLIP (zero-shot)    0.630       0.840          0.902     0.524       0.748        0.833
+301         ProLIP-FT             0.774       0.932          0.962     0.738       0.917        0.956
+302         GroVE                 0.573       0.819          0.893     0.444       0.713        0.805
+303
+            MCDisp-Align          0.852       0.974          0.992     0.839       0.970        0.988
+304                                                   Flickr30K
+305         CLIP (zero-shot)      0.799       0.958          0.987     0.731       0.930        0.975
+306         CLIP-FT               0.900       0.986          0.994     0.884       0.984        0.996
+307         ProLIP (zero-shot)    0.791       0.952          0.979     0.752       0.936        0.971
+308
+            ProLIP-FT             0.857       0.977          0.994     0.845       0.974        0.991
+            GroVE                 0.868       0.982          0.994     0.779       0.952        0.978
+309         MCDisp-Align          0.903       0.988          0.997     0.909       0.990        0.996
+310
+311
+312   Table 1 leads to the following observations:
+313   (1) MCDisp-Align consistently improves bidirectional image-caption-set matching on both datasets.
+314   It achieves the best performance on eleven of the twelve reported evaluation metrics and ties with
+315   CLIP-FT on Flickr30K T2I R@10 (0.996). For I2T R@1, MCDisp-Align outperforms the strongest
+316   baseline, CLIP-FT, by 2.7 points in MSCOCO and 0.3 points in Flickr30K. Since all methods are
+317   evaluated using the same caption sets, these results show that MCDisp-Align can better learn the
+318   relationships between an image and its multiple captions.
+319   (2) The improvement is especially clear when the goal is to rank the correct image first given a
+320   caption set. T2I R@1 reaches 0.839 on MSCOCO and 0.909 on Flickr30K, which is 7.8 and 2.5
+321   points higher than CLIP-FT, respectively. These improvements are larger than those for I2T in both
+322   datasets, which shows that MCDisp-Align is particularly helpful when using several related captions
+323   to find the correct image. This result also matches our goal of learning an image distribution that
+      more effectively captures the meaning shared across its caption set.
+
+
+                                                         6
+      Under review as a conference paper at ICLR 2027
+
+
+
+
+324
+      Together, these results show that MCDisp-Align performs well for bidirectional image-caption-set
+325   matching. Next, we test whether this improvement also applies to standard retrieval and study the
+326   effect of Lalign through controlled ablation in Section 3.5.
+327
+328
+      3.3   S TANDARD I MAGE -T EXT R ETRIEVAL
+329
+330   Our main focus is learning one-to-many image-text relationships through caption-set supervision.
+331   As a supplementary evaluation, we examine whether the learned representations retain the ability
+332   to match individual images and captions in standard retrieval. At inference time, we rank candidate
+333   matches by the cosine similarity between image and caption centers, without aggregating captions.
+334
+      We report this supplementary comparison on MSCOCO. Table 2 leads to the following observations:
+335
+336              Table 2: Standard image-text retrieval on MSCOCO. Best results are in bold.
+337
+338         Model                I2T R@1   I2T R@5     I2T R@10    T2I R@1     T2I R@5     T2I R@10
+339         CLIP (zero-shot)      0.560      0.792         0.859     0.359       0.602       0.705
+340         CLIP-FT               0.676      0.881         0.940     0.546       0.803       0.880
+            ProLIP (zero-shot)    0.564      0.786         0.858     0.360       0.591       0.687
+341
+            ProLIP-FT             0.731      0.911         0.954     0.565       0.805       0.879
+342         GroVE                 0.514      0.756         0.838     0.305       0.559       0.670
+343
+            MCDisp-Align          0.696      0.906         0.955     0.553       0.815       0.891
+344
+345
+346
+      (1) MCDisp-Align improves individual image-caption matching while using the same encoder
+347   architecture and pretrained CLIP ViT-L/14 backbone as CLIP. It outperforms both zero-shot CLIP
+348   and CLIP-FT across all six metrics. Compared with CLIP-FT, I2T R@1 increases from 0.676 to
+349   0.696 and T2I R@1 from 0.546 to 0.553. This comparison supports the benefit of the proposed
+350   approach without relying on a larger encoder or a different pretrained backbone, and shows that
+351   caption-set supervision can also improve standard retrieval.
+352
+      (2) ProLIP-FT performs best at rank one, achieving I2T and T2I R@1 of 0.731 and 0.565, respectively.
+353   However, it uses a different pretrained ViT-H/14 backbone, whose greater capacity and pretraining
+354   may contribute to this advantage. Therefore, this comparison does not isolate the effect of the
+355   alignment method. MCDisp-Align remains competitive, outperforming ProLIP-FT on I2T R@10
+356   and T2I R@5/10, while its consistent gains over CLIP provide a more direct comparison with the
+357   same encoder and pretrained backbone under otherwise comparable evaluation settings.
+358
+      These results show that MCDisp-Align performs well in one-to-many retrieval while maintaining
+359   strong performance in standard image–text retrieval.
+360
+361
+      3.4   F URTHER A NALYSIS
+362
+363   We examine how much caption representations vary within each image and how well they separate
+364   different images in the representation space. We use the same image-caption samples for all models,
+365   comparing the text embeddings of CLIP and GroVE with the means of the individual-caption
+366   distributions produced by ProLIP and MCDisp-Align.
+367
+      Within-Set Dispersion (WSD) is the mean cosine distance between caption representations from the
+368   same image, while Between-Set Dispersion (BSD) measures this distance across different images.
+369
+      Relative Set Dispersion (RSD), defined as WSD/BSD+(BSD−WSD)
+                                                            2           . RSD averages the ratio and dif-
+370
+      ference terms to summarize the spread of caption representations within each set and their separation
+371   across sets. The ratio term becomes small when WSD is low relative to BSD, while the difference
+372   term measures how much BSD exceeds WSD. Together, these terms provide a geometric description
+373   of how caption representations vary within and across images.
+374
+      Table 3 shows the following observations:
+375
+376   (1) For MSCOCO, MCDisp-Align has greater caption dispersion within each image alongside strong
+377   separation across images. Its WSD is 0.408, compared with 0.320 for CLIP-FT and 0.266 for
+      ProLIP-FT, while its BSD reaches 0.996. Its RSD is higher than that of CLIP-FT (0.499 versus
+
+
+                                                       7
+      Under review as a conference paper at ICLR 2027
+
+
+
+
+378         Table 3: Mean cosine distances between caption representations within and across images.
+379
+                                                     MSCOCO                           Flickr30K
+380
+381                                          WSD       BSD         RSD        WSD       BSD       RSD
+382                     CLIP (zero-shot)     0.302     0.643       0.405      0.357     0.673     0.423
+383                     CLIP-FT              0.320     0.986       0.495      0.333     0.953     0.485
+384                     ProLIP (zero-shot)   0.332     0.801       0.442      0.364     0.766     0.439
+                        ProLIP-FT            0.266     0.734       0.415      0.296     0.725     0.419
+385
+                        GroVE                0.209     0.488       0.354      0.253     0.510     0.377
+386
+387                     MCDisp-Align         0.408     0.996       0.499      0.323     0.985     0.495
+388
+389   0.495), describing less compact caption sets relative to their separation. Together with the retrieval
+390   results, these findings suggest that MCDisp-Align preserves differences in meaning between captions
+391   of the same image while maintaining accurate image-text matching.
+392   (2) For Flickr30K, MCDisp-Align retains within-set variation close to CLIP-FT (WSD of 0.323
+393   versus 0.333), with greater between-set separation (BSD of 0.985 versus 0.953). Its RSD of 0.495
+394   summarizes the relative compactness of this geometry. The retained caption variation is indicated by
+395   WSD remaining close to CLIP-FT, rather than by the lower ratio itself.
+396
+      These comparisons show that caption representations can retain variation within each image while
+397
+      remaining well separated across images. The controlled ablation below tests whether adding the
+398   alignment loss reduces this variation in the learned representation space.
+399
+400
+      3.5    A BLATION S TUDY
+401
+402   We remove Lalign but still fine-tune the encoders, keeping all other settings unchanged. We evaluate
+403   standard retrieval and caption-space geometry to test whether distribution alignment improves
+404   individual-caption matching without reducing caption variation.
+405
+406
+      Table 4: Retrieval performance of MCDisp-Align with and without Lalign . Best results are in bold.
+407
+       Dataset       Model            I2T R@1        I2T R@5        I2T R@10          T2I R@1     T2I R@5       T2I R@10
+408
+                     w/o Lalign         0.608         0.865           0.939            0.481        0.752           0.838
+409    MSCOCO
+                     MCDisp-Align       0.696         0.906           0.955            0.553        0.815           0.891
+410
+411                  w/o Lalign         0.691         0.904           0.964            0.597        0.861           0.924
+       Flickr30K
+                     MCDisp-Align       0.769         0.941           0.976            0.641        0.886           0.939
+412
+413
+414   Tables 4 and 5 show the following observations:
+415   (1) With all other training settings unchanged,
+416   adding Lalign improves standard retrieval on
+417   both datasets. The largest gains occur at R@1: Table 5: Caption dispersion of MCDisp-Align with
+418   I2T and T2I increase by 8.8 and 7.2 points and without Lalign . Best results are in bold.
+419   on MSCOCO, and by 7.8 and 4.4 points on
+      Flickr30K. R@5 and R@10 also improve in          Dataset    Model           WSD BSD      RSD
+420
+421   both directions, showing that the alignment loss            w/o Lalign      0.402 1.000 0.500
+                                                       MSCOCO
+422
+      helps the model rank matching images and cap-               MCDisp-Align 0.408 0.996 0.499
+      tions more accurately.                                      w/o Lalign      0.322 0.985 0.495
+423                                                               Flickr30K
+                                                                               MCDisp-Align       0.323     0.985    0.495
+424   (2) Caption dispersion changes little as retrieval
+425   improves. WSD increases from 0.402 to 0.408
+426   on MSCOCO and from 0.322 to 0.323 on
+427   Flickr30K, while BSD decreases slightly from 1.000 to 0.996 on MSCOCO and remains at 0.985 on
+428
+      Flickr30K. These results show that better retrieval does not require a reduction in average within-set
+      variation, and that separation across images remains largely unchanged.
+429
+430   (3) This pattern is consistent with the roles of the two objectives. The matching loss separates
+431   different image-caption groups, while the KL, coverage, and direction-alignment terms use detached
+      caption targets to shape the image representation. A caption center incurs no coverage penalty once it
+
+
+                                                              8
+      Under review as a conference paper at ICLR 2027
+
+
+
+
+432
+      falls inside the image distribution’s coverage region. The model can therefore accommodate multiple
+433   valid captions without forcing their centers to coincide.
+434
+435   Removing Lalign weakens retrieval on both datasets even though caption dispersion changes little,
+436
+      pointing to its contribution to cross-modal matching.
+437
+438
+439   4     R ELATED W ORK
+440
+441   4.1   V ISION - LANGUAGE REPRESENTATION LEARNING
+442
+443   Common vision-language architectures include fusion-based models and dual encoders. UNITER
+444   learns joint representations through modality fusion (Chen et al., 2020), while CLIP and ALIGN use
+445   separate encoders trained with large-scale contrastive learning (Radford et al., 2021; Jia et al., 2021;
+446   Lu et al., 2025). SigLIP replaces the softmax loss with a pairwise sigmoid loss (Zhai et al., 2023),
+447   and SigLIP 2 extends it to multilingual and fine-grained settings (Tschannen et al., 2025).
+448   Beyond global alignment, local alignment methods combine image and text tokens (Asokan et al.,
+449   2025), use text-conditioned pooling (Xiao et al., 2025), or train with region-text pairs and hard
+450   negatives (Xie et al., 2025; 2026). GOAL, β-CLIP, and TIPSv2 match images and text at multiple
+451   levels of detail (Choi et al., 2025; Zohra et al., 2026; Cao et al., 2026). Other methods exploit visual
+452   structure (Ruan et al., 2026) or long captions (Lavoie et al., 2026), while FALCON reduces false
+453   negatives in one-to-many matching through adaptive negative mining (Kim et al., 2026).
+454   MCDisp-Align shares the dual-encoder design and the goal of preserving fine-grained semantics,
+455   focusing on variation among an image’s valid captions. It uses caption-set dispersion to supervise the
+456   image distribution’s semantic range while retaining independent encoding for standard retrieval.
+457
+458
+459
+      4.2   P ROBABILISTIC VISION - LANGUAGE REPRESENTATION LEARNING
+460
+461
+      Probabilistic methods model ambiguity by mapping inputs to distributions. PCME introduces prob-
+      abilistic embeddings (Chun et al., 2021), which PCME++ improves using a closed-form distance
+462
+      and better false-negative handling (Chun, 2024). Probabilistic representations have been expanded
+463
+      to composed retrieval (Tang et al., 2025), large-scale pre-training (Chun et al., 2025), probabilistic
+464   adapters (Upadhyay et al., 2023), and latent variable models (Venkataramanan et al., 2025). Other
+465   methods estimate uncertainty without learning new embeddings, using Bayesian projection lay-
+466   ers (Baumann et al., 2026) or class-conditional Gaussian distributions (Lin et al., 2026). To account
+467   for normalized embeddings, AsymVLM models asymmetric uncertainty on the unit sphere (Ju et al.,
+468   2025), and REPVLM estimates uncertainty using density models (Ju et al., 2026).
+469
+      MCDisp-Align uses variation across an image’s captions to supervise its distribution, combining
+470   within-caption uncertainty and between-caption dispersion through moment matching. The resulting
+471   targets guide the image’s semantic center, range, and dominant variation directions. Detaching these
+472   targets allows set-level alignment and caption-center coverage to shape the image distribution without
+473   directly pulling caption centers together.
+474
+475
+476   5     C ONCLUSION
+477
+478
+      In this paper, we present MCDisp-Align, which uses multi-caption semantic dispersion to guide
+479
+      image distribution learning for one-to-many vision-language alignment. Caption-set supervision helps
+480   reduce semantic distortion by shaping the image distribution without directly pulling semantically
+481   distinct caption centers together. Set-level alignment and caption-center coverage help mitigate
+482   semantic collapse by guiding the image distribution to cover the complementary meanings of its
+483   captions. On MSCOCO and Flickr30K, MCDisp-Align achieves the best or tied-best one-to-many
+484   retrieval scores among the methods, while retaining performance in standard image-text retrieval and
+485   outperforming fine-tuned CLIP on MSCOCO. Caption-space analysis and ablations show that these
+      gains coexist with retained caption variation within images and separation across images.
+
+
+                                                         9
+      Under review as a conference paper at ICLR 2027
+
+
+
+
+486
+      AI U SE S TATEMENT
+487
+488
+      We used generative AI tools, including ChatGPT 6 Astra and GLM 5.3, to help translate texts, debug
+489   and optimize code, and find research information and relevant literature. These tools also helped us
+490   improve the paper’s wording and readability and correct grammatical errors.
+491
+492
+      We did not use generative AI to develop research ideas or the conceptual framework, propose or refine
+      hypotheses, formulate mathematical claims, or contribute to or write proofs. We also did not use it to
+493
+      design or provide feedback on the research methodology or experiments, generate synthetic datasets,
+494
+      clean or reformat datasets, conduct qualitative or thematic data analysis, or interpret experimental
+495   results.
+496
+497   We reviewed all AI-assisted work, checking the translations and language edits for accuracy and
+498
+      consistency with the intended scientific meaning. We verified the information and references against
+      their sources and inspected and tested the code changes for correctness. We take responsibility for
+499
+      the final content of this work, including all AI-assisted text, claims, code, and other artifacts.
+500
+501
+502   R EFERENCES
+503
+      Mothilal Asokan, Kebin Wu, and Fatima Albreiki. Finelip: Extending clip’s reach via fine-grained
+504    alignment with longer text inputs. In Proceedings of the Computer Vision and Pattern Recognition
+505    Conference (CVPR), pp. 14495–14504, June 2025.
+506
+507   Anton Baumann, Rui Li, Marcus Klasson, Santeri Mentu, Shyamgopal Karthik, Zeynep Akata,
+508    Arno Solin, and Martin Trapp. Post-hoc probabilistic vision-language models. In International
+509
+       Conference on Learning Representations (ICLR), 2026.
+510   Bingyi Cao, Koert Chen, Kevis-Kokitsi Maninis, Kaifeng Chen, Arjun Karpur, Ye Xia, Sahil Dua,
+511     Tanmaya Dabral, Guangxing Han, Bohyung Han, Joshua Ainslie, Alex Bewley, Mithun Jacob,
+512     René Wagner, Washington Ramos, Krzysztof Choromanski, Mojtaba Seyedhosseini, Howard
+513     Zhou, and Andre Araujo. Tipsv2: Advancing vision-language pretraining with enhanced patch-
+514     text alignment. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern
+515     Recognition (CVPR), pp. 29325–29335, June 2026.
+516
+      Yen-Chun Chen, Linjie Li, Licheng Yu, Ahmed El Kholy, Faisal Ahmed, Zhe Gan, Yu Cheng, and
+517     Jingjing Liu. Uniter: Universal image-text representation learning. In ECCV, 2020.
+518
+519   Hyungyu Choi, Young Kyun Jang, and Chanho Eom. Goal: Global-local object alignment learning.
+520     In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR),
+521     pp. 4070–4079, June 2025.
+522
+      Sanghyuk Chun. Improved probabilistic image-text representations. In International Conference on
+523     Learning Representations (ICLR), 2024.
+524
+525   Sanghyuk Chun, Seong Joon Oh, Rafael Sampaio De Rezende, Yannis Kalantidis, and Diane Larlus.
+526     Probabilistic embeddings for cross-modal retrieval. In Conference on Computer Vision and Pattern
+527     Recognition (CVPR), 2021.
+528   Sanghyuk Chun, Wonjae Kim, Song Park, and Sangdoo Yun. Probabilistic language-image pre-
+529     training. In International Conference on Learning Representations (ICLR), 2025.
+530
+531   Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas
+532     Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, et al. An
+533
+        image is worth 16x16 words: Transformers for image recognition at scale. arXiv preprint
+        arXiv:2010.11929, 2020.
+534
+535   Chao Jia, Yinfei Yang, Ye Xia, Yi-Ting Chen, Zarana Parekh, Hieu Pham, Quoc V. Le, Yun-Hsuan
+536     Sung, Zhen Li, and Tom Duerig. Scaling up visual and vision-language representation learning
+537     with noisy text supervision. In Marina Meila and Tong Zhang (eds.), Proceedings of the 38th
+538     International Conference on Machine Learning, ICML 2021, 18-24 July 2021, Virtual Event,
+539     volume 139 of Proceedings of Machine Learning Research, pp. 4904–4916. PMLR, 2021. URL
+        http://proceedings.mlr.press/v139/jia21b.html.
+
+
+                                                       10
+      Under review as a conference paper at ICLR 2027
+
+
+
+
+540
+      Li Ju, Mayank Nautiyal, Andreas Hellander, Ekta Vats, and Prashant Singh. Epistemic uncertainty
+541     quantification for pre-trained VLMs via riemannian flow matching. In Forty-third International
+542     Conference on Machine Learning, 2026. URL https://openreview.net/forum?id=
+543     E8Q093jDug.
+544
+545   Li Ju et al. Exploiting the asymmetric uncertainty structure of pre-trained vlms on the unit hypersphere.
+546
+         In Advances in Neural Information Processing Systems (NeurIPS), 2025.
+547   Myunsoo Kim, Seongwoong Shim, and Byung-Jun Lee. Falcon: False-negative aware learning of
+548    contrastive negatives in vision-language alignment. In Proceedings of the IEEE/CVF Conference
+549    on Computer Vision and Pattern Recognition (CVPR), pp. 701–711, June 2026.
+550
+      Wonjae Kim, Bokyung Son, and Ildoo Kim. Vilt: Vision-and-language transformer without con-
+551
+       volution or region supervision. In International Conference on Machine Learning, 2021. URL
+552
+       https://api.semanticscholar.org/CorpusID:231839613.
+553
+554   Marc-Antoine Lavoie, Anas Mahmoud, Aldo Zaimi, Arsene Fansi Tchango, and Steven L. Waslander.
+555    Clip is shortsighted: Paying attention beyond the first sentence. In Proceedings of the IEEE/CVF
+556    Conference on Computer Vision and Pattern Recognition (CVPR), pp. 9524–9534, June 2026.
+557   Kuang-Huei Lee, Xi Chen, Gang Hua, Houdong Hu, and Xiaodong He. Stacked cross attention for
+558     image-text matching. In Proceedings of the European Conference on Computer Vision (ECCV),
+559     September 2018.
+560
+561
+      Junnan Li, Ramprasaath R. Selvaraju, Akhilesh Deepak Gotmare, Shafiq R. Joty, Caiming Xiong,
+        and Steven C. H. Hoi. Align before fuse: Vision and language representation learning with
+562
+        momentum distillation. In Neural Information Processing Systems, 2021. URL https://api.
+563
+        semanticscholar.org/CorpusID:236034189.
+564
+565   Tsung-Yi Lin, Michael Maire, Serge Belongie, James Hays, Pietro Perona, Deva Ramanan, Piotr
+566     Dollár, and C Lawrence Zitnick. Microsoft coco: Common objects in context. In Computer Vision–
+567     ECCV 2014: 13th European Conference, Zurich, Switzerland, September 6-12, 2014, Proceedings,
+568     Part V 13, pp. 740–755. Springer, 2014.
+569   Zhenxiang Lin, Maryam Haghighat, Will Browne, and Dimity Miller. Intra-class probabilistic
+570     embeddings for uncertainty estimation in vision-language models. In Proceedings of the IEEE/CVF
+571     Winter Conference on Applications of Computer Vision (WACV), pp. 2327–2337, March 2026.
+572
+573
+      Jianglin Lu, Hailing Wang, Yi Xu, Yizhou Wang, Kuo Yang, and Yun Fu. Representation potentials of
+         foundation models for multimodal alignment: A survey. In Christos Christodoulopoulos, Tanmoy
+574
+         Chakraborty, Carolyn Rose, and Violet Peng (eds.), Proceedings of the 2025 Conference on
+575
+         Empirical Methods in Natural Language Processing, pp. 16669–16684, Suzhou, China, November
+576      2025. Association for Computational Linguistics. ISBN 979-8-89176-332-6. doi: 10.18653/v1/
+577      2025.emnlp-main.843. URL https://aclanthology.org/2025.emnlp-main.843/.
+578
+579   Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal,
+580     Girish Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen Krueger, and Ilya Sutskever.
+581
+        Learning transferable visual models from natural language supervision. In Marina Meila and Tong
+        Zhang (eds.), Proceedings of the 38th International Conference on Machine Learning, volume
+582
+        139 of Proceedings of Machine Learning Research, pp. 8748–8763. PMLR, 18–24 Jul 2021. URL
+583
+        https://proceedings.mlr.press/v139/radford21a.html.
+584
+585   Zanxi Ruan, Songqun Gao, Qiuyu Kong, Yiming Wang, and Marco Cristani. Structxlip: Enhanc-
+586     ing vision-language models with multimodal structural cues. In Proceedings of the IEEE/CVF
+587     Conference on Computer Vision and Pattern Recognition (CVPR), pp. 17292–17302, June 2026.
+588   Haomiao Tang, Jinpeng Wang, Yuang Peng, Guanghao Meng, Ruisheng Luo, Bin Chen, Long Chen,
+589     Yaowei Wang, and Shu-Tao Xia. Modeling uncertainty in composed image retrieval via probabilistic
+590     embeddings. In Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Mohammad Taher
+591     Pilehvar (eds.), Proceedings of the 63rd Annual Meeting of the Association for Computational
+592     Linguistics (Volume 1: Long Papers), pp. 1210–1222, Vienna, Austria, July 2025. Association for
+593     Computational Linguistics. ISBN 979-8-89176-251-0. doi: 10.18653/v1/2025.acl-long.61. URL
+        https://aclanthology.org/2025.acl-long.61/.
+
+
+                                                        11
+      Under review as a conference paper at ICLR 2027
+
+
+
+
+594
+      Michael Tschannen, Alexey Gritsenko, Xiao Wang, Muhammad Ferjad Naeem, Ibrahim Alabdul-
+595    mohsin, Nikhil Parthasarathy, Talfan Evans, Lucas Beyer, Ye Xia, Basil Mustafa, Olivier Hénaff,
+596    Jeremiah Harmsen, Andreas Steiner, and Xiaohua Zhai. Siglip 2: Multilingual vision-language
+597    encoders with improved semantic understanding, localization, and dense features, 2025. URL
+598    https://arxiv.org/abs/2502.14786.
+599
+600
+      U. Upadhyay, S. Karthik, M. Mancini, and Z. Akata. Probvlm: Probabilistic adapter for frozen
+        vision-language models. In International Conference on Computer Vision (ICCV 2023), 2023.
+601
+602   Aishwarya Venkataramanan, Paul Bodesheim, and Joachim Denzler. Probabilistic embeddings for
+603     frozen vision-language models: Uncertainty quantification with gaussian process latent variable
+604     models. In Proceedings of the Forty-First Conference on Uncertainty in Artificial Intelligence,
+605     2025.
+606
+      Rui Xiao, Sanghwan Kim, Mariana-Iuliana Georgescu, Zeynep Akata, and Stephan Alaniz. Flair:
+607
+        Vlm with fine-grained language-informed image representations. In CVPR, 2025.
+608
+609   Chunyu Xie, Bin Wang, Fanjing Kong, Jincheng Li, Dawei Liang, Gengshen Zhang, Dawei Leng,
+610     and Yuhui Yin. Fg-clip: Fine-grained visual and textual alignment. In International Conference on
+611     Machine Learning, pp. 68777–68793, 2025.
+612
+      Chunyu Xie, Bin Wang, Fanjing Kong, Jincheng Li, Dawei Liang, Ji Ao, Dawei Leng, and Yuhui Yin.
+613     Fg-clip 2: A bilingual fine-grained vision-language alignment model. In International Conference
+614     on Machine Learning, 2026.
+615
+616   Peter Young, Alice Lai, Micah Hodosh, and Julia Hockenmaier. From image descriptions to visual
+617     denotations: New similarity metrics for semantic inference over event descriptions. TACL, 2:67–78,
+618
+        2014.
+619   Xiaohua Zhai, Basil Mustafa, Alexander Kolesnikov, and Lucas Beyer. Sigmoid loss for language
+620     image pre-training. In Proceedings of the IEEE/CVF International Conference on Computer Vision
+621     (ICCV), pp. 11975–11986, October 2023.
+622
+623
+      Fatimah Zohra, Chen Zhao, Hani Itani, and Bernard Ghanem. b-clip: Text-conditioned contrastive
+        learning for multi-granular vision-language alignment. In Proceedings of the IEEE/CVF Conference
+624
+        on Computer Vision and Pattern Recognition (CVPR), pp. 680–689, June 2026.
+625
+626
+627   A    H YPERPARAMETERS AND T RAINING D ETAILS
+628
+629   We fix the temperature in Eq. 4 to τ = 0.07 and set the base loss weights in Eq. 6 to α = 1.0,
+630   β = 0.5, γ = 0.01, and η = 0.01. The low-rank dimension is set to r = 4, the inversion stabilizer to
+631   ϵ = 10−6 , and the variance anchor to v0 = 0.04. We use Adam with a weight decay of 10−4 . The
+632   backbone encoders are fine-tuned with a base learning rate of 10−6 , while the distribution heads use
+633   5 × 10−5 . Both learning rates follow a cosine schedule with a one-epoch warmup. Each mini-batch
+634   contains 32 images, each paired with K = 5 captions.
+635   Training runs for up to 10 epochs. Matching and variance regularization remain active throughout
+636   training and are the only active loss terms during the first two epochs. During these two epochs,
+637   we block gradients from the matching loss through the variance predictions. Over epochs 3–4, we
+638   linearly increase the KL loss weight from 0.05α toward α and the matching gradient scale for variance
+639   predictions from zero toward one. Both reach their full values at epoch 5, when the coverage term is
+640   also activated. Direction alignment is scheduled to begin at epoch 9 with a weight of 0.5γ, increasing
+641   to γ at epoch 10. We stop training after three consecutive epochs without validation improvement
+642   and retain the best checkpoint for evaluation.
+643
+644
+645
+646
+647
+
+
+
+                                                       12
+
