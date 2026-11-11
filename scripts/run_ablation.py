@@ -11,6 +11,12 @@ differing only in the loss weights / ``cov_rank`` / ``num_captions`` overrides,
 the ``--dataset`` (coco or flickr), and the per-variant checkpoint path. So
 ablation results are directly comparable to a full training run.
 
+Backbone scope: default is frozen-CLIP heads-only (legacy, ~3-4GB). Pass
+``--no-freeze-clip`` to unfreeze the ViT-L/14 backbone for every row (the
+Full-model recipe LRs: backbone 1e-6, heads 5e-5; ~25-30GB at batch 32 fp32).
+Whichever scope you choose must MATCH the Full model being compared against --
+frozen and unfrozen rows are not comparable (rebuttal plan 3B).
+
 Ablation configurations (only the named weight -- or cov_rank for diag_only,
 or the sg[.] detach for no_sg -- is changed; everything else is identical
 across groups; rebuttal-plan rows A0-A7, see config.ABLATION_CONFIGS):
@@ -68,7 +74,23 @@ def parse_args():
     parser.add_argument("--epochs", type=int, default=config.MCDISP_ALIGN_EPOCHS)
     parser.add_argument("--batch-size", type=int, default=config.MCDISP_ALIGN_BATCH_SIZE)
     parser.add_argument("--lr", type=float, default=config.MCDISP_ALIGN_MLP_LR,
-                        help="Learning rate for the (non-frozen) MCDisp_Align heads")
+                        help="Legacy single LR for the heads (applies to both groups "
+                             "in the default frozen-backbone mode)")
+    parser.add_argument("--clip-lr", type=float, default=config.MCDISP_ALIGN_CLIP_LR,
+                        help="Backbone LR when --no-freeze-clip is set "
+                             "(default = the Full-model recipe: MCDISP_ALIGN_CLIP_LR)")
+    parser.add_argument("--mlp-lr", type=float, default=config.MCDISP_ALIGN_MLP_LR,
+                        help="Head LR when --no-freeze-clip is set "
+                             "(default = MCDISP_ALIGN_MLP_LR)")
+    parser.add_argument("--no-freeze-clip", dest="freeze_clip", action="store_false",
+                        default=True,
+                        help="Unfreeze the CLIP backbone (full fine-tune) for EVERY "
+                             "ablation row. Rebuttal-plan comparability: whatever this "
+                             "setting is, it must match the Full model's recipe -- if "
+                             "the paper's Full checkpoints are unfrozen, run the whole "
+                             "matrix unfrozen. Needs a large-VRAM GPU (batch 32 fp32 "
+                             "~25-30GB; no AMP / grad checkpointing in this path). "
+                             "Default: frozen (heads-only, legacy ablation behavior).")
     parser.add_argument("--eval-samples", type=int, default=500,
                         help="Number of eval samples for the final retrieval report "
                              "(coco subset; flickr uses its full test split)")
@@ -98,10 +120,13 @@ def _config_from_ablation(config_name, ablation_config, args, best_path, last_pa
         tag=config_name,
         epochs=args.epochs,
         batch_size=args.batch_size,
-        # Ablation freezes CLIP and trains all heads at a single LR (legacy behavior).
-        freeze_clip=True,
-        clip_lr=args.lr,
-        mlp_lr=args.lr,
+        # Frozen mode (legacy): heads-only at a single LR. Unfrozen mode
+        # (--no-freeze-clip): backbone at MCDISP_ALIGN_CLIP_LR (1e-6) + heads at
+        # MCDISP_ALIGN_MLP_LR (5e-5), i.e. the Full-model recipe -- a single
+        # 5e-5 LR on the ViT-L backbone would diverge.
+        freeze_clip=args.freeze_clip,
+        clip_lr=(args.lr if args.freeze_clip else args.clip_lr),
+        mlp_lr=(args.lr if args.freeze_clip else args.mlp_lr),
         loss_name=args.loss or ablation_config.get("loss_name", config.ABLATION_LOSS_NAME),
         cov_rank=ablation_config.get("cov_rank", config.MCDISP_ALIGN_COV_RANK),
         num_captions_override=ablation_config.get("num_captions"),
