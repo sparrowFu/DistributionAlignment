@@ -61,6 +61,9 @@ MAIN_LOG_PATH = LOG_DIR / "main.log"
 # Training log for CLIP baseline
 TRAIN_CLIP_BASELINE_LOG_PATH = LOG_DIR / "train_clip_baseline.log"
 
+# Training log for CLIP Set-FT (rebuttal exp 1)
+TRAIN_CLIP_SETFT_LOG_PATH = LOG_DIR / "train_clip_setft.log"
+
 # Evaluation log for CLIP baseline
 EVAL_CLIP_BASELINE_LOG_PATH = LOG_DIR / "evaluate_clip_baseline.log"
 
@@ -79,6 +82,12 @@ CLIP_BASELINE_BEST_CKPT = CHECKPOINT_DIR / "clip_baseline_coco_best.pt"
 
 # Last checkpoint (end of training)
 CLIP_BASELINE_LAST_CKPT = CHECKPOINT_DIR / "clip_baseline_coco_last.pt"
+
+# CLIP Set-FT (rebuttal exp 1): same hyperparameters as CLIP_BASELINE_*
+# (epochs/batch/lr/wd/temperature), only the text supervision differs --
+# five captions per image averaged into one set vector.
+CLIP_SETFT_BEST_CKPT = CHECKPOINT_DIR / "clip_setft_coco_best.pt"
+CLIP_SETFT_LAST_CKPT = CHECKPOINT_DIR / "clip_setft_coco_last.pt"
 
 
 # =============================================================================
