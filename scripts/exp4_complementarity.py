@@ -36,11 +36,19 @@ Outputs (per model, per bin):
      hard-negative false-coverage rate, and margin = min_neg d2 - max_true d2
      (「最近负例距离减最远真描述距离」).
 
-Usage:
-  python scripts/exp4_complementarity.py --subset subset.json \\
-      --clip setft=checkpoints/clip_setft_coco_best.pt \\
+Usage (checkpoint paths are the trainer's REAL naming -- the ablation
+framework writes e.g. outputs/ablation_study/full_kl/seed42/
+abl_full_kl_kl_coco_best.pt, and the Set-FT run writes into its timestamped
+log dir; always pass the actual file):
+
+  python scripts/exp4_complementarity.py --make-template 90 --seed 42 \\
+      --output subset_template.json          # step 1: sample (no overwrite)
+  # step 2 (human): fill bin + hard_negatives
+  python scripts/exp4_complementarity.py --subset subset_template.json \\
+      --check-overlap                        # step 3: legacy-split overlap
+  python scripts/exp4_complementarity.py --subset subset_template.json \\
       --clip clip=checkpoints/clip_baseline_coco_best.pt \\
-      --mcdisp full=outputs/ablation_study/full_kl/seed42/best.pt
+      --mcdisp full=outputs/ablation_study/full_kl/seed42/abl_full_kl_kl_coco_best.pt
 """
 
 import argparse
@@ -70,23 +78,57 @@ BINS = ("low", "mid", "high")
 
 
 # ---------------------------------------------------------------- data plumbing
-def make_subset_template(manifest: Path, n: int, seed: int, out: Path) -> None:
+def _validate_subset(subset: Dict) -> List[str]:
+    """Hard checks: bin in {low,mid,high}, EXACTLY 5 captions per image,
+    legal 'replaces'. Returns the images without hard negatives (soft note --
+    they simply stay out of the hard-negative statistics)."""
+    missing_neg = []
+    for e in subset["entries"]:
+        if e.get("bin") not in BINS:
+            raise ValueError(f"entry {e['image']}: bin must be one of {BINS}")
+        if len(e["captions"]) != 5:
+            raise ValueError(
+                f"entry {e['image']}: needs EXACTLY 5 captions, got "
+                f"{len(e['captions'])} (the eval encodes five captions per image; "
+                f"re-sample the template with >=5-valid entries)")
+        for h in e.get("hard_negatives", []):
+            j = int(h.get("replaces", 0))
+            if not 0 <= j < 5:
+                raise ValueError(
+                    f"entry {e['image']}: hard negative 'replaces'={j} "
+                    f"outside caption range [0, 5)")
+        if not e.get("hard_negatives"):
+            missing_neg.append(e["image"])
+    return missing_neg
+
+
+def make_subset_template(manifest: Path, n: int, seed: int, out: Path,
+                         force: bool = False) -> None:
     """Sample ``n`` TEST images BEFORE any model result is seen and emit the
     human-annotation template for the verified subset.
 
-    The human fills ``bin`` (low/mid/high complementarity, ~30 images each)
-    and ``hard_negatives`` (minimal single-fact edits: {caption, replaces,
-    note}); captions are trimmed to the first 5 so ``replaces`` indexes
-    exactly the captions shown here (and encoded later). Sampling from the
-    AUDIT test manifest keeps the subset image-exclusive with training.
+    Only entries with at least 5 valid captions are eligible (the eval loader
+    drops shorter ones, which would break the alignment assert later), and an
+    existing output file is never overwritten unless ``force`` -- regenerating
+    would silently WIPE the human bin/hard-negative annotations.
     """
+    if out.exists() and not force:
+        raise FileExistsError(
+            f"{out} already exists; re-generating would wipe the human "
+            f"annotations. Pass --force only for a fresh, un-annotated template.")
     import random as _random
     blob = json.loads(manifest.read_text(encoding="utf-8"))
     entries = blob["entries"] if isinstance(blob, dict) else blob
-    if n > len(entries):
-        raise ValueError(f"requested {n} images but {manifest} only has {len(entries)}")
+    eligible = [e for e in entries
+                if sum(1 for c in e["captions"]
+                       if isinstance(c, str) and c.strip()) >= 5]
+    if n > len(eligible):
+        raise ValueError(
+            f"requested {n} images but {manifest} only has {len(eligible)} "
+            f"entries with >=5 valid captions ({len(entries) - len(eligible)} "
+            f"ineligible entries were skipped)")
     rng = _random.Random(seed)
-    picked = rng.sample(entries, n)
+    picked = rng.sample(eligible, n)
     template = {
         "_说明": ("人工填写每项: bin = low/mid/high(互补性分档); hard_negatives 每项 "
                   "{'caption': 改一个事实的句子, 'replaces': 被改句子的下标, 'note': 改了什么}。"
@@ -107,8 +149,41 @@ def make_subset_template(manifest: Path, n: int, seed: int, out: Path) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(template, ensure_ascii=False, indent=2),
                    encoding="utf-8")
-    print(f"subset template ({n} images) -> {out}\n"
+    print(f"subset template ({n} images, {len(eligible)} eligible in manifest) -> {out}\n"
           f"fill 'bin' and 'hard_negatives', then run exp4 with --subset {out}")
+
+
+def legacy_split_overlap(image_names, captions_path=None, images_dir=None,
+                         seed=None, val_split: float = 0.1) -> Dict[str, object]:
+    """Intersection of ``image_names`` with the legacy 90/10 training split.
+
+    The OLD runs (paper Full / CLIP-FT / Set-FT) trained on a random_split of
+    the full caption pool (``torch.Generator().manual_seed(seed)``), which is
+    exactly reproducible; the audit manifests are a DIFFERENT split of the
+    same pool. Before claiming the exp-4 subset is unseen for those models,
+    report this overlap: images in it were TRAINING images for the legacy
+    checkpoints (rebuttal checklist: 旧权重需核对训练图像交集,不得直接宣称未见).
+    """
+    from torch.utils.data import random_split
+    from utils.dataset_factory import build_train_dataset
+    eff_seed = config.SEED if seed is None else seed
+    ds = build_train_dataset(dataset="coco", captions_path=captions_path,
+                             images_dir=images_dir)
+    n_total = len(ds)
+    n_val = int(n_total * val_split)
+    train_sub, _ = random_split(
+        ds, [n_total - n_val, n_val],
+        generator=torch.Generator().manual_seed(eff_seed))
+    legacy_train = set(
+        ds.data.loc[list(train_sub.indices), "image_file_name"])
+    overlap = sorted(set(image_names) & legacy_train)
+    return {
+        "legacy_seed": eff_seed, "legacy_val_split": val_split,
+        "n_legacy_train": len(legacy_train), "n_query": len(set(image_names)),
+        "n_overlap": len(overlap), "overlap_images": overlap,
+        "note": "overlap images were TRAINING images for the legacy "
+                "Full/CLIP/Set-FT checkpoints; exclude or report them",
+    }
 
 
 def _subset_manifest_path(subset: Dict, workdir: Path) -> Path:
@@ -482,7 +557,14 @@ def main():
                          "(default: outputs/ablation_study/manifests/"
                          "manifest_coco_test.json)")
     ap.add_argument("--seed", type=int, default=config.SEED,
-                    help="sampling seed for --make-template")
+                    help="sampling seed for --make-template / legacy split seed "
+                         "for --check-overlap")
+    ap.add_argument("--force", action="store_true",
+                    help="--make-template: overwrite an existing output file")
+    ap.add_argument("--check-overlap", action="store_true",
+                    help="report the overlap of --subset images with the LEGACY "
+                         "90/10 training split (old Full/CLIP/Set-FT runs); "
+                         "needs the caption parquet (server)")
     ap.add_argument("--clip", action="append", default=[], metavar="TAG=PATH",
                     help="CLIP-family checkpoint (clip_baseline / clip_setft)")
     ap.add_argument("--mcdisp", action="append", default=[], metavar="TAG=PATH",
@@ -497,7 +579,8 @@ def main():
         manifest = Path(args.manifest or (
             config.OUTPUT_DIR / "ablation_study" / "manifests" / "manifest_coco_test.json"))
         out = Path(args.output) if args.output else Path("subset_template.json")
-        make_subset_template(manifest, args.make_template, args.seed, out)
+        make_subset_template(manifest, args.make_template, args.seed, out,
+                             force=args.force)
         return
 
     if not args.subset:
@@ -505,16 +588,17 @@ def main():
 
     with open(args.subset, "r", encoding="utf-8") as f:
         subset = json.load(f)
-    for e in subset["entries"]:
-        if e.get("bin") not in BINS:
-            raise ValueError(f"entry {e['image']}: bin must be one of {BINS}")
-        K = len(e["captions"])
-        for h in e.get("hard_negatives", []):
-            j = int(h.get("replaces", 0))
-            if not 0 <= j < K:
-                raise ValueError(
-                    f"entry {e['image']}: hard negative 'replaces'={j} "
-                    f"outside caption range [0, {K})")
+    missing_neg = _validate_subset(subset)
+    if missing_neg:
+        print(f"NOTE: {len(missing_neg)}/{len(subset['entries'])} images have no "
+              f"hard negative (fine for the bin retrieval tables; they just do "
+              f"not enter the hard-negative statistics)")
+
+    if args.check_overlap:
+        report = legacy_split_overlap(
+            [e["image"] for e in subset["entries"]], seed=args.seed)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return
     workdir = Path(args.subset).parent / "exp4_work"
     manifest = _subset_manifest_path(subset, workdir)
 

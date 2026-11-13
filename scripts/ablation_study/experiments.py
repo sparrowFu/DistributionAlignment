@@ -250,6 +250,7 @@ def build_train_config(
         # --- manifest-backed data (plan §3.1/§3.2) ---
         train_manifest=manifests_dir / "manifest_coco_train.json",
         dev_manifest=manifests_dir / "manifest_coco_dev.json",
+        test_manifest=manifests_dir / "manifest_coco_test.json",
         manifest_num_captions=d["K"],
         manifest_sample_mode=d["sample"],
         manifest_min_captions=d.get("min_valid"),

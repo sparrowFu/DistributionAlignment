@@ -104,17 +104,31 @@ def build_manifests(
     train_frac: float = 0.8,
     dev_frac: float = 0.1,
     limit: Optional[int] = None,
+    overwrite: bool = False,
 ) -> Dict[str, object]:
     """Build the three image-exclusive manifests + audit report. Returns the report.
 
     The remaining ``1 - train_frac - dev_frac`` fraction is the test split. All
     ablation variants MUST consume these exact files (verified by checksum) so
     that train/dev/test are identical across configs (plan §3.1).
+
+    Refuses to overwrite existing manifests unless ``overwrite=True``:
+    re-running with the same seed reproduces the same split, but a re-run
+    with a different seed/limit/limit-data would silently replace the fixed
+    split and break every comparison against runs trained on the old one.
     """
     if dataset != "coco":
         raise ValueError(f"Manifest building currently supports dataset='coco', got {dataset!r}")
     out_dir = Path(out_dir) if out_dir else config.OUTPUT_DIR / "ablation_study" / "manifests"
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    existing = [out_dir / f"manifest_{dataset}_{s}.json" for s in ("train", "dev", "test")]
+    if not overwrite and any(p.exists() for p in existing):
+        raise FileExistsError(
+            f"refusing to overwrite existing manifests in {out_dir}: "
+            f"{[p.name for p in existing if p.exists()]}. Regenerating would "
+            f"silently change the fixed split; pass overwrite=True (--force) "
+            f"only if you deliberately want a new split.")
 
     entries, audit = _load_coco_entries(config.CAPTIONS_PATH, config.IMAGES_DIR, limit)
 

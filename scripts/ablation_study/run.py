@@ -71,7 +71,7 @@ def _device(args) -> str:
 
 def phase_audit(args) -> None:
     report = build_manifests(dataset="coco", out_dir=MANIFESTS, seed=config.SEED,
-                             limit=args.limit)
+                             limit=args.limit, overwrite=args.force)
     for split in ("train", "dev", "test"):
         p = MANIFESTS / f"manifest_coco_{split}.json"
         assert verify_manifest(p), f"manifest checksum mismatch: {p}"
@@ -97,12 +97,46 @@ def phase_train(args) -> None:
         run_mcdisp_align_training(cfg, logger)
 
 
+def _verify_split_against_checkpoint(ckpt: Path) -> dict:
+    """Compare the CURRENT manifests' sha256 with the ones stamped into the
+    checkpoint's last.pt-style dict. Returns a report; mismatches are logged
+    as warnings (old checkpoints simply carry no record)."""
+    import hashlib
+    current = {}
+    for split in ("train", "dev", "test"):
+        p = MANIFESTS / f"manifest_coco_{split}.json"
+        if p.exists():
+            current[split] = hashlib.sha256(p.read_bytes()).hexdigest()
+    recorded = None
+    try:
+        blob = torch.load(ckpt, map_location="cpu", mmap=True, weights_only=False)
+        if isinstance(blob, dict):
+            recorded = blob.get("manifest_sha256")
+    except Exception as e:  # noqa: BLE001 - best-effort metadata read
+        logger.warning(f"could not read checkpoint metadata for split check: {e}")
+    report = {"current": current, "recorded": recorded, "mismatches": []}
+    if recorded:
+        for split, sha in recorded.items():
+            if split in current and current[split] != sha:
+                report["mismatches"].append(split)
+                logger.warning(
+                    f"MANIFEST MISMATCH for split '{split}': the checkpoint was "
+                    f"trained on a different {split} manifest than the one on "
+                    f"disk -- eval numbers are not comparable to that run.")
+    else:
+        logger.info("checkpoint does not record manifest sha256 (older save); "
+                    "split identity could not be verified")
+    return report
+
+
 def phase_eval(args) -> None:
     device = _device(args)
     seed = args.seed if args.seed is not None else SEEDS[0]
     ckpt = Path(args.checkpoint) if args.checkpoint else _ckpt_path(args.experiment, seed)
     out_dir = ROOT / args.experiment / f"seed{seed}"
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    split_check = _verify_split_against_checkpoint(ckpt)
 
     feats = extract_features(
         ckpt, TEST_MANIFEST, num_captions=5,
@@ -124,6 +158,20 @@ def phase_eval(args) -> None:
     r_lik = mc_ranking.ranks_from_sim(
         likelihood_sim_rows(img_mu, img_lv, cap_mu, feats["img_U"]), K, K_VALUES)
 
+    # --- SET-level retrieval (rebuttal exps 2/5 deliverable): N images vs N
+    # moment-matched caption sets, mc scorer + centroid cosine ---
+    set_mu = t_mus.mean(dim=1)
+    spread2 = ((t_mus - set_mu.unsqueeze(1)) ** 2).mean(dim=1)
+    set_lv = torch.log(spread2 + torch.exp(t_lvs).mean(dim=1)
+                       + config.MCDISP_ALIGN_COV_EPS)
+    r_set_mc = mc_ranking.ranks_from_sim(
+        mc_ranking.mc_sim_rows(img_mu, img_lv, set_mu, set_lv,
+                               tau=config.MCDISP_ALIGN_TAU, dtype=torch.float32),
+        1, K_VALUES)
+    r_set_cos = mc_ranking.ranks_from_sim(
+        mc_ranking.cos_sim_rows(img_mu, img_lv, set_mu, set_lv),
+        1, K_VALUES)
+
     # --- hypothesis-specific metrics ---
     h1 = h1_metrics(img_var, t_mus, r_mc["i2t_hit"][1])
     h2 = h2_metrics(img_mu, img_var, feats["img_U"], t_mus, r_mc,
@@ -140,7 +188,13 @@ def phase_eval(args) -> None:
     result = {
         "experiment": args.experiment, "seed": seed, "checkpoint": str(ckpt),
         "num_images": N, "K": K,
-        "retrieval": {"mc": _retr(r_mc), "cos": _retr(r_cos), "likelihood": _retr(r_lik)},
+        "split_check": split_check,
+        "retrieval": {
+            "mc": _retr(r_mc), "cos": _retr(r_cos), "likelihood": _retr(r_lik),
+            # set-level N x N (checklist 集合检索): mc = uncertainty-discounted
+            # score on the moment-matched set; cos = centroid cosine
+            "set_mc": _retr(r_set_mc), "set_cos": _retr(r_set_cos),
+        },
         "h1_semantic_range": h1,
         "h2_coverage": h2,
         "h3_subspace": h3,
@@ -282,6 +336,8 @@ def main():
                     help="cap test images in eval/interventions (smoke/debug)")
     ap.add_argument("--checkpoint", default=None, help="explicit checkpoint for eval")
     ap.add_argument("--limit", type=int, default=None, help="audit: cap manifest entries")
+    ap.add_argument("--force", action="store_true",
+                    help="audit: allow OVERWRITING existing manifests (new split!)")
     ap.add_argument("--loss", default=None, choices=["standard", "kl"],
                     help="Training objective override (default: the experiment's own "
                          "'loss' field). standard = L_mu/L_var separate terms; "

@@ -538,6 +538,7 @@ class MCDispAlignTrainConfig:
     # manifests instead of the registry + random_split path (legacy default).
     train_manifest: Optional[Path] = None
     dev_manifest: Optional[Path] = None
+    test_manifest: Optional[Path] = None       # recorded (sha256) in checkpoints
     manifest_num_captions: int = 5          # training K (random-sampled when mode="random")
     manifest_sample_mode: str = "first"     # "first" | "random" | "perm" (K regimes)
     manifest_min_captions: Optional[int] = None  # >=-threshold filter (exp 5: 5 for K=1/3/5)
@@ -865,6 +866,20 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
     best_path = cfg.best_path
     last_epoch = start_epoch
 
+    def _manifest_sha256() -> Dict[str, str]:
+        """SHA of the fixed split's manifests, stamped into checkpoints so an
+        eval can verify it scores against the split the model trained on.
+        Computed once (the files are immutable during training)."""
+        import hashlib
+        out: Dict[str, str] = {}
+        for name, p in (("train", cfg.train_manifest), ("dev", cfg.dev_manifest),
+                        ("test", cfg.test_manifest)):
+            if p is not None and Path(p).exists():
+                out[name] = hashlib.sha256(Path(p).read_bytes()).hexdigest()
+        return out
+
+    _split_shas = _manifest_sha256()
+
     def _save_last_state(e: int) -> None:
         """Full resumption state, rewritten atomically after EVERY epoch (a
         crash then costs at most the current epoch; the PCME++ run already
@@ -886,6 +901,7 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             "mu_residual": cfg.mu_residual,
             "sg_set_variance": cfg.sg_set_variance,
             "detach_caption_targets": cfg.detach_caption_targets,
+            "manifest_sha256": _split_shas,
         }
         torch.save(state, str(tmp_path))
         tmp_path.replace(last_path)
