@@ -114,10 +114,17 @@ def _verify_split_against_checkpoint(ckpt: Path) -> dict:
             recorded = blob.get("manifest_sha256")
     except Exception as e:  # noqa: BLE001 - best-effort metadata read
         logger.warning(f"could not read checkpoint metadata for split check: {e}")
-    report = {"current": current, "recorded": recorded, "mismatches": []}
+    report = {"current": current, "recorded": recorded,
+              "mismatches": [], "missing_on_disk": []}
     if recorded:
         for split, sha in recorded.items():
-            if split in current and current[split] != sha:
+            if split not in current:
+                report["missing_on_disk"].append(split)
+                logger.warning(
+                    f"MANIFEST MISSING for split '{split}': the checkpoint "
+                    f"records its sha but the file is not on disk -- the eval "
+                    f"split identity cannot be confirmed.")
+            elif current[split] != sha:
                 report["mismatches"].append(split)
                 logger.warning(
                     f"MANIFEST MISMATCH for split '{split}': the checkpoint was "
@@ -169,7 +176,9 @@ def phase_eval(args) -> None:
                                tau=config.MCDISP_ALIGN_TAU, dtype=torch.float32),
         1, K_VALUES)
     r_set_cos = mc_ranking.ranks_from_sim(
-        mc_ranking.cos_sim_rows(img_mu, img_lv, set_mu, set_lv),
+        mc_ranking.cos_sim_rows(img_mu, img_lv, set_mu, set_lv,
+                                dtype=torch.float32),   # f16 near-tie rounding
+                                # would fake a difference vs the f32 set_mc
         1, K_VALUES)
 
     # --- hypothesis-specific metrics ---

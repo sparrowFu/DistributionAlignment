@@ -1024,9 +1024,10 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
 
             if improved:
                 # atomic best.pt write: tmp + replace (same crash-safety as
-                # the per-epoch last.pt save)
+                # the per-epoch last.pt save); extra carries the split stamp
+                # so best-checkpoint evals verify the manifest identity too
                 best_tmp = best_path.with_name(best_path.name + ".tmp")
-                model.save(str(best_tmp))
+                model.save(str(best_tmp), extra={"manifest_sha256": _split_shas})
                 best_tmp.replace(best_path)
                 score_str = (f"mcdisp_align_recall@1: {best_recall:.4f}" if cfg.select_by == "recall"
                              else f"val_loss: {best_val_loss:.4f}" if cfg.select_by == "loss"

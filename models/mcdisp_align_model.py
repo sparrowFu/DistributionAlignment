@@ -525,12 +525,15 @@ class MCDispAlignModel(nn.Module):
         """
         return sum(p.numel() for p in self.trainable_parameters())
 
-    def save(self, path: str) -> None:
+    def save(self, path: str, extra: Optional[Dict] = None) -> None:
         """
         Save model state.
 
         Args:
             path: Path to save checkpoint
+            extra: optional metadata merged into the checkpoint dict (e.g. the
+                trainer's manifest_sha256 split stamp); ``load`` ignores keys
+                it does not need.
         """
         sd = self.state_dict()
         bb_src = getattr(self, "_backbone_source", None)
@@ -549,6 +552,8 @@ class MCDispAlignModel(nn.Module):
             "backbone_excluded": self.freeze_clip,
             "backbone_source": bb_src,
         }
+        if extra:
+            state.update(extra)
         torch.save(state, path)
         logger.info(f"Model saved to: {path}")
 

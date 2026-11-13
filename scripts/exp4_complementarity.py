@@ -79,20 +79,36 @@ BINS = ("low", "mid", "high")
 
 # ---------------------------------------------------------------- data plumbing
 def _validate_subset(subset: Dict) -> List[str]:
-    """Hard checks: bin in {low,mid,high}, EXACTLY 5 captions per image,
-    legal 'replaces'. Returns the images without hard negatives (soft note --
-    they simply stay out of the hard-negative statistics)."""
+    """Hard checks: bin in {low,mid,high}, EXACTLY 5 non-empty caption
+    strings, and for every hard negative a non-empty 'caption' plus an
+    integer 'replaces' in [0, 5) -- 1.7 is rejected, not silently truncated
+    to 1. Returns the images without hard negatives (soft note -- they
+    simply stay out of the hard-negative statistics)."""
     missing_neg = []
     for e in subset["entries"]:
         if e.get("bin") not in BINS:
             raise ValueError(f"entry {e['image']}: bin must be one of {BINS}")
-        if len(e["captions"]) != 5:
+        caps = e.get("captions")
+        if not isinstance(caps, list) or len(caps) != 5:
+            n = len(caps) if isinstance(caps, list) else type(caps).__name__
             raise ValueError(
-                f"entry {e['image']}: needs EXACTLY 5 captions, got "
-                f"{len(e['captions'])} (the eval encodes five captions per image; "
-                f"re-sample the template with >=5-valid entries)")
+                f"entry {e['image']}: needs EXACTLY 5 captions, got {n} "
+                f"(the eval encodes five captions per image; re-sample the "
+                f"template with >=5-valid entries)")
+        if any(not isinstance(c, str) or not c.strip() for c in caps):
+            raise ValueError(
+                f"entry {e['image']}: every caption must be a non-empty string")
         for h in e.get("hard_negatives", []):
-            j = int(h.get("replaces", 0))
+            cap = h.get("caption")
+            if not isinstance(cap, str) or not cap.strip():
+                raise ValueError(
+                    f"entry {e['image']}: each hard negative needs a non-empty "
+                    f"'caption' string")
+            j = h.get("replaces")
+            if isinstance(j, bool) or not isinstance(j, int):
+                raise ValueError(
+                    f"entry {e['image']}: hard negative 'replaces' must be an "
+                    f"integer index in [0, 5), got {j!r}")
             if not 0 <= j < 5:
                 raise ValueError(
                     f"entry {e['image']}: hard negative 'replaces'={j} "
@@ -131,8 +147,8 @@ def make_subset_template(manifest: Path, n: int, seed: int, out: Path,
     picked = rng.sample(eligible, n)
     template = {
         "_说明": ("人工填写每项: bin = low/mid/high(互补性分档); hard_negatives 每项 "
-                  "{'caption': 改一个事实的句子, 'replaces': 被改句子的下标, 'note': 改了什么}。"
-                  "先抽样后看模型结果,所有模型共用这一份。"),
+                  "{'caption': 改一个事实的句子(非空), 'replaces': 被改句子的下标(必填整数 0-4), "
+                  "'note': 改了什么}。先抽样后看模型结果,所有模型共用这一份。"),
         "seed": seed,
         "source_manifest": str(manifest),
         "entries": [
@@ -588,17 +604,24 @@ def main():
 
     with open(args.subset, "r", encoding="utf-8") as f:
         subset = json.load(f)
+
+    # overlap check FIRST and with image IDs only: a freshly generated,
+    # not-yet-annotated template must be able to query it before the human
+    # annotation effort is spent on leaky images
+    if args.check_overlap:
+        for e in subset["entries"]:
+            if not isinstance(e.get("image"), str) or not e["image"].strip():
+                raise ValueError("every subset entry needs a non-empty 'image' field")
+        report = legacy_split_overlap(
+            [e["image"] for e in subset["entries"]], seed=args.seed)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return
+
     missing_neg = _validate_subset(subset)
     if missing_neg:
         print(f"NOTE: {len(missing_neg)}/{len(subset['entries'])} images have no "
               f"hard negative (fine for the bin retrieval tables; they just do "
               f"not enter the hard-negative statistics)")
-
-    if args.check_overlap:
-        report = legacy_split_overlap(
-            [e["image"] for e in subset["entries"]], seed=args.seed)
-        print(json.dumps(report, ensure_ascii=False, indent=2))
-        return
     workdir = Path(args.subset).parent / "exp4_work"
     manifest = _subset_manifest_path(subset, workdir)
 
@@ -616,6 +639,23 @@ def main():
         results["mcdisp"][tag] = mcdisp_model_results(
             tag, Path(path), subset, manifest, args.device, args.batch_size,
             args.m_pos)
+
+    # legacy-split leakage: computed, recorded and labeled on EVERY eval run
+    # (finding overlap is not enough -- with overlap > 0 the numbers are
+    # seen-data diagnostics for the legacy checkpoints, never "unseen test")
+    try:
+        results["legacy_split_overlap"] = legacy_split_overlap(
+            [e["image"] for e in subset["entries"]], seed=args.seed)
+        n_ov = results["legacy_split_overlap"]["n_overlap"]
+        results["subset_unseen_for_legacy_models"] = (n_ov == 0)
+        if n_ov:
+            print(f"WARNING: {n_ov} subset images were TRAINING images for the "
+                  f"legacy Full/CLIP/Set-FT runs -- exp4 numbers on them are "
+                  f"seen-data diagnostics, not unseen-test results")
+    except Exception as e:  # noqa: BLE001 - data may be absent on this machine
+        results["legacy_split_overlap"] = {"error": str(e)}
+        results["subset_unseen_for_legacy_models"] = None
+        print(f"NOTE: legacy-split overlap not computed ({e})")
 
     # set-I2T model-vs-model correction counts (checklist 错->对 / 对->错)
     results["model_contrasts"] = _model_contrasts(results, subset["entries"])
