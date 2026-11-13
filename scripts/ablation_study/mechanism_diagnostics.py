@@ -199,8 +199,13 @@ def constant_variance_intervention(feats: Dict[str, torch.Tensor],
         "per_caption_t2i_r1_base": q0["t2i_r"][1],
         "per_caption_t2i_r1_const_var": q1["t2i_r"][1],
         "per_caption_t2i_r1_delta": q1["t2i_r"][1] - q0["t2i_r"][1],
-        "per_caption_t2i_top1_flip_rate": float(
+        # argmax(1) = per-image over captions (I2T); argmax(0) = per caption
+        # query over images (T2I). The T2I flip rate must be 0: a constant
+        # caption variance rescales that caption's row only.
+        "per_caption_i2t_top1_flip_rate": float(
             (p0.argmax(1) != p1.argmax(1)).float().mean()),
+        "per_caption_t2i_top1_flip_rate": float(
+            (p0.argmax(0) != p1.argmax(0)).float().mean()),
     })
     return out
 
@@ -252,10 +257,30 @@ def _grad_norm(term, inputs):
     return float(torch.sqrt(sq)) if sq is not None else None
 
 
+def _resolve_steps_per_epoch(manifest: Path, requested: int, batch_size: int) -> int:
+    """Training batches per epoch, for positioning the intra-epoch var_ramp.
+
+    Order: explicit ``--steps-per-epoch`` > the TRAIN manifest next to the
+    probe manifest > the probe manifest itself (the diagnostic test split is
+    usually much smaller than the train split, which would race the ramp to
+    1). Ceil division: the manifest loaders keep the last partial batch
+    (no drop_last). Entry counts are raw (the >=5-caption filter only moves
+    the ramp position by a few steps).
+    """
+    if requested and requested > 0:
+        return requested
+    for candidate in (manifest.parent / "manifest_coco_train.json", manifest):
+        if candidate.exists():
+            blob = json.loads(candidate.read_text(encoding="utf-8"))
+            entries = blob["entries"] if isinstance(blob, dict) else blob
+            return max(1, math.ceil(len(entries) / batch_size))
+    return 1
+
+
 def term_gradient_probe(checkpoint: Path, manifest: Path, device: str,
                         batch_size: int, num_batches: int,
                         epoch: int, step: int, total_epochs: int,
-                        no_staged: bool,
+                        no_staged: bool, steps_cfg: int,
                         crit: MCDispAlignKLLoss) -> Dict[str, Dict[str, float]]:
     """Checklist 3 rows 1-2 + 4a: which gradients actually reach U / the
     low-rank head / the variance heads, per loss term, on real batches.
@@ -275,13 +300,17 @@ def term_gradient_probe(checkpoint: Path, manifest: Path, device: str,
     from data.manifest_caption_dataset import ManifestCaptionDataset
     from models.mcdisp_align_model import MCDispAlignModel
 
-    # steps_per_epoch only positions the intra-epoch var_ramp ramp; the
-    # manifest here (usually the test split) approximates the TRAIN split's
-    # batch count. The value used is recorded in the "_schedule" block.
-    steps_per_epoch = max(1, len(ManifestCaptionDataset(
-        manifest, config.IMAGES_DIR, num_captions=5, sample_mode="first")) // batch_size)
-    ramp = var_ramp(epoch, step, steps_per_epoch, total_epochs)
-    alpha = alpha_schedule(epoch, step, steps_per_epoch, total_epochs)
+    if no_staged:
+        # flat schedule: everything fully on from step 0, matching
+        # stage_multipliers' no_staged branch. var_ramp/alpha_schedule would
+        # still report warmup zeros at early epochs and misclassify KL /
+        # matching-variance gradients as stage_zero.
+        ramp = alpha = 1.0
+        steps_per_epoch = 0
+    else:
+        steps_per_epoch = _resolve_steps_per_epoch(manifest, steps_cfg, batch_size)
+        ramp = var_ramp(epoch, step, steps_per_epoch, total_epochs)
+        alpha = alpha_schedule(epoch, step, steps_per_epoch, total_epochs)
     crit.uncertainty_grad_alpha = alpha   # trainer sets this per step
 
     model = MCDispAlignModel()
@@ -397,7 +426,13 @@ def main():
                          "var_ramp / uncertainty_grad_alpha schedules")
     ap.add_argument("--total-epochs", type=int, default=config.MCDISP_ALIGN_EPOCHS)
     ap.add_argument("--no-staged", action="store_true",
-                    help="the diagnosed run used a flat schedule (no stages)")
+                    help="the diagnosed run used a flat schedule (no stages): "
+                         "ramp/alpha are forced to 1.0, matching the trainer")
+    ap.add_argument("--steps-per-epoch", type=int, default=0,
+                    help="training batches per epoch for the intra-epoch "
+                         "var_ramp position (<=0: auto -- TRAIN manifest next "
+                         "to the probe manifest, else the probe manifest, "
+                         "ceil-divided)")
     # loss weights must MATCH the diagnosed run; defaults = full_kl recipe
     ap.add_argument("--lambda-kl", type=float, default=1.0)
     ap.add_argument("--lambda-cover-pos", type=float, default=0.5)
@@ -449,7 +484,8 @@ def main():
             feats, target_var=args.target_var, tau=config.MCDISP_ALIGN_TAU),
         "term_gradients": term_gradient_probe(
             ckpt, manifest, args.device, args.batch_size, args.grad_batches,
-            epoch, args.step, args.total_epochs, args.no_staged, crit),
+            epoch, args.step, args.total_epochs, args.no_staged,
+            args.steps_per_epoch, crit),
     }
 
     out = Path(args.output) if args.output else (

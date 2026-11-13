@@ -216,12 +216,13 @@ def hard_negative_checks_cosine(img_raw: torch.Tensor, cap_raw: torch.Tensor,
     pairs = _collect_pairs(entries)
     diff_per_image: Dict[int, float] = {}
     count_per_image: Dict[int, int] = {}
-    wins, swap_wrong_to_right, swap_right_to_wrong = 0, 0, 0
+    pair_wins = []          # per pair: s_true > s_hard, aligned with _collect_pairs
+    swap_wrong_to_right, swap_right_to_wrong = 0, 0
     for p, (i, h) in enumerate(pairs):
         j = int(h.get("replaces", 0))
         s_true = float(own[i, j])
         s_hard = float(hard_n[p] @ img_n[i])
-        wins += s_true > s_hard
+        pair_wins.append(s_true > s_hard)
         diff_per_image[i] = diff_per_image.get(i, 0.0) + (s_true - s_hard)
         count_per_image[i] = count_per_image.get(i, 0) + 1
 
@@ -234,13 +235,16 @@ def hard_negative_checks_cosine(img_raw: torch.Tensor, cap_raw: torch.Tensor,
     n = len(pairs)
     return {
         "n_pairs": n,
-        "win_rate": wins / n if n else float("nan"),
+        "win_rate": (sum(pair_wins) / n) if n else float("nan"),
         "mean_score_diff": (sum(diff_per_image.values()) / n) if n else float("nan"),
         "text_swap_top1_gained": swap_wrong_to_right,
         "text_swap_top1_lost": swap_right_to_wrong,
         "score_diff_by_bin": _per_bin(
             entries, {i: diff_per_image[i] / count_per_image[i]
                       for i in diff_per_image}),
+        # per-pair verdicts for the cross-model correction table; popped
+        # before the JSON dump
+        "_pair_wins": torch.tensor(pair_wins, dtype=torch.bool),
     }
 
 
@@ -385,6 +389,46 @@ def _model_contrasts(results: Dict, entries: List[Dict]) -> Dict[str, Dict]:
     return out
 
 
+def _hardneg_model_contrasts(results: Dict, entries: List[Dict]) -> Dict[str, Dict]:
+    """Per-PAIR model-vs-model verdicts on the minimal-fact controls.
+
+    For an ordered pair "A>B": ``A_wrong_B_right`` counts the pairs where A
+    scores the TRUE caption no better than its hard negative (判错) while B
+    scores the true caption higher (判对) -- "CLIP 判错、Full 判对". Pairs are
+    ordered by ``_collect_pairs``, identical for every model.
+    """
+    vectors = {}
+    for fam in ("clip", "mcdisp"):
+        for tag, r in results.get(fam, {}).items():
+            v = r.get("hard_negatives", {}).get("_pair_wins")
+            if v is not None and len(v) > 0:
+                vectors[f"{fam}.{tag}"] = v.bool()
+    if len(vectors) < 2:
+        return {}
+    pair_bins = [entries[i]["bin"] for i, _ in _collect_pairs(entries)]
+    out = {}
+    names = sorted(vectors)
+    for a in names:
+        for b in names:
+            if a >= b:
+                continue
+            va, vb = vectors[a], vectors[b]
+            row = {}
+            for binn in BINS + ("overall",):
+                idx = ([p for p, s in enumerate(pair_bins) if s == binn]
+                       if binn != "overall" else list(range(len(pair_bins))))
+                if not idx:
+                    continue
+                t = torch.tensor(idx)
+                row[binn] = {
+                    "n_pairs": len(idx),
+                    f"{a}_wrong_{b}_right": int((~va[t] & vb[t]).sum()),
+                    f"{a}_right_{b}_wrong": int((va[t] & ~vb[t]).sum()),
+                }
+            out[f"{a}_vs_{b}"] = row
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description="Rebuttal exp 4: complementarity x hard negatives")
     ap.add_argument("--subset", required=True, help="human-verified subset JSON")
@@ -430,6 +474,10 @@ def main():
 
     # set-I2T model-vs-model correction counts (checklist 错->对 / 对->错)
     results["model_contrasts"] = _model_contrasts(results, subset["entries"])
+    # per-pair verdicts on the minimal-fact hard negatives (same 错->对 /
+    # 对->错 question, restricted to the hard-negative pairs)
+    results["hardneg_model_contrasts"] = _hardneg_model_contrasts(
+        results, subset["entries"])
     # Full - Set-FT per-bin delta (checklist 结果表 column), common protocol
     if "full" in results["mcdisp"] and "setft" in results["clip"]:
         a = results["mcdisp"]["full"]["set_recall"]
@@ -443,6 +491,7 @@ def main():
     for fam in ("clip", "mcdisp"):
         for r in results[fam].values():
             r.pop("_img_top1", None)
+            r.get("hard_negatives", {}).pop("_pair_wins", None)
     out = Path(args.output) if args.output else (workdir / "exp4_results.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:

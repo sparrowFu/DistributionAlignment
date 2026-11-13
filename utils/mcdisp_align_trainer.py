@@ -1007,7 +1007,11 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
                     best_val_loss = current_score
 
             if improved:
-                model.save(str(best_path))
+                # atomic best.pt write: tmp + replace (same crash-safety as
+                # the per-epoch last.pt save)
+                best_tmp = best_path.with_name(best_path.name + ".tmp")
+                model.save(str(best_tmp))
+                best_tmp.replace(best_path)
                 score_str = (f"mcdisp_align_recall@1: {best_recall:.4f}" if cfg.select_by == "recall"
                              else f"val_loss: {best_val_loss:.4f}" if cfg.select_by == "loss"
                              else f"{cfg.select_by}: {best_recall:.4f}")
