@@ -201,9 +201,11 @@ def hard_negative_checks_cosine(img_raw: torch.Tensor, cap_raw: torch.Tensor,
                                 entries: List[Dict]) -> Dict:
     """最小事实对照 in the common cosine space (any feature family).
 
-    ``text_swap_*`` counts are WITHIN-MODEL readouts: they say what happens
-    to this model's own T2I top-1 when the true caption is replaced by the
-    hard negative. Model-vs-model correction lives in ``model_contrasts``.
+    ``text_swap_*`` counts are WITHIN-MODEL, deliberately NEUTRAL readouts:
+    they say whether the model's T2I top-1 for the image is gained or lost
+    when the true caption query is replaced by its hard negative. Top-1
+    "gained" via a factually-wrong caption is NOT model correction -- model
+    correction (错->对 / 对->错 between models) lives in ``model_contrasts``.
     """
     img_n = F.normalize(img_raw.float(), dim=-1)                  # (N, D)
     cap_n = F.normalize(cap_raw.float(), dim=-1)                  # (N, K, D)
@@ -234,8 +236,8 @@ def hard_negative_checks_cosine(img_raw: torch.Tensor, cap_raw: torch.Tensor,
         "n_pairs": n,
         "win_rate": wins / n if n else float("nan"),
         "mean_score_diff": (sum(diff_per_image.values()) / n) if n else float("nan"),
-        "text_swap_wrong_to_right": swap_wrong_to_right,
-        "text_swap_right_to_wrong": swap_right_to_wrong,
+        "text_swap_top1_gained": swap_wrong_to_right,
+        "text_swap_top1_lost": swap_right_to_wrong,
         "score_diff_by_bin": _per_bin(
             entries, {i: diff_per_image[i] / count_per_image[i]
                       for i in diff_per_image}),

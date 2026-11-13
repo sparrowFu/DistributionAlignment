@@ -1,6 +1,6 @@
 """Rebuttal exp 3: mechanism diagnostics on existing checkpoints.
 
-Four readouts, all from ONE checkpoint + one fixed manifest split, no
+Five readouts, all from ONE checkpoint + one fixed manifest split, no
 parameter updates (plan: 固定少量真实 batch,用 torch.autograd.grad 单独计算各项梯度):
 
   1. coverage_activation   per-caption d^2/D under the TRAINING metric
@@ -14,11 +14,12 @@ parameter updates (plan: 固定少量真实 batch,用 torch.autograd.grad 单独
   3. text_variance         per-caption variance quantiles + per-dimension
                            cross-caption variation ("文本方差是否接近常数").
   4. constant_var_rerank   replace EVERY caption variance by target_var (0.04),
-                           keep means and between-caption dispersion, re-rank
-                           with the mc scorer: R@1 deltas + top-1 flip rates.
-                           T2I must be flip-free (the constant becomes a row
-                           constant for each caption query) -- a non-zero T2I
-                           flip rate flags a scorer/rounding bug.
+                           keep means and between-caption dispersion, rebuild
+                           the moment-matched set variance and re-rank SET
+                           retrieval with the mc scorer: R@1 deltas + top-1
+                           flip rates. T2I must be flip-free (the constant set
+                           variance is a row constant for each set query) -- a
+                           non-zero T2I flip rate flags a scorer/rounding bug.
   5. term_gradients        per-loss-term torch.autograd.grad norms into the
                            low-rank factor U, the img_cov_head (低秩预测头) and
                            the variance heads, each classified as
@@ -274,6 +275,9 @@ def term_gradient_probe(checkpoint: Path, manifest: Path, device: str,
     from data.manifest_caption_dataset import ManifestCaptionDataset
     from models.mcdisp_align_model import MCDispAlignModel
 
+    # steps_per_epoch only positions the intra-epoch var_ramp ramp; the
+    # manifest here (usually the test split) approximates the TRAIN split's
+    # batch count. The value used is recorded in the "_schedule" block.
     steps_per_epoch = max(1, len(ManifestCaptionDataset(
         manifest, config.IMAGES_DIR, num_captions=5, sample_mode="first")) // batch_size)
     ramp = var_ramp(epoch, step, steps_per_epoch, total_epochs)
