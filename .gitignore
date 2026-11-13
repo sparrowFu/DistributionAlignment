@@ -20,6 +20,7 @@ outputs/
 # Logs
 logs/
 *.log
+logs_backup/
 
 # Checkpoints
 checkpoints/

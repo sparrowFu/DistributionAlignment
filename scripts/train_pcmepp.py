@@ -34,6 +34,7 @@ Deviations from the official setup (documented in experiments.md):
 """
 
 import argparse
+import gc
 from pathlib import Path
 from typing import Dict
 
@@ -143,6 +144,22 @@ def _forward_embeddings(model: PCMEPPModel, images: torch.Tensor,
     return img_emb, cap_emb
 
 
+def _release_loader(loader: DataLoader) -> None:
+    """Release a finished DataLoader's worker processes now.
+
+    torch shuts the workers down itself when the iterator runs to normal
+    exhaustion, but not when the loop exits early (--max-batches-per-epoch
+    break) or raises; the workers then linger until a GC pass collects the
+    abandoned iterator. Call this after each epoch so no worker processes
+    are carried across the epoch boundary.
+    """
+    iterator = getattr(loader, "_iterator", None)
+    if iterator is not None:  # persistent_workers-style loader (future-proof)
+        iterator._shutdown_workers()
+        loader._iterator = None
+    gc.collect()  # drop the abandoned iterator -> workers exit immediately
+
+
 def train_epoch(model: PCMEPPModel, dataloader: DataLoader, optimizer,
                 mixup_fn, args, device: torch.device, epoch: int) -> Dict[str, float]:
     """One official training epoch (engine.py training_step, single-GPU path)."""
@@ -238,7 +255,10 @@ def _save_last_checkpoint(checkpoint_dir: Path, model: PCMEPPModel, optimizer,
         "best_val_loss": best_val_loss,
         "base_group_lrs": base_group_lrs,
     }
-    torch.save(last_state, str(checkpoint_dir / f"pcmepp_{args.dataset}_last.pt"))
+    last_path = checkpoint_dir / f"pcmepp_{args.dataset}_last.pt"
+    tmp_path = checkpoint_dir / f"pcmepp_{args.dataset}_last.pt.tmp"
+    torch.save(last_state, str(tmp_path))
+    tmp_path.replace(last_path)  # atomic: a crash mid-write cannot corrupt last.pt
 
 
 @torch.no_grad()
@@ -411,7 +431,9 @@ def main():
 
         train_metrics = train_epoch(model, train_loader, optimizer, mixup_fn,
                                     args, torch.device(args.device), epoch)
+        _release_loader(train_loader)
         val_metrics = evaluate(model, val_loader, args, torch.device(args.device))
+        _release_loader(val_loader)
 
         peak_mem = (torch.cuda.max_memory_allocated() / 2**30
                     if torch.cuda.is_available() else 0.0)
@@ -425,7 +447,9 @@ def main():
         if val_metrics["loss"] < best_val_loss:
             best_val_loss = val_metrics["loss"]
             best_path = checkpoint_dir / f"pcmepp_{args.dataset}_best.pt"
-            model.save(str(best_path))
+            tmp_path = checkpoint_dir / f"pcmepp_{args.dataset}_best.pt.tmp"
+            model.save(str(tmp_path))
+            tmp_path.replace(best_path)  # atomic: a crash mid-write cannot corrupt best.pt
             logger.info(f"Best model saved (val_loss: {best_val_loss:.4f}) -> {best_path}")
 
         # crash-safe resume point: overwrite every epoch (the previous run
