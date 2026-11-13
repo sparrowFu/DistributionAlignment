@@ -13,17 +13,23 @@ IS_WINDOWS = platform.system() == "Windows"
 # =============================================================================
 # Project Root - MODIFY THIS when migrating to a new system
 # =============================================================================
-# Auto-detect project root based on platform
+# Auto-detect project root based on platform. On Linux the FIRST existing
+# candidate wins; the file-relative fallback covers other clones.
+LINUX_PROJECT_ROOTS = [
+    # training server (yxzhou machine)
+    "/mydata/home/yxzhou/kxiong/mcdispAlign/DistributionAlignment",
+    # local workstation
+    "/home/xpfu/WorkSpace/DistributionAlignment",
+]
+
 if IS_WINDOWS:
     PROJECT_ROOT = Path("D:/code/causality/GaussianImageDistribution")
 else:
-    _SERVER_ROOT = Path("/mydata/home/yxzhou/kxiong/mcdispAlign/DistributionAlignment")
-    if _SERVER_ROOT.exists():
-        # training server layout (yxzhou machine)
-        PROJECT_ROOT = _SERVER_ROOT
-    else:
-        # portable fallback: this file lives at <repo>/config.py
-        PROJECT_ROOT = Path(__file__).resolve().parent
+    PROJECT_ROOT = Path(__file__).resolve().parent  # fallback for other clones
+    for _candidate in LINUX_PROJECT_ROOTS:
+        if Path(_candidate).exists():
+            PROJECT_ROOT = Path(_candidate)
+            break
 
 
 # =============================================================================
