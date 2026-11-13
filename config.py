@@ -17,8 +17,13 @@ IS_WINDOWS = platform.system() == "Windows"
 if IS_WINDOWS:
     PROJECT_ROOT = Path("D:/code/causality/GaussianImageDistribution")
 else:
-    # Ubuntu/Linux default - modify "your_name" to your actual username
-    PROJECT_ROOT = Path("/mydata/home/yxzhou/kxiong/mcdispAlign/DistributionAlignment")
+    _SERVER_ROOT = Path("/mydata/home/yxzhou/kxiong/mcdispAlign/DistributionAlignment")
+    if _SERVER_ROOT.exists():
+        # training server layout (yxzhou machine)
+        PROJECT_ROOT = _SERVER_ROOT
+    else:
+        # portable fallback: this file lives at <repo>/config.py
+        PROJECT_ROOT = Path(__file__).resolve().parent
 
 
 # =============================================================================

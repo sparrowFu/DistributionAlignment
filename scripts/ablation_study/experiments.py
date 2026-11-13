@@ -170,13 +170,15 @@ EXPERIMENTS: Dict[str, Dict] = {
         "K": 5, "sample": "first", "uncertainty_sim": True,
     },
     # ---- rebuttal exp 5: captions-per-training-image sensitivity (1/3/5) ----
-    # Full KL model, only manifest_num_captions changes. sample="perm": one
-    # fixed random caption order per image (seeded by image name), so the K=1 /
-    # K=3 / K=5 groups draw NESTED caption sets from the SAME order;
-    # min_valid=5 keeps the image set identical across the three groups (the
-    # K=5 companion is "full_kl": with all 5 captions used, first-vs-perm
-    # order is irrelevant to the loss). K=1 degenerates the caption spread to
-    # zero and _cov_loss auto-skips the direction term (K<=1 -> 0).
+    # Full KL model, only manifest_num_captions changes. All three groups use
+    # sample="perm" + min_valid=5: one fixed random caption order per image
+    # (seeded by (manifest_perm_seed=0, image name)), so K=1/K=3/K=5 draw
+    # NESTED caption sets from the SAME order even when an image has MORE
+    # than 5 valid captions (a first-mode K=5 companion could pick captions
+    # the perm groups never see). "full_kl" stays the §4 ablation A0 entry
+    # (first-K, no min_valid override) and is NOT the exp-5 K=5 control.
+    # K=1 degenerates the caption spread to zero and _cov_loss auto-skips
+    # the direction term (K<=1 -> 0).
     "full_kl_k1": {
         "desc": "Full KL, 1 caption/image (fixed perm order; direction term auto-off)",
         "loss": "kl",
@@ -188,6 +190,12 @@ EXPERIMENTS: Dict[str, Dict] = {
         "loss": "kl",
         "weights": _base_loss_weights_kl(), "cov_rank": config.MCDISP_ALIGN_COV_RANK,
         "K": 3, "sample": "perm", "min_valid": 5, "uncertainty_sim": True,
+    },
+    "full_kl_k5": {
+        "desc": "Full KL, 5 captions/image (perm companion of k1/k3 -- exp-5 K=5 control)",
+        "loss": "kl",
+        "weights": _base_loss_weights_kl(), "cov_rank": config.MCDISP_ALIGN_COV_RANK,
+        "K": 5, "sample": "perm", "min_valid": 5, "uncertainty_sim": True,
     },
 }
 

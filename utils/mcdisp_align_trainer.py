@@ -865,6 +865,31 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
     best_path = cfg.best_path
     last_epoch = start_epoch
 
+    def _save_last_state(e: int) -> None:
+        """Full resumption state, rewritten atomically after EVERY epoch (a
+        crash then costs at most the current epoch; the PCME++ run already
+        lost a multi-day training to an end-of-training-only last.pt)."""
+        last_path = cfg.last_path
+        tmp_path = last_path.with_name(last_path.name + ".tmp")
+        state = {
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "epoch": e + 1,
+            "best_val_loss": best_val_loss,
+            "best_recall": best_recall,
+            "patience_counter": patience_counter,
+            "base_lrs": base_lrs,
+            "select_by": cfg.select_by,
+            "loss_name": cfg.loss_name,  # objective tag for the resume guard
+            "seed": cfg.seed,
+            "freeze_clip": cfg.freeze_clip,
+            "mu_residual": cfg.mu_residual,
+            "sg_set_variance": cfg.sg_set_variance,
+            "detach_caption_targets": cfg.detach_caption_targets,
+        }
+        torch.save(state, str(tmp_path))
+        tmp_path.replace(last_path)
+
     if not cfg.skip_training:
         log.info(f"{prefix}Starting training from epoch {start_epoch + 1}...")
         for epoch in range(start_epoch, cfg.epochs):
@@ -992,30 +1017,18 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
                 patience_counter += 1
                 log.info(f"{prefix}No improvement. Patience: {patience_counter}/{cfg.early_stop_patience}")
 
+            # crash-safe resume point: overwrite every epoch (atomic)
+            _save_last_state(epoch)
+            log.info(f"{prefix}Last checkpoint saved (epoch {epoch + 1}) -> {cfg.last_path}")
+
             if not cfg.no_early_stop and patience_counter >= cfg.early_stop_patience:
                 log.info(f"{prefix}Early stopping triggered at epoch {epoch + 1}")
                 break
 
-        # Save final (last) checkpoint with full training state for resumption
-        last_path = cfg.last_path
-        final_state = {
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "epoch": last_epoch + 1,
-            "best_val_loss": best_val_loss,
-            "best_recall": best_recall,
-            "patience_counter": patience_counter,
-            "base_lrs": base_lrs,
-            "select_by": cfg.select_by,
-            "loss_name": cfg.loss_name,  # objective tag for the resume guard
-            "seed": cfg.seed,
-            "freeze_clip": cfg.freeze_clip,
-            "mu_residual": cfg.mu_residual,
-            "sg_set_variance": cfg.sg_set_variance,
-            "detach_caption_targets": cfg.detach_caption_targets,
-        }
-        torch.save(final_state, str(last_path))
-        log.info(f"{prefix}Final model saved to {last_path}")
+        # (last.pt is already current -- _save_last_state ran after every
+        # epoch; keep one final write for the skip_training/zero-epoch paths)
+        _save_last_state(last_epoch)
+        log.info(f"{prefix}Final model saved to {cfg.last_path}")
         log.info(f"{prefix}Best val loss: {best_val_loss:.4f} | Best score ({cfg.select_by}): {best_recall:.4f}")
 
     results = {

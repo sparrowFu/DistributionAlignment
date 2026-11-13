@@ -33,6 +33,7 @@ Usage:
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Dict, Optional
@@ -45,7 +46,9 @@ import config  # noqa: E402
 from utils.logger import get_logger  # noqa: E402
 
 from losses.mcdisp_align_losses_kl import MCDispAlignKLLoss  # noqa: E402
-from utils.mcdisp_align_trainer import stage_multipliers  # noqa: E402
+from utils.mcdisp_align_trainer import (  # noqa: E402
+    alpha_schedule, stage_multipliers, var_ramp,
+)
 from scripts.ablation_study.feature_extraction import extract_features  # noqa: E402
 from scripts.ablation_study.h2_coverage import positive_mahalanobis  # noqa: E402
 from scripts.ablation_study import mc_ranking  # noqa: E402
@@ -130,41 +133,75 @@ def text_variance_stats(feats: Dict[str, torch.Tensor]) -> Dict[str, float]:
 def constant_variance_intervention(feats: Dict[str, torch.Tensor],
                                    target_var: float = 0.04,
                                    tau: float = 0.07) -> Dict[str, float]:
-    """Checklist 3 row 4b: variance := 0.04 everywhere, means untouched.
+    """Checklist 3 row 4b: variance := 0.04 on every caption, means AND the
+    between-caption dispersion untouched, then re-score 集合检索 with the
+    moment-matched set variance (Eq. 4):
+
+        v_C = Var_k(mu_k) + (1/K) sum_k v_k   ->   v_C' = Var_k(mu_k) + 0.04
+
+    PRIMARY output is the SET-level N x N retrieval (each image vs each
+    caption set; positive = diagonal). The per-caption N x (N*K) variant is
+    reported separately ("per_caption_*"): it answers a different question
+    (independent-caption retrieval) and is kept only as a secondary readout.
 
     float32 scoring on purpose: the T2I invariance must survive rounding only
     if it is genuinely there (float16 near-ties would fake a flip).
     """
     N, K, D = feats["text_mus"].shape
-    cap_mu = feats["text_mus"].reshape(N * K, D)
-    cap_lv = feats["text_logvars"].reshape(N * K, D)
+    eps = config.MCDISP_ALIGN_COV_EPS
+    img_mu, img_lv = feats["img_mu"], feats["img_logvar"]
+    t_mus, t_lvs = feats["text_mus"], feats["text_logvars"]
 
-    base = mc_ranking.mc_sim_rows(feats["img_mu"], feats["img_logvar"],
-                                  cap_mu, cap_lv, tau=tau, dtype=torch.float32)
-    const_lv = torch.full_like(cap_lv, float(torch.log(torch.tensor(target_var))))
-    interv = mc_ranking.mc_sim_rows(feats["img_mu"], feats["img_logvar"],
-                                    cap_mu, const_lv, tau=tau, dtype=torch.float32)
+    # ---- set level (primary): merged set variance under Eq. 4 ----
+    set_mu = t_mus.mean(dim=1)                                     # (N, D)
+    spread2 = ((t_mus - set_mu.unsqueeze(1)) ** 2).mean(dim=1)     # Var_k(mu_k)
+    base_lv = torch.log(spread2 + torch.exp(t_lvs).mean(dim=1) + eps)
+    interv_lv = torch.log(spread2 + target_var + eps)              # dispersion kept
 
-    r0 = mc_ranking.ranks_from_sim(base, K, K_VALUES)
-    r1 = mc_ranking.ranks_from_sim(interv, K, K_VALUES)
+    def _set_stats(sim):
+        r = mc_ranking.ranks_from_sim(sim, 1, K_VALUES)            # K=1: own set = diagonal
+        return r
 
-    top0 = base.argmax(dim=1)
-    top1 = interv.argmax(dim=1)
-    i2t_flip = float((top0 != top1).float().mean())
-    # column top-1 (T2I): per caption query, argmax over images
-    col0 = base.argmax(dim=0)
-    col1 = interv.argmax(dim=0)
-    t2i_flip = float((col0 != col1).float().mean())
+    sim0 = mc_ranking.mc_sim_rows(img_mu, img_lv, set_mu, base_lv,
+                                  tau=tau, dtype=torch.float32)
+    sim1 = mc_ranking.mc_sim_rows(img_mu, img_lv, set_mu, interv_lv,
+                                  tau=tau, dtype=torch.float32)
+    r0, r1 = _set_stats(sim0), _set_stats(sim1)
+    i2t_flip = float((sim0.argmax(1) != sim1.argmax(1)).float().mean())
+    t2i_flip = float((sim0.argmax(0) != sim1.argmax(0)).float().mean())
 
-    return {
+    out = {
         "target_var": target_var,
-        "i2t_r1_base": r0["i2t_r"][1], "i2t_r1_const_var": r1["i2t_r"][1],
-        "i2t_r1_delta": r1["i2t_r"][1] - r0["i2t_r"][1],
-        "t2i_r1_base": r0["t2i_r"][1], "t2i_r1_const_var": r1["t2i_r"][1],
-        "t2i_r1_delta": r1["t2i_r"][1] - r0["t2i_r"][1],
-        "i2t_top1_flip_rate": i2t_flip,
-        "t2i_top1_flip_rate": t2i_flip,   # expected 0 (query-side row constant)
+        "set_i2t_r1_base": r0["i2t_r"][1], "set_i2t_r1_const_var": r1["i2t_r"][1],
+        "set_i2t_r1_delta": r1["i2t_r"][1] - r0["i2t_r"][1],
+        "set_t2i_r1_base": r0["t2i_r"][1], "set_t2i_r1_const_var": r1["t2i_r"][1],
+        "set_t2i_r1_delta": r1["t2i_r"][1] - r0["t2i_r"][1],
+        "set_i2t_top1_flip_rate": i2t_flip,
+        "set_t2i_top1_flip_rate": t2i_flip,  # expected 0: the constant set
+        # variance is a row constant for each set query (checklist's check)
     }
+
+    # ---- per-caption level (secondary, independent-caption retrieval) ----
+    cap_mu = t_mus.reshape(N * K, D)
+    cap_lv = t_lvs.reshape(N * K, D)
+    p0 = mc_ranking.mc_sim_rows(img_mu, img_lv, cap_mu, cap_lv,
+                                tau=tau, dtype=torch.float32)
+    p1 = mc_ranking.mc_sim_rows(img_mu, img_lv, cap_mu,
+                                torch.full_like(cap_lv, math.log(target_var)),
+                                tau=tau, dtype=torch.float32)
+    q0 = mc_ranking.ranks_from_sim(p0, K, K_VALUES)
+    q1 = mc_ranking.ranks_from_sim(p1, K, K_VALUES)
+    out.update({
+        "per_caption_i2t_r1_base": q0["i2t_r"][1],
+        "per_caption_i2t_r1_const_var": q1["i2t_r"][1],
+        "per_caption_i2t_r1_delta": q1["i2t_r"][1] - q0["i2t_r"][1],
+        "per_caption_t2i_r1_base": q0["t2i_r"][1],
+        "per_caption_t2i_r1_const_var": q1["t2i_r"][1],
+        "per_caption_t2i_r1_delta": q1["t2i_r"][1] - q0["t2i_r"][1],
+        "per_caption_t2i_top1_flip_rate": float(
+            (p0.argmax(1) != p1.argmax(1)).float().mean()),
+    })
+    return out
 
 
 # ---------------------------------------------------------------- gradient probes
@@ -196,6 +233,8 @@ def _grad_norm(term, inputs):
     gradient path, e.g. a detached target) -- distinct from 0.0, which means
     the path exists but this batch contributed no gradient.
     """
+    if not term.requires_grad:
+        return None          # constant term (e.g. lambda_cov=0 -> new_zeros)
     inputs = [t for t in inputs if t.requires_grad]
     if not inputs:
         return None
@@ -214,14 +253,32 @@ def _grad_norm(term, inputs):
 
 def term_gradient_probe(checkpoint: Path, manifest: Path, device: str,
                         batch_size: int, num_batches: int,
-                        epoch: int, total_epochs: int, no_staged: bool,
+                        epoch: int, step: int, total_epochs: int,
+                        no_staged: bool,
                         crit: MCDispAlignKLLoss) -> Dict[str, Dict[str, float]]:
     """Checklist 3 rows 1-2 + 4a: which gradients actually reach U / the
-    low-rank head / the variance heads, per loss term, on real batches."""
+    low-rank head / the variance heads, per loss term, on real batches.
+
+    ``epoch`` is the TRAINER's 0-based epoch and ``step`` the batch index
+    within it, so the per-step variance schedules the trainer applies
+    (``var_ramp`` for the KL term, ``alpha_schedule`` for the L_set ->
+    variance straight-through) are reproduced here: the criterion's
+    ``uncertainty_grad_alpha`` is set to the scheduled value before probing,
+    and the KL classification gate is the product of the per-epoch stage
+    gate and the per-step ramp. Reported ``mean_grad_norm`` values are the
+    RAW term gradients; ``effective_grad_norm`` scales them by
+    lambda * stage gate (* ramp for KL) -- what the optimizer would see.
+    """
     from torch.utils.data import DataLoader
     from data.caption_dataset import filter_none_collate
     from data.manifest_caption_dataset import ManifestCaptionDataset
     from models.mcdisp_align_model import MCDispAlignModel
+
+    steps_per_epoch = max(1, len(ManifestCaptionDataset(
+        manifest, config.IMAGES_DIR, num_captions=5, sample_mode="first")) // batch_size)
+    ramp = var_ramp(epoch, step, steps_per_epoch, total_epochs)
+    alpha = alpha_schedule(epoch, step, steps_per_epoch, total_epochs)
+    crit.uncertainty_grad_alpha = alpha   # trainer sets this per step
 
     model = MCDispAlignModel()
     model.load(str(checkpoint))
@@ -286,7 +343,8 @@ def term_gradient_probe(checkpoint: Path, manifest: Path, device: str,
     def _classify(term: str, norms) -> Dict[str, float]:
         vals = [n for n in norms if n is not None]      # batches with a path
         lam = lambdas[term]
-        gate = {"cover_pos": stage["cover_pos"], "cov": stage["cov"], "kl": stage["var"],
+        gate = {"cover_pos": stage["cover_pos"], "cov": stage["cov"],
+                "kl": stage["var"] * ramp,               # KL rides var_ramp per step
                 "set_nce": stage["ctr"], "reg": stage["reg"]}[term]
         if lam <= 0:
             status = "disabled_lambda"
@@ -298,16 +356,21 @@ def term_gradient_probe(checkpoint: Path, manifest: Path, device: str,
             g = sum(vals) / len(vals)
             status = "active" if g > 0 else "active_zero_grad"
         return {"mean_grad_norm": (sum(vals) / len(vals)) if vals else 0.0,
+                "effective_grad_norm": (sum(vals) / len(vals)) * lam * gate
+                if vals else 0.0,
                 "lambda": lam, "stage_gate": gate, "status": status,
                 "batches_with_path": len(vals)}
 
     result = {}
     for term, per_input in accum.items():
         result[term] = {k: _classify(term, v) for k, v in per_input.items()}
-    result["_schedule"] = {"epoch": epoch, "total_epochs": total_epochs,
-                           "stage": stage["stage"], "gates": {
-                               k: stage[k] for k in
-                               ("var", "cover_pos", "cover_neg", "cov")}}
+    result["_schedule"] = {"epoch": epoch, "step": step,
+                           "total_epochs": total_epochs,
+                           "steps_per_epoch": steps_per_epoch,
+                           "stage": stage["stage"],
+                           "var_ramp": ramp, "uncertainty_grad_alpha": alpha,
+                           "gates": {k: stage[k] for k in
+                                     ("var", "cover_pos", "cover_neg", "cov")}}
     return result
 
 
@@ -322,8 +385,12 @@ def main():
     ap.add_argument("--grad-batches", type=int, default=4,
                     help="real batches for the autograd probes")
     ap.add_argument("--epoch", type=int, default=None,
-                    help="schedule epoch used to classify stage gates "
+                    help="TRAINER's 0-based epoch (same numbering as "
+                         "stage_multipliers) used to classify stage gates "
                          "(default: total_epochs, i.e. the Full stage)")
+    ap.add_argument("--step", type=int, default=0,
+                    help="batch index within the epoch, for the per-step "
+                         "var_ramp / uncertainty_grad_alpha schedules")
     ap.add_argument("--total-epochs", type=int, default=config.MCDISP_ALIGN_EPOCHS)
     ap.add_argument("--no-staged", action="store_true",
                     help="the diagnosed run used a flat schedule (no stages)")
@@ -332,8 +399,18 @@ def main():
     ap.add_argument("--lambda-cover-pos", type=float, default=0.5)
     ap.add_argument("--lambda-cov", type=float, default=config.MCDISP_ALIGN_LAMBDA_COV)
     ap.add_argument("--lambda-reg", type=float, default=0.01)
-    ap.add_argument("--m-pos", type=float, default=config.MCDISP_ALIGN_M_POS)
-    ap.add_argument("--target-var", type=float, default=0.04)
+    ap.add_argument("--m-pos", type=float, default=config.MCDISP_ALIGN_M_POS,
+                    help="coverage margin; used by BOTH the coverage stats and "
+                         "the criterion's cover hinge (must match the run)")
+    ap.add_argument("--target-var", type=float, default=0.04,
+                    help="ANALYSIS-ONLY variance the captions are replaced with "
+                         "in the constant-variance intervention")
+    ap.add_argument("--reg-target-var", type=float, default=0.04,
+                    help="TRAINING sigma_0^2 prior of L_reg (the diagnosed "
+                         "run's value; drives the reg-term gradient probe)")
+    ap.add_argument("--no-sg", action="store_true",
+                    help="the diagnosed run is the A7 'no sg' ablation: turn "
+                         "off the three target detaches (kl/cover/cov)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--output", default=None)
     args = ap.parse_args()
@@ -350,7 +427,12 @@ def main():
                              lambda_cover_pos=args.lambda_cover_pos,
                              lambda_cov=args.lambda_cov,
                              lambda_reg=args.lambda_reg,
-                             tau=config.MCDISP_ALIGN_TAU)
+                             tau=config.MCDISP_ALIGN_TAU,
+                             m_pos=args.m_pos,
+                             target_var=args.reg_target_var,
+                             kl_detach_target=not args.no_sg,
+                             cover_detach_target=not args.no_sg,
+                             cov_detach_target=not args.no_sg)
 
     result = {
         "checkpoint": str(ckpt), "manifest": str(manifest),
@@ -363,7 +445,7 @@ def main():
             feats, target_var=args.target_var, tau=config.MCDISP_ALIGN_TAU),
         "term_gradients": term_gradient_probe(
             ckpt, manifest, args.device, args.batch_size, args.grad_batches,
-            epoch, args.total_epochs, args.no_staged, crit),
+            epoch, args.step, args.total_epochs, args.no_staged, crit),
     }
 
     out = Path(args.output) if args.output else (

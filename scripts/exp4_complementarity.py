@@ -18,13 +18,21 @@ human work; selection happens before any model result is looked at.
     }
 
 Outputs (per model, per bin):
-  1. set retrieval under the COMMON centroid cosine (N images vs N centers,
-     mean of the 5 caption embeddings, same protocol as eval_clip_setlevel):
-     set I2T / T2I R@1; Full - Set-FT delta per bin when both tags exist.
-  2. hard-negative checks in the same cosine space (CLIP models):
-     score(true) - score(hard) win rate, and T2I top-1 flips 错->对 / 对->错
-     when the true caption is swapped for its hard negative.
-  3. Mahalanobis checks (MCDisp models): true-caption coverage rate at m_pos,
+  1. set retrieval under the COMMON centroid cosine. Protocol order is FIXED
+     for every model family: average the RAW caption features, then L2-
+     normalize the center -- i.e. norm(mean_k f_k), which is both the Set-FT
+     training aggregation and the MCDisp moment-matching mean path. For CLIP
+     models a SECONDARY "normed_mean" table (mean of per-caption NORMALIZED
+     features, the legacy eval_clip_setlevel protocol) is also reported; the
+     two differ and must not be mixed in one table.
+  2. hard-negative checks in the same cosine space, for BOTH families
+     (CLIP features / MCDisp mu): score(true) - score(hard) win rate, and
+     per-model "text-swap" T2I top-1 flips when the true caption is swapped
+     for its hard negative (named text_swap_* -- this is a within-model
+     sensitivity readout, NOT model-vs-model correction).
+  3. model-vs-model correction counts on set I2T top-1 (错->对 / 对->错 per
+     bin) for every ordered pair of provided models.
+  4. Mahalanobis checks (MCDisp models): true-caption coverage rate at m_pos,
      hard-negative false-coverage rate, and margin = min_neg d2 - max_true d2
      (「最近负例距离减最远真描述距离」).
 
@@ -53,7 +61,6 @@ from losses.mcdisp_align_losses import MCDispAlignLoss  # noqa: E402
 from models.mcdisp_align_model import MCDispAlignModel  # noqa: E402
 from scripts.ablation_study.feature_extraction import extract_features as mcdisp_feats
 from scripts.ablation_study.h2_coverage import positive_mahalanobis
-from scripts.evaluate_clip_baseline import extract_features as clip_feats
 from models.clip_baseline import CLIPFineTuneBaseline
 
 logger = get_logger("exp4_complementarity",
@@ -94,7 +101,7 @@ def _assert_aligned(n_feats: int, subset: Dict):
 
 
 def _collect_pairs(entries: List[Dict]):
-    """[(image_idx, entry_idx_in_hard_list, hard_dict)] flattened."""
+    """[(image_idx, hard_dict)] flattened over all entries."""
     pairs = []
     for i, e in enumerate(entries):
         for h in e.get("hard_negatives", []):
@@ -103,7 +110,7 @@ def _collect_pairs(entries: List[Dict]):
 
 
 def _per_bin(entries: List[Dict], values: Dict[int, float]) -> Dict[str, Dict[str, float]]:
-    """Mean of per-image ``values`` inside each bin (one value per image)."""
+    """Mean of per-image ``values`` inside each bin."""
     out = {}
     for b in BINS:
         vals = [v for i, v in values.items() if entries[i]["bin"] == b]
@@ -112,99 +119,73 @@ def _per_bin(entries: List[Dict], values: Dict[int, float]) -> Dict[str, Dict[st
 
 
 # ---------------------------------------------------------------- set retrieval
-def set_recall_by_bin(img: torch.Tensor, centers: torch.Tensor,
-                      entries: List[Dict]) -> Dict[str, Dict[str, float]]:
-    """Centroid-cosine set retrieval (N vs N, diagonal positives), per bin."""
+def set_top1_vectors(img: torch.Tensor, centers: torch.Tensor):
+    """Set-level N-vs-N top-1 hits (raw inputs; normalized inside).
+
+    Returns (i2t_hit (N,) bool, t2i_hit (N,) bool) -- one query per image on
+    each side at set level, directly comparable across model families.
+    """
     q = F.normalize(img.float(), dim=-1)
     g = F.normalize(centers.float(), dim=-1)
     sim = q @ g.T
-    i2t_top1 = sim.argmax(dim=1)
-    t2i_top1 = sim.argmax(dim=0)
-    bins = [e["bin"] for e in entries]
+    idx = torch.arange(sim.shape[0])
+    return sim.argmax(dim=1) == idx, sim.argmax(dim=0) == idx
+
+
+def set_recall_by_bin(img: torch.Tensor, centers: torch.Tensor,
+                      entries: List[Dict]) -> Dict[str, Dict[str, float]]:
+    """Centroid-cosine set retrieval (N vs N, diagonal positives), per bin."""
+    i2t_hit, t2i_hit = set_top1_vectors(img, centers)
     out = {}
     for b in BINS + ("overall",):
-        idx = [i for i, s in enumerate(bins) if s == b] if b != "overall" \
-            else list(range(len(bins)))
+        idx = [i for i, e in enumerate(entries) if e["bin"] == b] if b != "overall" \
+            else list(range(len(entries)))
         if not idx:
             continue
         t = torch.tensor(idx)
         out[b] = {
             "n_images": len(idx),
-            "set_i2t_r1": float((i2t_top1[t] == t).float().mean()),
-            "set_t2i_r1": float((t2i_top1[t] == t).float().mean()),
+            "set_i2t_r1": float(i2t_hit[t].float().mean()),
+            "set_t2i_r1": float(t2i_hit[t].float().mean()),
         }
     return out
 
 
-# ---------------------------------------------------------------- CLIP family
+# ---------------------------------------------------------------- cosine features
+def _clip_raw_features(model, loader, device):
+    """RAW (unnormalized) CLIP features: img (N, D), captions (N, K, D).
+
+    normalize=False is essential: the common protocol averages RAW caption
+    features before the single normalization (norm(mean(f_k))); the shared
+    eval extractor normalizes per caption, which gives a different center.
+    """
+    imgs, caps = [], []
+    model.eval()
+    with torch.no_grad():
+        for batch in loader:
+            if batch is None:
+                continue
+            B, K = len(batch["captions"]), len(batch["captions"][0])
+            flat = [c for cl in batch["captions"] for c in cl]
+            pixel_values = model.process_images(batch["image"]).to(device)
+            ti = model.process_text(flat)
+            img_f = model.encode_image(pixel_values, normalize=False)
+            cap_f = model.encode_text(ti["input_ids"].to(device),
+                                      ti["attention_mask"].to(device),
+                                      normalize=False)
+            imgs.append(img_f.float().cpu())
+            caps.append(cap_f.float().cpu().view(B, K, -1))
+    return torch.cat(imgs), torch.cat(caps)
+
+
 def _encode_texts_clip(model, captions: List[str], device) -> torch.Tensor:
+    """RAW caption features (see _clip_raw_features for why normalize=False)."""
     ti = model.process_text(list(captions))
     f = model.encode_text(ti["input_ids"].to(device),
-                          ti["attention_mask"].to(device), normalize=True)
+                          ti["attention_mask"].to(device), normalize=False)
     return f.float().cpu()
 
 
-def hard_negative_checks_clip(model, img_f: torch.Tensor, text_mus: torch.Tensor,
-                              entries: List[Dict], device) -> Dict[str, float]:
-    """共同余弦空间的最小事实对照: score diff / win rate / T2I top-1 flips."""
-    img_n = F.normalize(img_f.float(), dim=-1)                   # (N, D)
-    cap_n = F.normalize(text_mus.float(), dim=-1)                # (N, K, D)
-    own = torch.einsum("nd,nkd->nk", img_n, cap_n)               # (N, K)
-    t2i = torch.einsum("nkd,md->nkm", cap_n, img_n)              # (N, K, N)
-
-    pairs = _collect_pairs(entries)
-    if not pairs:
-        return {"n_pairs": 0}
-    h_n = F.normalize(_encode_texts_clip(model, [h["caption"] for _, h in pairs],
-                                         device), dim=-1)
-    h_cos = h_n @ img_n.T                                         # (P, N)
-
-    diff_per_image: Dict[int, float] = {}
-    wins, to_right, to_wrong = 0, 0, 0
-    for p, (i, h) in enumerate(pairs):
-        j = int(h.get("replaces", 0))
-        s_true = float(own[i, j])
-        s_hard = float(h_cos[p, i])
-        win = s_true > s_hard
-        wins += win
-        diff_per_image[i] = diff_per_image.get(i, 0.0) + (s_true - s_hard)
-
-        rank_true = int((t2i[i, j] > t2i[i, j, i]).sum())         # 0 = top-1
-        h_t2i = h_n[p] @ img_n.T                                  # (N,)
-        rank_hard = int((h_t2i > h_t2i[i]).sum())
-        to_right += rank_true > 0 and rank_hard == 0              # 错->对
-        to_wrong += rank_true == 0 and rank_hard > 0              # 对->错
-
-    n = len(pairs)
-    images_with_pairs = sorted(diff_per_image)
-    return {
-        "n_pairs": n,
-        "win_rate": wins / n,
-        "mean_score_diff": sum(diff_per_image.values()) / n,
-        "flips_wrong_to_right": to_right,
-        "flips_right_to_wrong": to_wrong,
-        "score_diff_by_bin": _per_bin(
-            entries, {i: v / max(1, sum(1 for ii, _ in pairs if ii == i))
-                      for i, v in diff_per_image.items()}),
-    }
-
-
-def clip_model_results(tag: str, ckpt: Path, subset: Dict, manifest: Path,
-                       device: str, batch_size: int) -> Dict:
-    model = CLIPFineTuneBaseline()
-    model.load(str(ckpt))
-    model = model.to(device).eval()
-    img_f, text_mus = clip_feats(model, _loader(manifest, batch_size), device)
-    _assert_aligned(img_f.shape[0], subset)
-    return {
-        "checkpoint": str(ckpt),
-        "set_recall": set_recall_by_bin(img_f, text_mus.mean(dim=1), subset["entries"]),
-        "hard_negatives": hard_negative_checks_clip(
-            model, img_f, text_mus, subset["entries"], device),
-    }
-
-
-# ---------------------------------------------------------------- MCDisp family
 def _encode_text_mus_mcdisp(model, captions: List[str], device) -> torch.Tensor:
     """Text-only per-caption mu, same pipeline as MCDispAlignModel.forward."""
     ti = model.process_text(list(captions))
@@ -212,6 +193,81 @@ def _encode_text_mus_mcdisp(model, captions: List[str], device) -> torch.Tensor:
         input_ids=ti["input_ids"].to(device),
         attention_mask=ti["attention_mask"].to(device)).pooler_output
     return model.text_mu_head(tf).float().cpu()
+
+
+# ---------------------------------------------------------------- hard negatives
+def hard_negative_checks_cosine(img_raw: torch.Tensor, cap_raw: torch.Tensor,
+                                hard_raw: torch.Tensor,
+                                entries: List[Dict]) -> Dict:
+    """最小事实对照 in the common cosine space (any feature family).
+
+    ``text_swap_*`` counts are WITHIN-MODEL readouts: they say what happens
+    to this model's own T2I top-1 when the true caption is replaced by the
+    hard negative. Model-vs-model correction lives in ``model_contrasts``.
+    """
+    img_n = F.normalize(img_raw.float(), dim=-1)                  # (N, D)
+    cap_n = F.normalize(cap_raw.float(), dim=-1)                  # (N, K, D)
+    own = torch.einsum("nd,nkd->nk", img_n, cap_n)                # (N, K)
+    t2i = torch.einsum("nkd,md->nkm", cap_n, img_n)               # (N, K, N)
+    hard_n = F.normalize(hard_raw.float(), dim=-1)                # (P, D)
+
+    pairs = _collect_pairs(entries)
+    diff_per_image: Dict[int, float] = {}
+    count_per_image: Dict[int, int] = {}
+    wins, swap_wrong_to_right, swap_right_to_wrong = 0, 0, 0
+    for p, (i, h) in enumerate(pairs):
+        j = int(h.get("replaces", 0))
+        s_true = float(own[i, j])
+        s_hard = float(hard_n[p] @ img_n[i])
+        wins += s_true > s_hard
+        diff_per_image[i] = diff_per_image.get(i, 0.0) + (s_true - s_hard)
+        count_per_image[i] = count_per_image.get(i, 0) + 1
+
+        rank_true = int((t2i[i, j] > t2i[i, j, i]).sum())          # 0 = top-1
+        h_t2i = hard_n[p] @ img_n.T                                 # (N,)
+        rank_hard = int((h_t2i > h_t2i[i]).sum())
+        swap_wrong_to_right += rank_true > 0 and rank_hard == 0
+        swap_right_to_wrong += rank_true == 0 and rank_hard > 0
+
+    n = len(pairs)
+    return {
+        "n_pairs": n,
+        "win_rate": wins / n if n else float("nan"),
+        "mean_score_diff": (sum(diff_per_image.values()) / n) if n else float("nan"),
+        "text_swap_wrong_to_right": swap_wrong_to_right,
+        "text_swap_right_to_wrong": swap_right_to_wrong,
+        "score_diff_by_bin": _per_bin(
+            entries, {i: diff_per_image[i] / count_per_image[i]
+                      for i in diff_per_image}),
+    }
+
+
+# ---------------------------------------------------------------- model families
+def clip_model_results(tag: str, ckpt: Path, subset: Dict, manifest: Path,
+                       device: str, batch_size: int) -> Dict:
+    model = CLIPFineTuneBaseline()
+    model.load(str(ckpt))
+    model = model.to(device).eval()
+    img_raw, cap_raw = _clip_raw_features(model, _loader(manifest, batch_size), device)
+    _assert_aligned(img_raw.shape[0], subset)
+    entries = subset["entries"]
+
+    pairs = _collect_pairs(entries)
+    hard_raw = (_encode_texts_clip(model, [h["caption"] for _, h in pairs], device)
+                if pairs else torch.zeros(0, cap_raw.shape[-1]))
+
+    out = {
+        "checkpoint": str(ckpt),
+        # common protocol: norm(mean(raw f_k))
+        "set_recall": set_recall_by_bin(img_raw, cap_raw.mean(dim=1), entries),
+        "hard_negatives": hard_negative_checks_cosine(
+            img_raw, cap_raw, hard_raw, entries) if pairs else {"n_pairs": 0},
+        # secondary, legacy eval_clip_setlevel protocol: norm(mean(norm f_k))
+        "set_recall_normed_mean": set_recall_by_bin(
+            img_raw, F.normalize(cap_raw, dim=-1).mean(dim=1), entries),
+        "_img_top1": set_top1_vectors(img_raw, cap_raw.mean(dim=1))[0],  # contrasts
+    }
+    return out
 
 
 def mahalanobis_checks_mcdisp(model, feats: Dict[str, torch.Tensor],
@@ -234,7 +290,7 @@ def mahalanobis_checks_mcdisp(model, feats: Dict[str, torch.Tensor],
                 diff, img_var[i].unsqueeze(0), U_i, 1e-6)[0] / D)
             d2_hard.setdefault(i, []).append(d2)
 
-    true_rate = (d2_true <= m_pos).float().mean(dim=1)           # (N,)
+    true_rate = (d2_true <= m_pos).float().mean(dim=1)            # (N,)
     margin_per_image: Dict[int, float] = {}
     false_rate_per_image: Dict[int, float] = {}
     for i, ds in d2_hard.items():
@@ -271,25 +327,59 @@ def mcdisp_model_results(tag: str, ckpt: Path, subset: Dict, manifest: Path,
     model = MCDispAlignModel()
     model.load(str(ckpt))
     model = model.to(device).eval()
+    entries = subset["entries"]
+
+    pairs = _collect_pairs(entries)
+    hard_mu = (_encode_text_mus_mcdisp(model, [h["caption"] for _, h in pairs], device)
+               if pairs else torch.zeros(0, feats["img_mu"].shape[-1]))
+
     return {
         "checkpoint": str(ckpt),
+        # common protocol on the mu space: norm(mean(mu_k))
         "set_recall": set_recall_by_bin(feats["img_mu"],
-                                        feats["text_mus"].mean(dim=1),
-                                        subset["entries"]),
+                                        feats["text_mus"].mean(dim=1), entries),
+        "hard_negatives": hard_negative_checks_cosine(
+            feats["img_mu"], feats["text_mus"], hard_mu, entries) if pairs
+        else {"n_pairs": 0},
         "mahalanobis": mahalanobis_checks_mcdisp(
-            model, feats, subset["entries"], device, m_pos),
+            model, feats, entries, device, m_pos),
+        "_img_top1": set_top1_vectors(feats["img_mu"],
+                                      feats["text_mus"].mean(dim=1))[0],
     }
 
 
 # ---------------------------------------------------------------- aggregation / CLI
-def _delta_per_bin(a: Dict, b: Dict) -> Dict[str, Dict[str, float]]:
-    """a - b per bin for every recall key both have."""
+def _model_contrasts(results: Dict, entries: List[Dict]) -> Dict[str, Dict]:
+    """Set-I2T top-1 model-vs-model correction counts per bin (错->对/对->错).
+
+    For an ordered pair "A>B": wrong_to_right = A wrong AND B right (B fixes
+    A's errors); right_to_wrong = A right AND B wrong (B breaks A's hits).
+    """
+    vectors = {}
+    for fam in ("clip", "mcdisp"):
+        for tag, r in results.get(fam, {}).items():
+            vectors[f"{fam}.{tag}"] = r["_img_top1"]
     out = {}
-    for binn, row in a.items():
-        if binn not in b:
-            continue
-        out[binn] = {k: row[k] - b[binn][k] for k in row
-                     if isinstance(row.get(k), float) and k in b[binn]}
+    names = sorted(vectors)
+    for a in names:
+        for b in names:
+            if a >= b:
+                continue
+            va, vb = vectors[a], vectors[b]
+            row = {}
+            for binn in BINS + ("overall",):
+                idx = ([i for i, e in enumerate(entries) if e["bin"] == binn]
+                       if binn != "overall" else list(range(len(entries))))
+                if not idx:
+                    continue
+                t = torch.tensor(idx)
+                aw, bw = va[t], vb[t]
+                row[binn] = {
+                    "n": len(idx),
+                    f"{a}_wrong_{b}_right": int((~aw & bw).sum()),
+                    f"{a}_right_{b}_wrong": int((aw & ~bw).sum()),
+                }
+            out[f"{a}_vs_{b}"] = row
     return out
 
 
@@ -336,14 +426,22 @@ def main():
             tag, Path(path), subset, manifest, args.device, args.batch_size,
             args.m_pos)
 
-    # Full - Set-FT per-bin delta (checklist 结果表 column)
+    # set-I2T model-vs-model correction counts (checklist 错->对 / 对->错)
+    results["model_contrasts"] = _model_contrasts(results, subset["entries"])
+    # Full - Set-FT per-bin delta (checklist 结果表 column), common protocol
     if "full" in results["mcdisp"] and "setft" in results["clip"]:
-        results["full_minus_setft_by_bin"] = _delta_per_bin(
-            results["mcdisp"]["full"]["set_recall"],
-            results["clip"]["setft"]["set_recall"])
+        a = results["mcdisp"]["full"]["set_recall"]
+        b = results["clip"]["setft"]["set_recall"]
+        results["full_minus_setft_by_bin"] = {
+            binn: {k: a[binn][k] - b[binn][k] for k in a[binn]
+                   if isinstance(a[binn].get(k), float)}
+            for binn in a if binn in b}
 
-    out = Path(args.output) if args.output else (
-        workdir / "exp4_results.json")
+    # internal tensors are not JSON-serializable; drop before dumping
+    for fam in ("clip", "mcdisp"):
+        for r in results[fam].values():
+            r.pop("_img_top1", None)
+    out = Path(args.output) if args.output else (workdir / "exp4_results.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
