@@ -70,6 +70,47 @@ BINS = ("low", "mid", "high")
 
 
 # ---------------------------------------------------------------- data plumbing
+def make_subset_template(manifest: Path, n: int, seed: int, out: Path) -> None:
+    """Sample ``n`` TEST images BEFORE any model result is seen and emit the
+    human-annotation template for the verified subset.
+
+    The human fills ``bin`` (low/mid/high complementarity, ~30 images each)
+    and ``hard_negatives`` (minimal single-fact edits: {caption, replaces,
+    note}); captions are trimmed to the first 5 so ``replaces`` indexes
+    exactly the captions shown here (and encoded later). Sampling from the
+    AUDIT test manifest keeps the subset image-exclusive with training.
+    """
+    import random as _random
+    blob = json.loads(manifest.read_text(encoding="utf-8"))
+    entries = blob["entries"] if isinstance(blob, dict) else blob
+    if n > len(entries):
+        raise ValueError(f"requested {n} images but {manifest} only has {len(entries)}")
+    rng = _random.Random(seed)
+    picked = rng.sample(entries, n)
+    template = {
+        "_说明": ("人工填写每项: bin = low/mid/high(互补性分档); hard_negatives 每项 "
+                  "{'caption': 改一个事实的句子, 'replaces': 被改句子的下标, 'note': 改了什么}。"
+                  "先抽样后看模型结果,所有模型共用这一份。"),
+        "seed": seed,
+        "source_manifest": str(manifest),
+        "entries": [
+            {
+                "image": e["image"],
+                "bin": "",
+                "captions": [c for c in e["captions"]
+                             if isinstance(c, str) and c.strip()][:5],
+                "hard_negatives": [],
+            }
+            for e in picked
+        ],
+    }
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(template, ensure_ascii=False, indent=2),
+                   encoding="utf-8")
+    print(f"subset template ({n} images) -> {out}\n"
+          f"fill 'bin' and 'hard_negatives', then run exp4 with --subset {out}")
+
+
 def _subset_manifest_path(subset: Dict, workdir: Path) -> Path:
     """The subset AS a manifest, so both feature extractors see one file."""
     workdir.mkdir(parents=True, exist_ok=True)
@@ -431,7 +472,17 @@ def _hardneg_model_contrasts(results: Dict, entries: List[Dict]) -> Dict[str, Di
 
 def main():
     ap = argparse.ArgumentParser(description="Rebuttal exp 4: complementarity x hard negatives")
-    ap.add_argument("--subset", required=True, help="human-verified subset JSON")
+    ap.add_argument("--subset", default=None, help="human-verified subset JSON")
+    ap.add_argument("--make-template", type=int, default=None, metavar="N",
+                    help="sample N test images and emit the annotation "
+                         "template instead of evaluating (step 1 of §4.1; "
+                         "requires --manifest, honors --seed/--output)")
+    ap.add_argument("--manifest", default=None,
+                    help="audit test manifest for --make-template "
+                         "(default: outputs/ablation_study/manifests/"
+                         "manifest_coco_test.json)")
+    ap.add_argument("--seed", type=int, default=config.SEED,
+                    help="sampling seed for --make-template")
     ap.add_argument("--clip", action="append", default=[], metavar="TAG=PATH",
                     help="CLIP-family checkpoint (clip_baseline / clip_setft)")
     ap.add_argument("--mcdisp", action="append", default=[], metavar="TAG=PATH",
@@ -441,6 +492,16 @@ def main():
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--output", default=None)
     args = ap.parse_args()
+
+    if args.make_template is not None:
+        manifest = Path(args.manifest or (
+            config.OUTPUT_DIR / "ablation_study" / "manifests" / "manifest_coco_test.json"))
+        out = Path(args.output) if args.output else Path("subset_template.json")
+        make_subset_template(manifest, args.make_template, args.seed, out)
+        return
+
+    if not args.subset:
+        ap.error("--subset is required unless --make-template is given")
 
     with open(args.subset, "r", encoding="utf-8") as f:
         subset = json.load(f)
