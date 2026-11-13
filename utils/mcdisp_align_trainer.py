@@ -539,7 +539,9 @@ class MCDispAlignTrainConfig:
     train_manifest: Optional[Path] = None
     dev_manifest: Optional[Path] = None
     manifest_num_captions: int = 5          # training K (random-sampled when mode="random")
-    manifest_sample_mode: str = "first"     # "first" | "random" (K=1/K=3 regimes)
+    manifest_sample_mode: str = "first"     # "first" | "random" | "perm" (K regimes)
+    manifest_min_captions: Optional[int] = None  # >=-threshold filter (exp 5: 5 for K=1/3/5)
+    manifest_perm_seed: int = 0             # fixed-order seed (mode "perm")
     dev_num_captions: int = 5               # uniform dev protocol for checkpoint selection
 
     # --- Training ---
@@ -658,6 +660,8 @@ def _build_loaders(cfg: MCDispAlignTrainConfig):
             cfg.train_manifest, config.IMAGES_DIR,
             num_captions=cfg.manifest_num_captions,
             sample_mode=cfg.manifest_sample_mode,
+            perm_seed=cfg.manifest_perm_seed,
+            min_valid_captions=cfg.manifest_min_captions,
         )
         dev_ds = ManifestCaptionDataset(
             cfg.dev_manifest, config.IMAGES_DIR,
