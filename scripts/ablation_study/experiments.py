@@ -2,9 +2,9 @@
 
 One entry per configuration in the experiment plan §4 (six core configs) and
 §5 (caption-count sensitivity / supervision fairness), plus the §5.5 strict
-rank-fixed companion. Every field maps onto ``MCDispAlignTrainConfig`` so all
-variants share the SAME training code path, optimizer, schedule, manifests and
-seeds (plan §8 unified training controls):
+rank-fixed companion. Every field maps onto ``MCDispAlignTrainConfig``. All
+variants share the training code path; optimizer, schedule, manifests and seeds
+are matched within each comparison (plan §8 unified training controls):
 
   * One knob per variant: leave-one-out loss weights, cov_rank, or the caption
     sampling regime -- nothing else moves.
@@ -13,6 +13,8 @@ seeds (plan §8 unified training controls):
   * Checkpoint selection is always the unified development multi-caption mR
     (``select_by="mr"``), on the same dev manifest with the same K for every
     config (plan §8 fallback clause).
+  * Exp-5 K=1/3/5 groups all fine-tune the CLIP backbone. Other ablation
+    groups retain the default frozen backbone unless explicitly overridden.
 
 ``LAMBDA_COV_FULL`` is the single place to change the Full-model cov weight.
 Per the rebuttal plan (MCDisp-Align_Rebuttal §3A/§3B), the ablation Full
@@ -170,8 +172,11 @@ EXPERIMENTS: Dict[str, Dict] = {
         "K": 5, "sample": "first", "uncertainty_sim": True,
     },
     # ---- rebuttal exp 5: captions-per-training-image sensitivity (1/3/5) ----
-    # Full KL model, only manifest_num_captions changes. All three groups use
-    # sample="perm" + min_valid=5: one fixed random caption order per image
+    # Full KL model; only manifest_num_captions differs within this trio.
+    # Each explicitly sets freeze_clip=False to fine-tune the same pretrained
+    # CLIP backbone. Other ablation groups keep their frozen default.
+    # All three groups use sample="perm" + min_valid=5: one fixed random caption
+    # order per image
     # (seeded by (manifest_perm_seed=0, image name)), so K=1/K=3/K=5 draw
     # NESTED caption sets from the SAME order even when an image has MORE
     # than 5 valid captions (a first-mode K=5 companion could pick captions
@@ -184,18 +189,21 @@ EXPERIMENTS: Dict[str, Dict] = {
         "loss": "kl",
         "weights": _base_loss_weights_kl(), "cov_rank": config.MCDISP_ALIGN_COV_RANK,
         "K": 1, "sample": "perm", "min_valid": 5, "uncertainty_sim": True,
+        "freeze_clip": False,
     },
     "full_kl_k3": {
         "desc": "Full KL, 3 captions/image (fixed perm order, nested with k1/k5)",
         "loss": "kl",
         "weights": _base_loss_weights_kl(), "cov_rank": config.MCDISP_ALIGN_COV_RANK,
         "K": 3, "sample": "perm", "min_valid": 5, "uncertainty_sim": True,
+        "freeze_clip": False,
     },
     "full_kl_k5": {
         "desc": "Full KL, 5 captions/image (perm companion of k1/k3 -- exp-5 K=5 control)",
         "loss": "kl",
         "weights": _base_loss_weights_kl(), "cov_rank": config.MCDISP_ALIGN_COV_RANK,
         "K": 5, "sample": "perm", "min_valid": 5, "uncertainty_sim": True,
+        "freeze_clip": False,
     },
 }
 
@@ -212,9 +220,11 @@ def build_train_config(
 ) -> MCDispAlignTrainConfig:
     """Map an experiment definition to a ``MCDispAlignTrainConfig``.
 
-    All variants use the image-exclusive manifests, the same optimizer
-    settings, no early stopping (fixed budget), and unified ``select_by="mr"``
-    checkpoint selection on the dev manifest.
+    All variants use the image-exclusive manifests, no early stopping (fixed
+    budget), and unified ``select_by="mr"`` checkpoint selection on the dev
+    manifest. Optimizer settings and backbone freezing are matched within each
+    comparison. ``freeze_clip`` defaults to True; the exp-5 K=1/3/5 groups
+    explicitly set it to False to fine-tune their CLIP backbones.
 
     ``loss`` ("standard" | "kl") overrides the experiment's own objective; by
     default each entry uses its ``loss`` field ("standard" for the legacy §4/§5
@@ -241,7 +251,7 @@ def build_train_config(
         tag=f"{experiment}/s{seed}",
         epochs=epochs if epochs is not None else config.MCDISP_ALIGN_EPOCHS,
         batch_size=batch_size if batch_size is not None else config.MCDISP_ALIGN_BATCH_SIZE,
-        freeze_clip=True,
+        freeze_clip=d.get("freeze_clip", True),
         clip_lr=config.MCDISP_ALIGN_CLIP_LR,
         mlp_lr=config.MCDISP_ALIGN_MLP_LR,
         cov_rank=d["cov_rank"],

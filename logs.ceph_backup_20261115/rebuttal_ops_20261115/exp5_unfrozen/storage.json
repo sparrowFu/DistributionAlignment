@@ -1,0 +1,10 @@
+{
+  "physical_storage": "/var/tmp/yxzhou_mcdisp_rebuttal_exp5_20261115",
+  "free_bytes": 446715543552,
+  "logical_paths": {
+    "/mydata/home/yxzhou/kxiong/mcdispAlign/DistributionAlignment/outputs/ablation_study/full_kl_k3": "/var/tmp/yxzhou_mcdisp_rebuttal_exp5_20261115/full_kl_k3",
+    "/mydata/home/yxzhou/kxiong/mcdispAlign/DistributionAlignment/outputs/ablation_study/full_kl_k5": "/var/tmp/yxzhou_mcdisp_rebuttal_exp5_20261115/full_kl_k5",
+    "/mydata/home/yxzhou/kxiong/mcdispAlign/DistributionAlignment/outputs/ablation_study/full_kl_k1": "/var/tmp/yxzhou_mcdisp_rebuttal_exp5_20261115/full_kl_k1"
+  },
+  "no_existing_results_removed": true
+}

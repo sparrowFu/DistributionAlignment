@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional
 
+import copy
 import math
 
 import torch
@@ -18,6 +19,7 @@ from models.mcdisp_align_model import MCDispAlignModel
 from utils.dataset_factory import build_train_dataset
 from utils.eval_common import build_eval_dataloader
 from utils.lr_scheduler import apply_lr_for_epoch
+from utils.early_stopping import StageAwareEarlyStopping
 from utils.retrieval import (
     compute_multicaption_recall,
     compute_recall_bidirectional,
@@ -367,6 +369,7 @@ def evaluate(
     recall_k_values=None,
     multicaption: bool = False,
     dist_health: bool = False,
+    selection_criterion=None,
 ) -> Dict[str, float]:
     """Evaluate the model (loss + optional retrieval Recall@K).
 
@@ -375,6 +378,10 @@ def evaluate(
     §3.3) and its mR (mean of the 6 recall values, plan §6.1). This is the
     ablation study's checkpoint-selection metric (``select_by="mr"``); the
     merged-center recall stays available as a diagnostic.
+
+    ``selection_criterion`` optionally computes a second validation loss with
+    FIXED weights. The scheduled loss remains a diagnostic; its scale changes
+    as new training terms are enabled and is unsuitable for loss selection.
 
     ``dist_health=True`` adds distribution-health diagnostics (subsampled):
     image-variance CV, caption-set between-caption spread, corr(v_v,
@@ -385,6 +392,8 @@ def evaluate(
 
     totals = {k: 0.0 for k in
               ("loss", "set_nce", "mu", "var", "cover_pos", "cover_neg", "cov", "reg", "img_var_avg")}
+    if selection_criterion is not None:
+        totals["selection_loss"] = 0.0
     processed_batches = 0
     feats = {k: [] for k in ("img_mu", "text_mu", "img_logvar", "text_logvar")} \
         if compute_recall else None
@@ -420,7 +429,15 @@ def evaluate(
         )
 
         for k in totals:
-            totals[k] += loss_dict["total"] if k == "loss" else loss_dict.get(k, 0.0)
+            if k != "selection_loss":
+                totals[k] += loss_dict["total"] if k == "loss" else loss_dict.get(k, 0.0)
+        if selection_criterion is not None:
+            fixed_loss, _ = selection_criterion(
+                outputs['img_mu'], outputs['img_logvar'], outputs['img_U'],
+                outputs['text_mu'], outputs['text_logvar'],
+                outputs['text_mus'], outputs['text_logvars'], outputs.get('text_Us'),
+            )
+            totals["selection_loss"] += float(fixed_loss)
 
         if feats is not None:
             feats["img_mu"].append(outputs['img_mu'].cpu())
@@ -714,6 +731,16 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
     set_seed(cfg.seed)
 
     prefix = f"[{cfg.tag}] " if cfg.tag else ""
+    score_keys = {"loss": "selection_loss", "recall": "mcdisp_align_recall@1",
+                  "mr": "mr", "cosine_mr": "cosine_mr"}
+    if cfg.select_by not in score_keys:
+        raise ValueError(f"Unknown checkpoint-selection metric: {cfg.select_by!r}")
+    stop_start = 0 if cfg.no_staged else _stage_bounds(cfg.epochs)[3]
+    stopper = StageAwareEarlyStopping(
+        metric=cfg.select_by, mode="min" if cfg.select_by == "loss" else "max",
+        patience=cfg.early_stop_patience, enabled=not cfg.no_early_stop,
+        min_epoch=stop_start,
+    )
 
     log.info("=" * 60)
     log.info(f"{prefix}MCDisp_Align Training")
@@ -728,6 +755,9 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
     log.info(f"{prefix}Loss weights: ctr={cfg.lambda_ctr} mu={cfg.lambda_mu} var={cfg.lambda_var} "
              f"cover_pos={cfg.lambda_cover_pos} cover_neg={cfg.lambda_cover_neg} cov={cfg.lambda_cov} reg={cfg.lambda_reg}")
     log.info(f"{prefix}Select by: {cfg.select_by} | Device: {cfg.device}")
+    log.info(f"{prefix}Early stopping: {'disabled (fixed epoch budget)' if cfg.no_early_stop else 'enabled'}"
+             f"; monitor={cfg.select_by}; first eligible epoch={stop_start + 1}; "
+             f"patience={cfg.early_stop_patience}")
     log.info("=" * 60)
 
     # Model
@@ -809,6 +839,21 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
         raise ValueError(
             f"Unknown loss_name {cfg.loss_name!r} (expected 'standard' or 'kl')")
     criterion = criterion.to(cfg.device)
+    # Clone BEFORE train_epoch mutates the loss weights for the stage/ramp.
+    # Evaluate both objectives on the SAME forward outputs, without updates.
+    selection_criterion = copy.deepcopy(criterion) if cfg.select_by == "loss" else None
+    selection_policy = {
+        "version": 1, "select_by": cfg.select_by, "loss_name": cfg.loss_name,
+        "fixed_weights": {k: getattr(cfg, k) for k in (
+            "lambda_ctr", "lambda_mu", "lambda_var", "lambda_kl",
+            "lambda_cover_pos", "lambda_cover_neg", "lambda_cov", "lambda_reg",
+            "lambda_cap_nce", "tau", "tau_cap", "target_var", "m_pos", "m_neg",
+            "use_uncertainty_sim", "kl_var_clamp", "sg_set_variance",
+            "detach_caption_targets")},
+    }
+    if selection_criterion is not None:
+        log.info(f"{prefix}Loss selection uses fixed full-objective weights; "
+                 "scheduled validation loss is diagnostic only.")
 
     # Optimizer
     optimizer = create_optimizer(model, cfg.freeze_clip, cfg.clip_lr, cfg.mlp_lr, cfg.weight_decay)
@@ -845,7 +890,24 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
         start_epoch = checkpoint.get("epoch", 0)
         best_val_loss = checkpoint.get("best_val_loss", float('inf'))
         best_recall = checkpoint.get("best_recall", -float('inf'))
-        patience_counter = checkpoint.get("patience_counter", 0)
+        # Old global patience cannot be reused as a stage-local baseline.
+        restored_stop = stopper.load_state_dict(
+            checkpoint.get("early_stopping"), expected_epoch=start_epoch - 1)
+        patience_counter = stopper.bad_epochs
+        if not restored_stop:
+            log.info(f"{prefix}Early-stop monitor reset: no compatible saved state.")
+        metric_changed = checkpoint.get("select_by", cfg.select_by) != cfg.select_by
+        if metric_changed:
+            best_val_loss, best_recall = float('inf'), -float('inf')
+            stopper.reset()
+            patience_counter = 0
+            log.info(f"{prefix}Checkpoint-selection metric changed; resetting best score.")
+        elif cfg.select_by == "loss" and checkpoint.get("selection_policy") != selection_policy:
+            best_val_loss = float('inf')
+            stopper.reset()
+            patience_counter = 0
+            log.info(f"{prefix}Legacy/different loss-selection policy; resetting "
+                     "the incomparable best loss for fixed-weight validation.")
         base_lrs = checkpoint.get("base_lrs", base_lrs)
         # The checkpoint must come from the same objective; a missing key means
         # a legacy (pre-loss-selection) checkpoint, assumed "standard".
@@ -864,7 +926,9 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
     log.info(f"{prefix}Batch size: {cfg.batch_size}, Train batches per epoch: {len(train_loader)}")
 
     best_path = cfg.best_path
-    last_epoch = start_epoch
+    # Epoch indices here are zero-based; a no-op resume must not invent an
+    # extra completed epoch or desynchronize the early-stop checkpoint state.
+    last_epoch = start_epoch - 1
 
     def _manifest_sha256() -> Dict[str, str]:
         """SHA of the fixed split's manifests, stamped into checkpoints so an
@@ -893,6 +957,8 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             "best_val_loss": best_val_loss,
             "best_recall": best_recall,
             "patience_counter": patience_counter,
+            "early_stopping": stopper.state_dict(),
+            "selection_policy": selection_policy,
             "base_lrs": base_lrs,
             "select_by": cfg.select_by,
             "loss_name": cfg.loss_name,  # objective tag for the resume guard
@@ -941,6 +1007,7 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
                 compute_recall=(cfg.select_by in ("recall", "mr", "cosine_mr")),
                 recall_k_values=list(cfg.recall_k_values),
                 multicaption=(cfg.select_by in ("mr", "cosine_mr")),
+                selection_criterion=selection_criterion,
                 dist_health=True,
             )
 
@@ -999,50 +1066,51 @@ def run_mcdisp_align_training(cfg: MCDispAlignTrainConfig, log) -> Dict:
             )
 
             # Best-checkpoint selection
-            if cfg.select_by == "recall" and "mcdisp_align_recall@1" in val_metrics:
-                current_score = val_metrics["mcdisp_align_recall@1"]
-                improved = current_score > best_recall
-                if improved:
-                    best_recall = current_score
-            elif cfg.select_by == "cosine_mr" and "cosine_mr" in val_metrics:
-                # Grouped continuation §9.2: unrounded validation cosine mR.
-                current_score = val_metrics["cosine_mr"]
-                improved = current_score > best_recall
-                if improved:
-                    best_recall = current_score
-            elif cfg.select_by == "mr" and "mr" in val_metrics:
-                # Ablation study: unified multi-caption development mR (plan §8).
-                current_score = val_metrics["mr"]
-                improved = current_score > best_recall
-                if improved:
-                    best_recall = current_score
-            else:
-                current_score = val_metrics["loss"]
-                improved = current_score < best_val_loss
+            # Missing retrieval metrics must not silently switch to loss.
+            current_score = float(val_metrics[score_keys[cfg.select_by]])
+            if cfg.select_by == "loss":
+                improved = math.isfinite(current_score) and current_score < best_val_loss
                 if improved:
                     best_val_loss = current_score
+                log.info(f"{prefix}Selection loss (fixed weights): {current_score:.6f}")
+            else:
+                improved = math.isfinite(current_score) and current_score > best_recall
+                if improved:
+                    best_recall = current_score
 
             if improved:
                 # atomic best.pt write: tmp + replace (same crash-safety as
                 # the per-epoch last.pt save); extra carries the split stamp
                 # so best-checkpoint evals verify the manifest identity too
                 best_tmp = best_path.with_name(best_path.name + ".tmp")
-                model.save(str(best_tmp), extra={"manifest_sha256": _split_shas})
+                model.save(str(best_tmp), extra={"manifest_sha256": _split_shas,
+                                                "selection_policy": selection_policy})
                 best_tmp.replace(best_path)
                 score_str = (f"mcdisp_align_recall@1: {best_recall:.4f}" if cfg.select_by == "recall"
-                             else f"val_loss: {best_val_loss:.4f}" if cfg.select_by == "loss"
+                             else f"selection_loss: {best_val_loss:.4f}" if cfg.select_by == "loss"
                              else f"{cfg.select_by}: {best_recall:.4f}")
                 log.info(f"{prefix}Best model saved ({score_str}) -> {best_path}")
-                patience_counter = 0
-            else:
-                patience_counter += 1
-                log.info(f"{prefix}No improvement. Patience: {patience_counter}/{cfg.early_stop_patience}")
+            elif cfg.no_early_stop:
+                log.info(f"{prefix}No checkpoint improvement; early stopping is disabled.")
+
+            # Global best model and the local early-stop baseline have different
+            # jobs: preserve the former, reset the latter at a phase boundary.
+            stop_event = stopper.update(current_score, epoch, mult["stage"])
+            patience_counter = stopper.bad_epochs
+            if not cfg.no_early_stop:
+                if stop_event.status == "waiting":
+                    log.info(f"{prefix}Early stopping deferred until epoch {stop_start + 1}; "
+                             "later scheduled losses are not enabled yet.")
+                else:
+                    log.info(f"{prefix}Early-stop monitor stage={mult['stage']} "
+                             f"status={stop_event.status} "
+                             f"patience={patience_counter}/{cfg.early_stop_patience}")
 
             # crash-safe resume point: overwrite every epoch (atomic)
             _save_last_state(epoch)
             log.info(f"{prefix}Last checkpoint saved (epoch {epoch + 1}) -> {cfg.last_path}")
 
-            if not cfg.no_early_stop and patience_counter >= cfg.early_stop_patience:
+            if stop_event.should_stop:
                 log.info(f"{prefix}Early stopping triggered at epoch {epoch + 1}")
                 break
 

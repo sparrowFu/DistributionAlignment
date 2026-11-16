@@ -1,0 +1,1 @@
+User requires unfrozen CLIP, seed-major order: seed42 K3,K5,K1; seed43 K3,K5,K1; seed44 K3,K5,K1. GPU0 or1, one project task at a time. Background queue must survive terminal/SSH closure. User is reviewing exp4 annotations in parallel.

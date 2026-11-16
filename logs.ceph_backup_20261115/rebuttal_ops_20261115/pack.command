@@ -1,0 +1,1 @@
+/mydata/home/yxzhou/kxiong/mcdispAlign/environment/bin/python logs/rebuttal_ops_20261115/build_annotation_pack.py --subset outputs/rebuttal_exp4_20261115/subset_template.json --images-dir TrainDatasets/mscoco_captions/images --output outputs/rebuttal_exp4_20261115/annotation.html --originals-zip outputs/rebuttal_exp4_20261115/originals.zip

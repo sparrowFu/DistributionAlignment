@@ -1,0 +1,1 @@
+User authorized training first on physical GPU0 or1 while reviewing exp4 hard negatives. Exp4 no longer gates exp5 training. Seed42; K3->K5->K1; one project task at a time; per-task pull and validation.

@@ -1,0 +1,1 @@
+Fresh GitHub ls-remote on Windows before launch: refs/heads/McdispAlign 155d7b583a3ebe1e19ef1b650f3adf6d5befa137. First fast-forward pull uses verified bundle because server HTTPS timed out. Subsequent tasks pull origin and stop on unresolved failure or changed implementation.

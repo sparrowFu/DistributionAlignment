@@ -1,0 +1,1 @@
+2026-11-15 GitHub branch refs/heads/McdispAlign verified from Windows: 155d7b583a3ebe1e19ef1b650f3adf6d5befa137; server direct HTTPS timed out; verified bundle used for git pull --ff-only; origin URL unchanged.
