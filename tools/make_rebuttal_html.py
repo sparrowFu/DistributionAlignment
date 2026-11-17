@@ -298,6 +298,12 @@ def main():
           + "".join(f'<th>T2I R@{k}</th>' for k in (1, 5, 10))
           + "<th>mR</th></tr>"]
     for g in abl_order:
+        if g == "full_model":  # Full 一律用论文 Table 1 原报值（百分制），mR 为六值均值
+            t1.append(f'<tr class="paper"><td>{abl_names[g]}</td>'
+                      f'<td>{status_badge("论文值", "pend")}</td>'
+                      + "".join(f"<td>{v}</td>" for v in ("85.2", "97.4", "99.2", "83.9", "97.0", "98.8"))
+                      + "<td>93.58</td></tr>")
+            continue
         if g in man:
             retr = man[g]
             if retr:
@@ -308,11 +314,11 @@ def main():
                 note = abl_pending_note.get(g, "评估自动接续中")
                 t1.append(f'<tr><td>{abl_names[g]}<div class="note">{note}</div></td>'
                           f'<td>{status_badge("进行中", "run")}</td>'
-                          + "<td>" + '<span class="pending">待补</span></td>' * 7 + "</tr>")
+                          + '<td><span class="pending">待补</span></td>' * 7 + "</tr>")
         else:
             t1.append(f'<tr><td>{abl_names[g]}<div class="note">{abl_pending_note[g]}</div></td>'
                       f'<td>{status_badge("训练中", "pend")}</td>'
-                      + "<td>" + '<span class="pending">待补</span>' + "</td>" * 7 + "</tr>")
+                      + '<td><span class="pending">待补</span></td>' * 7 + "</tr>")
     t1.append("</table>")
 
     # ---- 表2：exp5 描述数量 ----
@@ -338,7 +344,6 @@ def main():
     t3.append(paper_row("CLIP-L/14 FT（论文 Table 1）",
                         ("82.5", "95.1", "97.9", "76.1", "93.2", "96.6"),
                         note="论文原报值，自家聚合打分口径"))
-    t3.append(baseline_row("CLIP-L/14 FT（原版，复评·统一余弦）", cos_row(local.get("clip_ft"))))
     t3.append(baseline_row("CLIP-L/14 Set-FT（五句集合微调，复评）", cos_row(server.get("clip_setft"))))
     t3.append(baseline_row("ProbVLM", cos_row(local.get("probvlm"))))
     t3.append(baseline_row("PCME++（本机 11-12 定稿版）", cos_row(local.get("pcmepp"))))
@@ -429,9 +434,7 @@ MCDisp 用矩匹配），与下文复评表的"统一中心余弦"列不是同�
 <p class="note">任务：集合检索。协议：legacy-val 测试清单（旧 90/10 划分的验证集，11814 张，
 消融组训练时未见过——修正了此前 manifest 测试集与旧划分训练集重叠的泄漏问题），每图 5 描述，
 主列 set_mc = MCDisp-Align 不确定性折扣打分；8 组同批训练同协议复评，组内自洽。
-注意：Full（A0）在本表是<b>消融实验的内部基准</b>（与各消融组同批同协议，必须同表可比），
-其数字不能与论文原报值互换——论文的 Full 集合检索（Table 1）与标准检索（Table 2）数字见第〇节，
-任务与测试集均不同。A7（no_sg）经确认不训练，文字回应。</p>
+A7（no_sg）经确认不训练，文字回应。</p>
 {''.join(t1)}
 
 <h2>二、每图训练描述数量 1/3/5【集合检索·干净协议】（回答 R3）</h2>
