@@ -9,7 +9,6 @@ W3: The standard retrieval evaluation suffers from selective baseline reporting 
 
 W4: The ablation study fails to validate the individual efficacy of the key modules, as Section 3.5 only presents a single experiment that removes $\mathcal L_{\mathrm{align}}$ as a whole, omitting any step-by-step breakdown to isolate the contributions of the coverage constraint ($β$), the low-rank subspace alignment ($γ$), the rank $r$, and the stop-gradient operation $sg(·)$. Furthermore, the ablation results in Table 4 are restricted entirely to standard retrieval, completely omitting any evaluation on the paper's core task of one-to-many retrieval under the ablation of $\mathcal L_{\mathrm{align}}$.（消融实验仅对比对齐损失$\mathcal L_{\mathrm{align}}$）
 所有的实验不需要全量数据集，挑选一个数据集验证。
-Table 4 in the paper only compares the complete model with the model that removes the entire $\mathcal L_{\mathrm{align}}$. I hope the author removes KL alignment, coverage, subspace alignment, and variance regularization separately.
 
 Questions For Authors:
 Please refer to the "Critical Weaknesses" section.
@@ -20,12 +19,15 @@ W1. The experiments do not convincingly establish that the motivating semantic d
 W2. The benchmarks do not adequately stress the semantic diversity central to the motivation. MSCOCO and Flickr30K provide multiple captions, but multiplicity does not necessarily imply substantially different semantic coverage. Even Figure 1(a) largely repeats the same horses-pulling-a-carriage content, with relatively small changes in descriptive emphasis. Evaluation on a dataset or controlled subset containing more complementary objects, attributes, and relations is needed to test the proposed advantage. This should examine both final retrieval performance and representation geometry, including image-distribution coverage of distinct caption meanings and separation from hard negatives, with results stratified by caption-set semantic diversity.（数据集中的语义多样性不足。缺少复杂样本和困难样本的验证。）（数据集的问题，不是重点关注的范围。构建新的语义多样性和复杂样本的数据集需要一个新的工作，这也是我们正在研究的内容。可以在做过的数据集中挑选复杂样本单独作为自己进行对比。）
 
 Questions For Authors:
-Can you directly demonstrate baseline errors attributable to semantic distortion or semantic collapse, and show that MCDisp-Align corrects them? In addition to aggregate distances, please examine whether specific attribute or relation distinctions become less distinguishable under CLIP-FT and are recovered by the proposed method.
-Can you evaluate a dataset or controlled subset with genuinely complementary caption content, and report how the gain over CLIP-FT changes with semantic diversity? Please include both retrieval results and analyses of image-distribution coverage and hard-negative separation.
-Which alignment components are responsible for the improvements? Table 4 removes the entire alignment objective. Please separately ablate KL alignment, caption-center coverage, subspace alignment, and variance regularization, and compare the full covariance with a diagonal-only variant. These controls would clarify whether modeling caption variation directions is necessary beyond center alignment and regularization.
+Q1: Can you directly demonstrate baseline errors attributable to semantic distortion or semantic collapse, and show that MCDisp-Align corrects them? In addition to aggregate distances, please examine whether specific attribute or relation distinctions become less distinguishable under CLIP-FT and are recovered by the proposed method.
+
+Q2: Can you evaluate a dataset or controlled subset with genuinely complementary caption content, and report how the gain over CLIP-FT changes with semantic diversity? Please include both retrieval results and analyses of image-distribution coverage and hard-negative separation.
+
+Q3: Which alignment components are responsible for the improvements? Table 4 removes the entire alignment objective. Please separately ablate KL alignment, caption-center coverage, subspace alignment, and variance regularization, and compare the full covariance with a diagonal-only variant. These controls would clarify whether modeling caption variation directions is necessary beyond center alignment and regularization.
 
 Critical Weaknesses:
-Some details need to be clarified. Does CLIP-FT also use exactly the same caption-set contrastive learning objective for training? It is unclear whether the improvements come from modeling caption dispersion, or more from introducing caption-set training.（做解释，会在修改稿中讲清楚。）
+W1: Some details need to be clarified. Does CLIP-FT also use exactly the same caption-set contrastive learning objective for training? It is unclear whether the improvements come from modeling caption dispersion, or more from introducing caption-set training.（做解释，会在修改稿中讲清楚。）
 
-The paper lacks sensitivity experiments on the number of captions and has not studied the impact of increasing the number of captions on model performance. As the number of captions increases, can the model obtain more effective semantic information to continuously improve performance?（评估描述数量对性能的影响，增加描述丰富语义是否能够提高性能？）（减少描述集的数量然后训练模型看模型的表现，仅对比MCDisp-align即可。）如果有下降趋势就可以说增加更多描述是有优势的。同时我们做了以下实验。
+W2: The paper lacks sensitivity experiments on the number of captions and has not studied the impact of increasing the number of captions on model performance. As the number of captions increases, can the model obtain more effective semantic information to continuously improve performance?（评估描述数量对性能的影响，增加描述丰富语义是否能够提高性能？）（减少描述集的数量然后训练模型看模型的表现，仅对比MCDisp-align即可。）如果有下降趋势就可以说增加更多描述是有优势的。同时我们做了以下实验。
 
+W3: Table 4 in the paper only compares the complete model with the model that removes the entire $\mathcal L_{\mathrm{align}}$. I hope the author removes KL alignment, coverage, subspace alignment, and variance regularization separately.

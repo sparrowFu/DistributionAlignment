@@ -143,10 +143,11 @@ def phase_eval(args) -> None:
     out_dir = ROOT / args.experiment / f"seed{seed}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    test_manifest = Path(args.test_manifest) if args.test_manifest else TEST_MANIFEST
     split_check = _verify_split_against_checkpoint(ckpt)
 
     feats = extract_features(
-        ckpt, TEST_MANIFEST, num_captions=5,
+        ckpt, test_manifest, num_captions=5,
         batch_size=args.batch_size or 32, device=device,
         max_images=args.num_samples,
     )
@@ -344,6 +345,9 @@ def main():
     ap.add_argument("--num-samples", type=int, default=None,
                     help="cap test images in eval/interventions (smoke/debug)")
     ap.add_argument("--checkpoint", default=None, help="explicit checkpoint for eval")
+    ap.add_argument("--test-manifest", default=None,
+                    help="eval: override the test manifest (e.g. the legacy-val "
+                         "manifest for legacy-split-trained ablation groups)")
     ap.add_argument("--limit", type=int, default=None, help="audit: cap manifest entries")
     ap.add_argument("--force", action="store_true",
                     help="audit: allow OVERWRITING existing manifests (new split!)")

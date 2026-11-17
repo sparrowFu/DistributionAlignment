@@ -115,8 +115,14 @@ def eval_mcdisp(ckpt, dataloader, device, num_samples, ks, tau):
 
 
 def eval_prolip(ckpt, dataloader, device, num_samples, ks):
-    model = ProLIPModel()
-    model.load(ckpt)
+    try:
+        model = ProLIPModel()
+        model.load(ckpt)
+    except ValueError as e:
+        # checkpoint carries its own backbone tag (e.g. l14); rebuild to match
+        backbone = "l14" if "'l14'" in str(e) else "h14"
+        model = ProLIPModel(backbone=backbone)
+        model.load(ckpt)
     return _run_prolip(model, dataloader, device, num_samples, ks)
 
 

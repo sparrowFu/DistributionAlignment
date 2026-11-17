@@ -1,0 +1,5428 @@
+{
+ "entries": [
+  {
+   "image": "000000540840.jpg",
+   "bin": "mid",
+   "captions": [
+    "A man riding a motorcycle next to a busy street.",
+    "A man wearing a suit and helmet rides a motorcycle. ",
+    "The businessman seated on a motorcycle is surrounded by cars and buses.",
+    "a person sitting on a motorcycle on a city street",
+    "A man in a suit is on a black motorcycle."
+   ],
+   "cands": [
+    {
+     "caption": "A man in a suit is on a red motorcycle.",
+     "replaces": 4,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000176408.jpg",
+   "bin": "mid",
+   "captions": [
+    "A small black dog laying on top of a rug.",
+    "A dog with a tennis ball in his mouth on a rug",
+    "A small black dog is playing with an orange ball on a mat.",
+    "a dog that is sitting on a rug with an apple",
+    "A black terrier is chewing something on a plaid rug."
+   ],
+   "cands": [
+    {
+     "caption": "A small red dog is playing with an orange ball on a mat.",
+     "replaces": 2,
+     "note": "black->red",
+     "kind": "color"
+    },
+    {
+     "caption": "A small red dog laying on top of a rug.",
+     "replaces": 0,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000345618.jpg",
+   "bin": "high",
+   "captions": [
+    "A picture of some food on a plate.",
+    "A white plate topped with meat and vegetables.",
+    "A simple meal with chicken , greens and cranberry sauce.",
+    "A plate contains curry, rice, and green vegetables.",
+    "A PLATE OF RICE MEAT AND VEGETABLES "
+   ],
+   "cands": [
+    {
+     "caption": "A plate contains curry, rice, and yellow vegetables.",
+     "replaces": 3,
+     "note": "green->yellow",
+     "kind": "color"
+    },
+    {
+     "caption": "A black plate topped with meat and vegetables.",
+     "replaces": 1,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000338741.jpg",
+   "bin": "mid",
+   "captions": [
+    "A yellow and green fire hydrant sitting on a sidewalk.",
+    "A yellow fire hydrant on a brick pavement near a planter of flowers.",
+    "A water hydrant on a pavement and a potted plant",
+    "A very cute old looking fire hydrant on the curb.",
+    "A yellow fire hydrant on the side of the street."
+   ],
+   "cands": [
+    {
+     "caption": "A red fire hydrant on a brick pavement near a planter of flowers.",
+     "replaces": 1,
+     "note": "yellow->red",
+     "kind": "color"
+    },
+    {
+     "caption": "A red fire hydrant on the side of the street.",
+     "replaces": 4,
+     "note": "yellow->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000056262.jpg",
+   "bin": "mid",
+   "captions": [
+    "a person with glasses and a brown and white dog are sleeping",
+    "a male wearing glasses and brown dog a sleep in a bed",
+    "A boy taking a nap with his dog on a bed.",
+    "A man is lying down with and facing his dog.",
+    "a person with eye glasses sleeping with a dog"
+   ],
+   "cands": [
+    {
+     "caption": "a male wearing glasses and gray dog a sleep in a bed",
+     "replaces": 1,
+     "note": "brown->gray",
+     "kind": "color"
+    },
+    {
+     "caption": "a person with glasses and a brown and black dog are sleeping",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000394964.jpg",
+   "bin": "high",
+   "captions": [
+    "A bus driving down a street next to tall buildings.",
+    "A bus that is stopped on a busy road.",
+    "A bus driving down the road with several other cars.",
+    "The man stands near a newspaper dispenser as a city bus passes.",
+    "A red and white bus near the curb on a city street."
+   ],
+   "cands": [
+    {
+     "caption": "A blue and white bus near the curb on a city street.",
+     "replaces": 4,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000332836.jpg",
+   "bin": "mid",
+   "captions": [
+    "A group of people inane office with various computers and laptops.",
+    "A few people doing various tasks in an office.",
+    "one lady is on the computer one is digging through a backpack there's a  man on the phone and another man on a computer ",
+    "A group of people in a grey and white office building with large windows. ",
+    "A group of people who are working at an office."
+   ],
+   "cands": [
+    {
+     "caption": "A group of people in a grey and black office building with large windows. ",
+     "replaces": 3,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "two lady is on the computer one is digging through a backpack there's a  man on the phone and another man on a computer ",
+     "replaces": 2,
+     "note": "one->two",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000555738.jpg",
+   "bin": "high",
+   "captions": [
+    "A herd of white sheep walking down a grass covered field.",
+    "A couple of sheep walking through the grassy field.",
+    "A herd of sheep walking in a grassy area. ",
+    "A bunch of sheet and geese in a field with a bible quote",
+    "There are ducks standing in the grass with sheep. "
+   ],
+   "cands": [
+    {
+     "caption": "A herd of black sheep walking down a grass covered field.",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000370444.jpg",
+   "bin": "high",
+   "captions": [
+    "The bathroom has a blue trash can on the floor",
+    "a room that has a toilet in the ground",
+    "A bathroom urinal is place on a gray tiled floor.",
+    "A floor urinal with a flushing system in a bathroom.",
+    "A public restroom with a urinal installed in the floor."
+   ],
+   "cands": [
+    {
+     "caption": "A bathroom urinal is place on a brown tiled floor.",
+     "replaces": 2,
+     "note": "gray->brown",
+     "kind": "color"
+    },
+    {
+     "caption": "The bathroom has a green trash can on the floor",
+     "replaces": 0,
+     "note": "blue->green",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000022518.jpg",
+   "bin": "mid",
+   "captions": [
+    "a cake with some slices cut out of it",
+    "A chocolate caked frosted and topped with blueberries on a metal cake plate.",
+    "A cake on gold foil has a piece taken out.",
+    "A large piece has been taken out of a red white and blue cake.",
+    "A decorated chocolate cake with a missing piece. "
+   ],
+   "cands": [
+    {
+     "caption": "A large piece has been taken out of a blue white and blue cake.",
+     "replaces": 3,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000090358.jpg",
+   "bin": "mid",
+   "captions": [
+    "Bright white living room with dark brown leather sofa, piano, and single chair",
+    "a living room with a couch a chair and tv",
+    "Living room with white carpet and various furniture.",
+    "A sparse living room has a small red rug.",
+    "A chair and a couch in a small room."
+   ],
+   "cands": [
+    {
+     "caption": "A sparse living room has a small blue rug.",
+     "replaces": 3,
+     "note": "red->blue",
+     "kind": "color"
+    },
+    {
+     "caption": "Living room with black carpet and various furniture.",
+     "replaces": 2,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000422300.jpg",
+   "bin": "high",
+   "captions": [
+    "A large passenger jet flying over a lush green field next to a river.",
+    "An airplane is flying in the air over some water.",
+    "An airplane in the sky near an airport with some equipment in the foreground.",
+    "A plane is taking off from an airport runway.",
+    "A jet airliner passing over a river and grassy field."
+   ],
+   "cands": [
+    {
+     "caption": "A large passenger jet flying over a lush yellow field next to a river.",
+     "replaces": 0,
+     "note": "green->yellow",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000109586.jpg",
+   "bin": "low",
+   "captions": [
+    "A zebra standing in a field next to a green bush.",
+    "The zebra is just standing there looking at something in the distance.",
+    "A zebra is standing near grass and trees.",
+    "One zebra standing in a field next to bushes.",
+    "A zebra standing in a open field with bushes."
+   ],
+   "cands": [
+    {
+     "caption": "A zebra standing in a field next to a yellow bush.",
+     "replaces": 0,
+     "note": "green->yellow",
+     "kind": "color"
+    },
+    {
+     "caption": "two zebra standing in a field next to bushes.",
+     "replaces": 3,
+     "note": "one->two",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000354842.jpg",
+   "bin": "high",
+   "captions": [
+    "Two men are skateboarding on a skate ramp. ",
+    "A couple of people that are standing on skateboards.",
+    "some people going off a half-pipe ramp at a skateboarding event.",
+    "Two boys practicing their skills on skate boards in an open space.",
+    "Two young men are skateboarding in a skate park."
+   ],
+   "cands": [
+    {
+     "caption": "three boys practicing their skills on skate boards in an open space.",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three men are skateboarding on a skate ramp. ",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000479935.jpg",
+   "bin": "low",
+   "captions": [
+    "A room painted yellow with an office desk and office supplies on it.",
+    "A couple of desk chairs in a room",
+    "The small room has a desk along one wall",
+    "A room with a desk, two chairs, and a futon.",
+    "A room has a cluttered desk, chairs, and a couch."
+   ],
+   "cands": [
+    {
+     "caption": "The small room has a desk along two wall",
+     "replaces": 2,
+     "note": "one->two",
+     "kind": "num"
+    },
+    {
+     "caption": "A room with a desk, three chairs, and a futon.",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000466652.jpg",
+   "bin": "high",
+   "captions": [
+    "A white bus parked on the side of a road.",
+    "A transit bus side view as it sits in a parking area.",
+    "A large bus is driving down the road.",
+    "The bus is mainly white but has stripes of color on it as well.",
+    "a white bus traveling on a paved street"
+   ],
+   "cands": [
+    {
+     "caption": "The bus is mainly black but has stripes of color on it as well.",
+     "replaces": 3,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "a black bus traveling on a paved street",
+     "replaces": 4,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000579341.jpg",
+   "bin": "low",
+   "captions": [
+    "Two planes are very close together in the blue sky.",
+    "Two jets fly close to each other in the air.",
+    "Two jets cross very close to each other",
+    "Two stunt jets pass very close to each other in midair.",
+    "Two airplanes speeding past each other in an airshow."
+   ],
+   "cands": [
+    {
+     "caption": "three planes are very close together in the blue sky.",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three stunt jets pass very close to each other in midair.",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000044603.jpg",
+   "bin": "low",
+   "captions": [
+    "Two birds who are perched together on a branch.",
+    "A couple of birds perched on top of a wooden branch.",
+    "Two birds on a branch, one with a large curved beak.",
+    "Two birds looking at each other while sitting on a tree branch. ",
+    "Two birds that are sitting in a tree."
+   ],
+   "cands": [
+    {
+     "caption": "Two birds on a branch, two with a large curved beak.",
+     "replaces": 2,
+     "note": "one->two",
+     "kind": "num"
+    },
+    {
+     "caption": "three birds looking at each other while sitting on a tree branch. ",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000226840.jpg",
+   "bin": "low",
+   "captions": [
+    "Three zebras are standing near a gate in a wall.",
+    "The zebras are standing next to each other outside by the gate.",
+    "Three Zebras standing in front of a gate.",
+    "Three zebras idly stand around in front of a gate",
+    "Three zebras hanging out near a barred window."
+   ],
+   "cands": [
+    {
+     "caption": "five zebras idly stand around in front of a gate",
+     "replaces": 3,
+     "note": "three->five",
+     "kind": "num"
+    },
+    {
+     "caption": "five zebras are standing near a gate in a wall.",
+     "replaces": 0,
+     "note": "three->five",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000422953.jpg",
+   "bin": "high",
+   "captions": [
+    "Two planes sitting on runway with engines running.",
+    "An airplane taking off from the tarmac. ",
+    "Plane going down the runway coming off at front",
+    "A grey plane is taking off of the runway",
+    "A couple of planes pared on top of a runway."
+   ],
+   "cands": [
+    {
+     "caption": "three planes sitting on runway with engines running.",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "A brown plane is taking off of the runway",
+     "replaces": 3,
+     "note": "grey->brown",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000032523.jpg",
+   "bin": "mid",
+   "captions": [
+    "A metal plate with two pizzas with toppings",
+    "Two small pizzas are on a long pan.",
+    "Two pizzas sitting on top of a pan on a counter.",
+    "Flatbread pizzas resting on a cooking tray in a kitchen.",
+    "two pizzas on a black tray  and an orange pot"
+   ],
+   "cands": [
+    {
+     "caption": "three small pizzas are on a long pan.",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "A metal plate with three pizzas with toppings",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000419375.jpg",
+   "bin": "mid",
+   "captions": [
+    "a green and white bus a car street and a building ",
+    "A small green and white bush traveling down a highway.",
+    "a bus drives on the left lane of a highway",
+    "A bus on a two lane paved road next to a large structure.",
+    "A green and white bus is on the street near an overpass."
+   ],
+   "cands": [
+    {
+     "caption": "A small green and black bush traveling down a highway.",
+     "replaces": 1,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "A green and black bus is on the street near an overpass.",
+     "replaces": 4,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000171603.jpg",
+   "bin": "high",
+   "captions": [
+    "A person sitting in front of a laptop computer.",
+    "One boy is looking a computer, and one is looking at a phone.",
+    "A young man laying on a pallet while another person operates a laptop.",
+    "A woman on a laptop and man on his phone.",
+    "Adults play on laptops and cell phones in a living area."
+   ],
+   "cands": [
+    {
+     "caption": "two boy is looking a computer, and one is looking at a phone.",
+     "replaces": 1,
+     "note": "one->two",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000361127.jpg",
+   "bin": "mid",
+   "captions": [
+    "A cat leaning on top an electrical box.",
+    "An orange and white cat and beaver looking at an ear of corn.",
+    "A tabby cat looking a at a groundhog eating corn.",
+    " a yellow cat going after some corn on the cob",
+    "a cat leaning on a box next to a tree "
+   ],
+   "cands": [
+    {
+     "caption": " a red cat going after some corn on the cob",
+     "replaces": 3,
+     "note": "yellow->red",
+     "kind": "color"
+    },
+    {
+     "caption": "An orange and black cat and beaver looking at an ear of corn.",
+     "replaces": 1,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000222394.jpg",
+   "bin": "mid",
+   "captions": [
+    "Two people are out cross country skiing together",
+    "two people riding skis with trees in the back ground",
+    "Two people standing on top of a snow covered summit.",
+    "Two people walking in the snow on snowshoes.",
+    "Two skiers stand together on a slope, with trees in the background."
+   ],
+   "cands": [
+    {
+     "caption": "three people are out cross country skiing together",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three people walking in the snow on snowshoes.",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000174389.jpg",
+   "bin": "low",
+   "captions": [
+    "A surfer holding his board cresting a wave",
+    "A man that is on a wave holding a surfboard.",
+    "A man on a surfboard who is riding a wave.",
+    "a man jumping above the water while holding onto his surfboard ",
+    "A man riding a wave on a white surfboard."
+   ],
+   "cands": [
+    {
+     "caption": "A man riding a wave on a black surfboard.",
+     "replaces": 4,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000085212.jpg",
+   "bin": "high",
+   "captions": [
+    "a toilet in an unfinished bath room ",
+    "A small toilet sits in the corner of a bare room.",
+    "a toilet with a toilet lid wrapped in plastic",
+    "a toilet with a piece of cardboard on the top of the bowl",
+    "a white toilet a tan wall and a wooden counter"
+   ],
+   "cands": [
+    {
+     "caption": "a black toilet a tan wall and a wooden counter",
+     "replaces": 4,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000570465.jpg",
+   "bin": "high",
+   "captions": [
+    "Several slices of bread with side salads on a table.",
+    "A table with a plate of cut pizza, two plates of salad, and a can of soda.",
+    "Three plates of food consisting of pizza, salads, rice and a can of cola",
+    "Several plates of food including fried dough and salads.",
+    "A meal containing soda, salad pizza and rice on a table."
+   ],
+   "cands": [
+    {
+     "caption": "A table with a plate of cut pizza, three plates of salad, and a can of soda.",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "five plates of food consisting of pizza, salads, rice and a can of cola",
+     "replaces": 2,
+     "note": "three->five",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000528030.jpg",
+   "bin": "low",
+   "captions": [
+    "A man wearing a blue tie and a shirt.",
+    "A man is all dressed up in a suit .",
+    "A man wearing a tie standing in from of a line of trees.",
+    "A man in a blue tie in front of a forest line.",
+    "An Arab man wearing a white shirt, dark pants and a bright blue tie."
+   ],
+   "cands": [
+    {
+     "caption": "A man wearing a green tie and a shirt.",
+     "replaces": 0,
+     "note": "blue->green",
+     "kind": "color"
+    },
+    {
+     "caption": "A man in a green tie in front of a forest line.",
+     "replaces": 3,
+     "note": "blue->green",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000126502.jpg",
+   "bin": "low",
+   "captions": [
+    "Two birds going up the back of a giraffe. ",
+    "Two birds sitting on the the back of a giraffe. ",
+    "Two birds are sitting on a wall near the bushes.\n",
+    "a large giraffe that is walking by some trees",
+    "Two birds standing on the back of a giraffe."
+   ],
+   "cands": [
+    {
+     "caption": "three birds going up the back of a giraffe. ",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three birds standing on the back of a giraffe.",
+     "replaces": 4,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000293174.jpg",
+   "bin": "high",
+   "captions": [
+    "A toilet is standing in a room with a picture frame on top of it.",
+    "a close up of a toilet in a bath room ",
+    "A teal toilet is the center of this bathroom photo.",
+    "TEAL BLUE TOILET WITH PICTURE AND SCENT STICKS ON TANK LID",
+    "A framed picture and reed diffuser sit on top of a toilet in a bathroom."
+   ],
+   "cands": [
+    {
+     "caption": "TEAL green TOILET WITH PICTURE AND SCENT STICKS ON TANK LID",
+     "replaces": 3,
+     "note": "blue->green",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000348047.jpg",
+   "bin": "high",
+   "captions": [
+    "two people pose on the snow for a photo ",
+    "Skiers in bright attire sit atop a snowy slope.",
+    "People in ski gear waiting in the snow.",
+    "A skier and a snowboarder posing on a mountain slope. ",
+    "One person on skis standing up and another person on a snowboard sitting down on a slope. "
+   ],
+   "cands": [
+    {
+     "caption": "two person on skis standing up and another person on a snowboard sitting down on a slope. ",
+     "replaces": 4,
+     "note": "one->two",
+     "kind": "num"
+    },
+    {
+     "caption": "three people pose on the snow for a photo ",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000395210.jpg",
+   "bin": "mid",
+   "captions": [
+    "A large clock near a house is marked, \"1802\".",
+    "a large clock resting in front of a home with trees in the background",
+    "A black and white clock reads the time of \"3:25\".",
+    "a small black clock is on a pole outside",
+    "A clock near the front of a house."
+   ],
+   "cands": [
+    {
+     "caption": "a small red clock is on a pole outside",
+     "replaces": 3,
+     "note": "black->red",
+     "kind": "color"
+    },
+    {
+     "caption": "A black and black clock reads the time of \"3:25\".",
+     "replaces": 2,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000040911.jpg",
+   "bin": "high",
+   "captions": [
+    "A group of men preparing food inside of a kitchen.",
+    "a number of people in a kitchen preparing food",
+    "Two men working over a table of food.",
+    "Two chefs working on a meal together in a restaurant. ",
+    "A black and white picture of chefs cooking in a kitchen.\n"
+   ],
+   "cands": [
+    {
+     "caption": "three men working over a table of food.",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three chefs working on a meal together in a restaurant. ",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000091875.jpg",
+   "bin": "mid",
+   "captions": [
+    "A picture of two animals that are in the dirt.",
+    "Two zebras standing outside under a tree in an enclosure.",
+    "Two zebra standing next to each other behind a wire fence.",
+    "Two zebras are standing in a row with trees and a fence in the background.",
+    "Two zebras in wired fence area, tree stumps and trees visible on bare ground area, probably a zoo."
+   ],
+   "cands": [
+    {
+     "caption": "A picture of three animals that are in the dirt.",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three zebra standing next to each other behind a wire fence.",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000081701.jpg",
+   "bin": "low",
+   "captions": [
+    "a man with his shirt off about to serve a tennis ball",
+    "A man is preparing to serve a tennis ball",
+    "A guy in pink shorts prepares to hit a tennis ball with a racket. ",
+    "A shirtless man swinging at a tennis ball",
+    "A man without a shirt about to make a serve with a tennis ball and racquet."
+   ],
+   "cands": [
+    {
+     "caption": "A guy in brown shorts prepares to hit a tennis ball with a racket. ",
+     "replaces": 2,
+     "note": "pink->brown",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000403107.jpg",
+   "bin": "mid",
+   "captions": [
+    "An open laptop computer sitting on top of a desk.",
+    "A laptop computer next to a computer monitor.",
+    "Two computers are shown together on a desk.",
+    "A desk with a laptop, computer monitor and keyboard.",
+    "there is a black lap top next to a desk top"
+   ],
+   "cands": [
+    {
+     "caption": "there is a red lap top next to a desk top",
+     "replaces": 4,
+     "note": "black->red",
+     "kind": "color"
+    },
+    {
+     "caption": "three computers are shown together on a desk.",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000031081.jpg",
+   "bin": "mid",
+   "captions": [
+    "A group of people sitting around a table with soda and pizza.",
+    "Four people are having pizza near many soda cans.",
+    "Man with teenagers at outdoor setting enjoying food and drink.",
+    "Four people sitting at a table with a large pizza and cans of soda.",
+    "Several people are around a table eating a margarita pizza."
+   ],
+   "cands": [
+    {
+     "caption": "six people sitting at a table with a large pizza and cans of soda.",
+     "replaces": 3,
+     "note": "four->six",
+     "kind": "num"
+    },
+    {
+     "caption": "six people are having pizza near many soda cans.",
+     "replaces": 1,
+     "note": "four->six",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000242379.jpg",
+   "bin": "high",
+   "captions": [
+    "A strawberry cheesecake on a green plate that is on top of a pink and white cloth.",
+    "A round plate that has a white and red pie type dessert on it and a light green pitcher behind it.",
+    "The cheese cake is prepared mixed with strawberries. ",
+    "A cheesecake is sitting on a plate near a teapot.",
+    "A small plate with a cake next to a coffee pot."
+   ],
+   "cands": [
+    {
+     "caption": "A strawberry cheesecake on a green plate that is on top of a pink and black cloth.",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "A round plate that has a white and blue pie type dessert on it and a light green pitcher behind it.",
+     "replaces": 1,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000540679.jpg",
+   "bin": "high",
+   "captions": [
+    "Small upscale portioned dessert on small white plate with fruit.",
+    "A plate with four quadrants that are holding deserts",
+    "A square piece of cake with fruit on top sitting on a plate.",
+    "Is the dessert chocolate cheesecake or chocolate mousse?",
+    "A cake that is sitting on a plate."
+   ],
+   "cands": [
+    {
+     "caption": "Small upscale portioned dessert on small black plate with fruit.",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "A plate with six quadrants that are holding deserts",
+     "replaces": 1,
+     "note": "four->six",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000197036.jpg",
+   "bin": "high",
+   "captions": [
+    "An iridescent, intricately designed vase sits among other vases in a display. ",
+    "A large glass vase with a leafy design on it",
+    "an image of a glass cup on a table",
+    "Two glass vases sitting on top of a stone table.",
+    "Orange and brown ornamental vase sitting out on display. "
+   ],
+   "cands": [
+    {
+     "caption": "three glass vases sitting on top of a stone table.",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "purple and brown ornamental vase sitting out on display. ",
+     "replaces": 4,
+     "note": "orange->purple",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000397058.jpg",
+   "bin": "low",
+   "captions": [
+    "An oriental man shows off his two cell phones.",
+    "A man is holding two cell phones in cases.",
+    "Asian man in glasses holding two colorful mobile phone cases",
+    "a man in glasses holding two cell phones",
+    "A man is holding two cellphones housed in red, white, and blue cases."
+   ],
+   "cands": [
+    {
+     "caption": "Asian man in glasses holding three colorful mobile phone cases",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "a man in glasses holding three cell phones",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000190156.jpg",
+   "bin": "low",
+   "captions": [
+    "A black and white cat eating out of a white coffee cup.",
+    "a cat sticking its head in a coffee cup in front of a laptop",
+    "A cat that is sitting in front of a laptop near a coffee cup.",
+    "Cat drinking out of a mug on a counter.",
+    "A cat is drinking out of a cup in front of a computer."
+   ],
+   "cands": [
+    {
+     "caption": "A black and black cat eating out of a white coffee cup.",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000055460.jpg",
+   "bin": "low",
+   "captions": [
+    "A large brick tower with a massive clock on it's side.",
+    "a clock on the side of a brick building",
+    "A big metal clock on the side of a building.",
+    "A blue clock that reads 3:45 on the side of a building",
+    "A huge clock on the side of a building. "
+   ],
+   "cands": [
+    {
+     "caption": "A green clock that reads 3:45 on the side of a building",
+     "replaces": 3,
+     "note": "blue->green",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000297439.jpg",
+   "bin": "mid",
+   "captions": [
+    "Some cows in the grass by some water.",
+    "a number of cows in a field near a body of water ",
+    "A bunch of cows that are standing in the grass.",
+    "A herd of cattle are grazing in a large field in front of a pond. ",
+    "some brown white and black cows water and grass"
+   ],
+   "cands": [
+    {
+     "caption": "some brown black and black cows water and grass",
+     "replaces": 4,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000403585.jpg",
+   "bin": "mid",
+   "captions": [
+    "A man dressed as a woman with a short skirt and tights.",
+    "a man in a skirt while holding a purse ",
+    "A young man dressed in a schoolgirl uniform and holding a purse.",
+    "a girl with very short hair in a black mans style suit jacket, tie  and grey skirt ",
+    "A person wears a suit and tie, and a skirt, and is holding a handbag."
+   ],
+   "cands": [
+    {
+     "caption": "a girl with very short hair in a red mans style suit jacket, tie  and grey skirt ",
+     "replaces": 3,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000317639.jpg",
+   "bin": "high",
+   "captions": [
+    "A woman is taking a picture of herself in a bathroom mirror.",
+    "A double sinked bathroom has circular twig wreaths hanging above.",
+    "The two wreaths were each hung above a sink.",
+    "A woman taking a selfie in a bathroom with a digital camera.",
+    "Two wreaths above two sinks in a bathroom"
+   ],
+   "cands": [
+    {
+     "caption": "The three wreaths were each hung above a sink.",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three wreaths above two sinks in a bathroom",
+     "replaces": 4,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000497187.jpg",
+   "bin": "mid",
+   "captions": [
+    "A view of a keyboard from up close and on the side.",
+    "These are keys on a computer keyboard. ",
+    "A close up image of a computer keyboard",
+    "a button on a black keyboard on a desk",
+    "a keyboard sits on a table top "
+   ],
+   "cands": [
+    {
+     "caption": "a button on a red keyboard on a desk",
+     "replaces": 3,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000257013.jpg",
+   "bin": "low",
+   "captions": [
+    "The green double decker bus is driving through the curve of a street.",
+    "A two story bus drives through a rural city. ",
+    "A green double decker bus driving down the street",
+    "There is a green double decker bus on the road.",
+    "A green two level bus from front diagonal view on a curved street with trees."
+   ],
+   "cands": [
+    {
+     "caption": "There is a yellow double decker bus on the road.",
+     "replaces": 3,
+     "note": "green->yellow",
+     "kind": "color"
+    },
+    {
+     "caption": "A yellow double decker bus driving down the street",
+     "replaces": 2,
+     "note": "green->yellow",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000002135.jpg",
+   "bin": "mid",
+   "captions": [
+    "Women hiding from the sun on a city bench",
+    "Two people sitting on a bench under an umbrella.",
+    "Two woman sitting beneath an umbrella to block the sun",
+    "Older woman wearing sunglasses holding up green umbrella to keep sun away.",
+    "Two women sitting at bench under an umbrella."
+   ],
+   "cands": [
+    {
+     "caption": "three woman sitting beneath an umbrella to block the sun",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three women sitting at bench under an umbrella.",
+     "replaces": 4,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000311099.jpg",
+   "bin": "mid",
+   "captions": [
+    "The wildflower is sitting in the glass of water,",
+    "A single flower that has been placed in a vase.",
+    "One flower in a clear vase of water.",
+    "A single green flower in a glass of water.",
+    "A LONE FLOWER IN A SMALL VASE OF WATER "
+   ],
+   "cands": [
+    {
+     "caption": "two flower in a clear vase of water.",
+     "replaces": 2,
+     "note": "one->two",
+     "kind": "num"
+    },
+    {
+     "caption": "A single yellow flower in a glass of water.",
+     "replaces": 3,
+     "note": "green->yellow",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000101357.jpg",
+   "bin": "mid",
+   "captions": [
+    "A bed on a wooden frame, covered by blanket.",
+    "A bed sitting next to a wooden dresser near a window.",
+    "A bed has a wooden frame and a brown blanket.",
+    "A neatly made log-looking bunk bed in a dormitory ",
+    "A wooden bed in the middle of a room beside a dresser. "
+   ],
+   "cands": [
+    {
+     "caption": "A bed has a wooden frame and a gray blanket.",
+     "replaces": 2,
+     "note": "brown->gray",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000166624.jpg",
+   "bin": "low",
+   "captions": [
+    "A person in  a white jacket skiing down a slope",
+    "A person riding skis down a snow covered ski slope.",
+    "Person in white ski jacket coming down snow filled mountain.",
+    "A woman dressed in black and white gear, skiing down a slope.",
+    "Someone skiing down a ski slope with ski poles in the hands"
+   ],
+   "cands": [
+    {
+     "caption": "A person in  a black jacket skiing down a slope",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "Person in black ski jacket coming down snow filled mountain.",
+     "replaces": 2,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000520087.jpg",
+   "bin": "high",
+   "captions": [
+    "Two containers of food are shown on a surface.",
+    "A lunch box with various vegetables and rice.",
+    "a plate of tomatoes, asparagus carrots, celery and onion",
+    "A meal of vegetables and rice in blue dishes",
+    "A small container with various vegetables in it and another container next ot it that has rice and seaweed."
+   ],
+   "cands": [
+    {
+     "caption": "A meal of vegetables and rice in green dishes",
+     "replaces": 3,
+     "note": "blue->green",
+     "kind": "color"
+    },
+    {
+     "caption": "three containers of food are shown on a surface.",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000453918.jpg",
+   "bin": "low",
+   "captions": [
+    "A woman is cutting a blonde girl's hair.",
+    "A woman cutting another woman's hair in a salon. ",
+    "A salonist attending to a white lady's hair ",
+    "Woman cutting girl's hair while sitting in a kitchen",
+    "A woman cuts a little girl's long, blonde hair."
+   ],
+   "cands": [
+    {
+     "caption": "A salonist attending to a black lady's hair ",
+     "replaces": 2,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000220115.jpg",
+   "bin": "high",
+   "captions": [
+    "Four male tennis players pose on the court with tennis rackets and a ball.",
+    "A group of men are standing outside with tennis rackets.",
+    "Several men standing together on a tennis court.",
+    "A group of four tennis players posing for a picture.",
+    "Four men in sports attire smile towards the camera. "
+   ],
+   "cands": [
+    {
+     "caption": "six men in sports attire smile towards the camera. ",
+     "replaces": 4,
+     "note": "four->six",
+     "kind": "num"
+    },
+    {
+     "caption": "A group of six tennis players posing for a picture.",
+     "replaces": 3,
+     "note": "four->six",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000480469.jpg",
+   "bin": "mid",
+   "captions": [
+    "A woman is wearing a mans shirt and tie and is smiling",
+    "Girl in white shirt and crazy tie making a funny face.",
+    "A woman wearing a tie smiles broadly. ",
+    "A lady, dressed a bit formally, is smiling for the camera. ",
+    "a woman smiling wearing a white shirt and multi colored tie"
+   ],
+   "cands": [
+    {
+     "caption": "a woman smiling wearing a black shirt and multi colored tie",
+     "replaces": 4,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "Girl in black shirt and crazy tie making a funny face.",
+     "replaces": 1,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000313399.jpg",
+   "bin": "low",
+   "captions": [
+    "A hot dog sitting on top of a wrapper next to a receipt.",
+    "a hot dog sitting on a wrapper with the receipt ",
+    "Hot dog with green topping sitting in a plate with a napkin. ",
+    "A basket of food that includes a hotdog with a receipt.",
+    "A hotdog with relish in a basket with a receipt."
+   ],
+   "cands": [
+    {
+     "caption": "Hot dog with yellow topping sitting in a plate with a napkin. ",
+     "replaces": 2,
+     "note": "green->yellow",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000566319.jpg",
+   "bin": "mid",
+   "captions": [
+    "Black and white dog looking up with potted plants and wooden stairs",
+    "A beautiful dog is looking up at the camera with some plants next to it. ",
+    "A cute black and white dog looks up from a gardening scene.",
+    "A dog is standing near potted plants and a bench.",
+    "Looking at a dog near a rustic stair case."
+   ],
+   "cands": [
+    {
+     "caption": "A cute black and black dog looks up from a gardening scene.",
+     "replaces": 2,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "Black and black dog looking up with potted plants and wooden stairs",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000502726.jpg",
+   "bin": "mid",
+   "captions": [
+    "Sunlight streams through a window onto a living room's coffee table and couches.\n",
+    "a view of a living room with open windows, a couch on a carpeted floor",
+    "A living room with white walls and blue couches",
+    "Two couches frame a coffee table in a clean living room. ",
+    "A living room is shown with light blue decor."
+   ],
+   "cands": [
+    {
+     "caption": "A living room is shown with light green decor.",
+     "replaces": 4,
+     "note": "blue->green",
+     "kind": "color"
+    },
+    {
+     "caption": "A living room with white walls and green couches",
+     "replaces": 2,
+     "note": "blue->green",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000140007.jpg",
+   "bin": "high",
+   "captions": [
+    "A girl in the snow wearing vintage ski equipment.",
+    "Black and white photograph of a woman on skis.",
+    "A thick woman riding skis on top of a snow covered slope.",
+    "A large woman in a skirt has fun skiing.",
+    "A woman on skis holding one hand up with a pole."
+   ],
+   "cands": [
+    {
+     "caption": "A woman on skis holding two hand up with a pole.",
+     "replaces": 4,
+     "note": "one->two",
+     "kind": "num"
+    },
+    {
+     "caption": "Black and black photograph of a woman on skis.",
+     "replaces": 1,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000249363.jpg",
+   "bin": "high",
+   "captions": [
+    "A stop sign sitting near a church with some Mountains in the background.",
+    "A quiet street with yellow houses and the mountains in the background.",
+    "Mountain view pictured from a quiet residential street.",
+    "You can see the mountains in the distance",
+    "A house with a church steeple behind it and mountains in the background.  "
+   ],
+   "cands": [
+    {
+     "caption": "A quiet street with red houses and the mountains in the background.",
+     "replaces": 1,
+     "note": "yellow->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000197847.jpg",
+   "bin": "mid",
+   "captions": [
+    "Two people skiing down a snow covered slope.",
+    "three people going down the hill on skiis and snowboards ",
+    "Three skiers make their way down the mountainside.  ",
+    "People are riding down the hill in the snow on skis.",
+    "A few people skiing down a ski slope."
+   ],
+   "cands": [
+    {
+     "caption": "five skiers make their way down the mountainside.  ",
+     "replaces": 2,
+     "note": "three->five",
+     "kind": "num"
+    },
+    {
+     "caption": "three people skiing down a snow covered slope.",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000178798.jpg",
+   "bin": "low",
+   "captions": [
+    "A cat is laying down on a white laptop. ",
+    "A black cat searching the internet with a laptop computer.",
+    "Black cat is laying on the keyboard of an Apple laptop. ",
+    "A black cat is sitting on top of a laptop.",
+    "A black cat lays on the keyboard of a laptop."
+   ],
+   "cands": [
+    {
+     "caption": "A red cat searching the internet with a laptop computer.",
+     "replaces": 1,
+     "note": "black->red",
+     "kind": "color"
+    },
+    {
+     "caption": "A red cat lays on the keyboard of a laptop.",
+     "replaces": 4,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000025777.jpg",
+   "bin": "low",
+   "captions": [
+    "Two young women playing a game of soccer.",
+    "Two girls are shown playing soccer in the grass.",
+    "Girls playing soccer in a residential field. ",
+    "Two female soccer players are fighting for a soccer ball. ",
+    "Two girls playing soccer kicking outwards as a soccer ball falls and onlookers watch."
+   ],
+   "cands": [
+    {
+     "caption": "three young women playing a game of soccer.",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three girls are shown playing soccer in the grass.",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000442312.jpg",
+   "bin": "low",
+   "captions": [
+    "Several cows standing on a street full of people, bicycles, buildings and a camel.",
+    "There are two cows standing in the road.",
+    "a couple of cows sit in a plaza full of people ",
+    "A couple of cows standing on a street.",
+    "A couple of cows walking down the road."
+   ],
+   "cands": [
+    {
+     "caption": "There are three cows standing in the road.",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000067355.jpg",
+   "bin": "low",
+   "captions": [
+    "Two horses wearing saddles, grazing at the far end of a field.",
+    "there are two horses at the far end of this field",
+    "A pair of horses stand next to a hedge.",
+    "Two horses stand in a large, green pasture.",
+    "Two horses stand by a fence as they eat some grass. "
+   ],
+   "cands": [
+    {
+     "caption": "there are three horses at the far end of this field",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three horses stand in a large, green pasture.",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000270586.jpg",
+   "bin": "mid",
+   "captions": [
+    "Kids in a park in their uniforms playing soccer.",
+    "Two adults watch as the boys play soccer.",
+    "A group of young children playing a game of soccer.",
+    "a group of kids that are standing on some grass",
+    "A group of kids playing soccer in a field."
+   ],
+   "cands": [
+    {
+     "caption": "three adults watch as the boys play soccer.",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000265366.jpg",
+   "bin": "low",
+   "captions": [
+    "A man holding an umbrella while looking forward. ",
+    "there is a man that is holding a black umbrella",
+    "A man with an umbrella, with glow in the dark rod.",
+    "A man is holding an umbrella and a light saber.",
+    "A man standing under an umbrella with a house behind him."
+   ],
+   "cands": [
+    {
+     "caption": "there is a man that is holding a red umbrella",
+     "replaces": 1,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000296110.jpg",
+   "bin": "high",
+   "captions": [
+    "A gazelle standing near a zebra in the dirt",
+    "A gazelle and zebra graze on an open plain.",
+    "Two animals in the middle of a dessert like area",
+    "An antelope grazing on grass next to a zebra.",
+    "An antelope is walking with a zebra in the distance."
+   ],
+   "cands": [
+    {
+     "caption": "three animals in the middle of a dessert like area",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000057381.jpg",
+   "bin": "low",
+   "captions": [
+    "A motor bike parked in front of a truck.",
+    "A black motorcycle is parked in front of a black pickup truck. ",
+    "A black motorcycle parked in front of a black truck",
+    "A black motorcycle parked in front of a large pick-up truck. ",
+    "A black motorcycle is parked in the driveway, next to a truck. "
+   ],
+   "cands": [
+    {
+     "caption": "A red motorcycle parked in front of a large pick-up truck. ",
+     "replaces": 3,
+     "note": "black->red",
+     "kind": "color"
+    },
+    {
+     "caption": "A red motorcycle parked in front of a black truck",
+     "replaces": 2,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000534044.jpg",
+   "bin": "low",
+   "captions": [
+    "A train going down the rail road track.",
+    "a train going down a train track next to a old building",
+    "A yellow train is going down the tracks.",
+    "A train on the railway track passing a station.",
+    "A train is making its way through a tattered train station."
+   ],
+   "cands": [
+    {
+     "caption": "A red train is going down the tracks.",
+     "replaces": 2,
+     "note": "yellow->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000322827.jpg",
+   "bin": "mid",
+   "captions": [
+    "A group of giraffe standing on top of a dirt field.",
+    "A group of giraffe standing in a dirt field.",
+    "Some very cute giraffes by a big rock wall.",
+    "Three giraffe's standing in a dirt grazing area.",
+    "Three giraffes are standing outdoors near a fence."
+   ],
+   "cands": [
+    {
+     "caption": "five giraffe's standing in a dirt grazing area.",
+     "replaces": 3,
+     "note": "three->five",
+     "kind": "num"
+    },
+    {
+     "caption": "five giraffes are standing outdoors near a fence.",
+     "replaces": 4,
+     "note": "three->five",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000233651.jpg",
+   "bin": "mid",
+   "captions": [
+    "A man holding a bag with a doughnut in it.",
+    "A man chewing a bite of a donut. ",
+    "A man eating donut out of a paper bag.",
+    "A man eating Dunkin Donuts out of a bag ",
+    "a black and white photo of a person with a doughnut"
+   ],
+   "cands": [
+    {
+     "caption": "a black and black photo of a person with a doughnut",
+     "replaces": 4,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000343972.jpg",
+   "bin": "low",
+   "captions": [
+    "A family of elephants stand beside each other in an enclosure.",
+    "A elephant standing around with two baby elephants",
+    "Two baby elephants standing beside an adult elephant.",
+    "An adult elephant is with two young elephants.",
+    "A herd of elephants standing next to each other."
+   ],
+   "cands": [
+    {
+     "caption": "three baby elephants standing beside an adult elephant.",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "An adult elephant is with three young elephants.",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000234136.jpg",
+   "bin": "low",
+   "captions": [
+    "Two men smiling while they are in a car with a dog.",
+    "Two men in a vehicle with a big yellow dog.",
+    "Two men smile and pose with a dog in a car",
+    "Two men and a dog are riding in a car.",
+    "Two men holding a brown and white dog in a van."
+   ],
+   "cands": [
+    {
+     "caption": "three men and a dog are riding in a car.",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three men in a vehicle with a big yellow dog.",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000498421.jpg",
+   "bin": "mid",
+   "captions": [
+    "Two cats approaching an open grill and blue plate.",
+    "two cats investigating a grill cover and plate on the ground",
+    "A Calico cat and a black stripped cat nose around a plate.",
+    "two cats sniff around an area containing a grill and a plate with utensils on it",
+    "an orange black and white cat looking at a white plate and a black and gray cat and a BBQ grill"
+   ],
+   "cands": [
+    {
+     "caption": "an orange black and black cat looking at a white plate and a black and gray cat and a BBQ grill",
+     "replaces": 4,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "three cats approaching an open grill and blue plate.",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000423637.jpg",
+   "bin": "high",
+   "captions": [
+    "A number of big suitcases in a room",
+    "Antique luggage and a decorative baby carriage is displayed in a windowed room.",
+    "Several suitcases stacked together with a small miniature baby carriage sitting on top of one of them.",
+    "A living area with a baby carriage and old trunks.",
+    "A grouping of old chests with one group with a baby carriage on top."
+   ],
+   "cands": [
+    {
+     "caption": "A grouping of old chests with two group with a baby carriage on top.",
+     "replaces": 4,
+     "note": "one->two",
+     "kind": "num"
+    },
+    {
+     "caption": "Several suitcases stacked together with a small miniature baby carriage sitting on top of two of them.",
+     "replaces": 2,
+     "note": "one->two",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000219756.jpg",
+   "bin": "mid",
+   "captions": [
+    "a busy street with some tolls beside it",
+    "A parking meter along a street that has a cover over it.",
+    "A green \" Please Pay AT Pay Box \" covering over a parking meter.",
+    "many vehicles moving on the road and showing a pay box",
+    "A parking meter with a  Please pay at pay box cover over it."
+   ],
+   "cands": [
+    {
+     "caption": "A yellow \" Please Pay AT Pay Box \" covering over a parking meter.",
+     "replaces": 2,
+     "note": "green->yellow",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000293130.jpg",
+   "bin": "low",
+   "captions": [
+    "A dog sits in the shade near a yellow Frisbee.",
+    "A dog is sitting in the grass with a frisbee.",
+    "There is a dog sitting in the grass with a frisbee",
+    "A golden dog lays on grass near a yellow Frisbee.",
+    "A golden dog laying in the yard with its mouth open."
+   ],
+   "cands": [
+    {
+     "caption": "A dog sits in the shade near a red Frisbee.",
+     "replaces": 0,
+     "note": "yellow->red",
+     "kind": "color"
+    },
+    {
+     "caption": "A golden dog lays on grass near a red Frisbee.",
+     "replaces": 3,
+     "note": "yellow->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000341596.jpg",
+   "bin": "low",
+   "captions": [
+    "two older people sitting at a table ",
+    "Two men on their cellphones at a dining table.",
+    "Two men are sitting at a table looking at their cell phones",
+    "Two men sit at a wood dining room table while looking at their cell phones.",
+    "Tow older men sitting at a table while checking their cell phones."
+   ],
+   "cands": [
+    {
+     "caption": "three older people sitting at a table ",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three men sit at a wood dining room table while looking at their cell phones.",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000218788.jpg",
+   "bin": "mid",
+   "captions": [
+    "A coffee mug sitting near a keyboard. ",
+    "there is a red coffee cup with tea in it",
+    "There is a mug with drink left by the keyboard. ",
+    "A coffee cup that is sitting on a table.",
+    "A full cup of tea next to a computer keyboard."
+   ],
+   "cands": [
+    {
+     "caption": "there is a blue coffee cup with tea in it",
+     "replaces": 1,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000402590.jpg",
+   "bin": "low",
+   "captions": [
+    "there is a cat that is laying inside of a sink",
+    "A cat stretching out in the sink . ",
+    "A cat laying in a sink next to a counter top.",
+    "Cat lying and stretching in sink with black faucet",
+    "A cat is stretched out in a bathroom sink. "
+   ],
+   "cands": [
+    {
+     "caption": "Cat lying and stretching in sink with red faucet",
+     "replaces": 3,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000322008.jpg",
+   "bin": "high",
+   "captions": [
+    "A bedroom with a large bed and cover with two bedroom lamps.",
+    "The hotel room has a brown print bedspread and drapes to match.",
+    "A hotel room with bright lamps and a made bed",
+    "A bedroom area with bed, nightstand and window.",
+    "A hotel bed room with a bucket on the bed."
+   ],
+   "cands": [
+    {
+     "caption": "The hotel room has a gray print bedspread and drapes to match.",
+     "replaces": 1,
+     "note": "brown->gray",
+     "kind": "color"
+    },
+    {
+     "caption": "A bedroom with a large bed and cover with three bedroom lamps.",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000285696.jpg",
+   "bin": "high",
+   "captions": [
+    "A red and white jet airliner flying over a boat and bridge.",
+    "An airplane flying over a ship that is in a body of water. ",
+    "an air plane flying  thru the air over a boat",
+    "A large passenger jet flying over a bridge over the ocean.",
+    "The airplane takes off over the water, and appears very close to a boat below."
+   ],
+   "cands": [
+    {
+     "caption": "A blue and white jet airliner flying over a boat and bridge.",
+     "replaces": 0,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000374559.jpg",
+   "bin": "mid",
+   "captions": [
+    "A man in black shirt on a motorcycle in a street.",
+    "a person sitting on a motorcycle on a city street",
+    "a man ready to ride a motor bike on a street road",
+    "A person on a motor cycle poses on the road.",
+    "a man standing on his motorcycle by the road "
+   ],
+   "cands": [
+    {
+     "caption": "A man in red shirt on a motorcycle in a street.",
+     "replaces": 0,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000119630.jpg",
+   "bin": "high",
+   "captions": [
+    "Many suitcases are lined up on a floor",
+    "Many pieces of luggage sitting neatly beside one another.",
+    "Large collection of suitcases line up in rows.",
+    "Many pieces of luggage are stored together on the floor.",
+    "A large number of luggage set next to each other."
+   ],
+   "cands": [
+    {
+     "caption": "Many pieces of luggage sitting neatly beside two another.",
+     "replaces": 1,
+     "note": "one->two",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000565514.jpg",
+   "bin": "low",
+   "captions": [
+    "A green toilet lying in a wooded field. ",
+    "a green toilet that is in a field by some trees",
+    "A toilet in a large grass field by some trees.",
+    "A toilet is outside in a grassy field",
+    "A makeshift toilet in the middle of a wooded area with some trees in the background"
+   ],
+   "cands": [
+    {
+     "caption": "a yellow toilet that is in a field by some trees",
+     "replaces": 1,
+     "note": "green->yellow",
+     "kind": "color"
+    },
+    {
+     "caption": "A yellow toilet lying in a wooded field. ",
+     "replaces": 0,
+     "note": "green->yellow",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000154382.jpg",
+   "bin": "low",
+   "captions": [
+    "Three plates of toasted sandwiches are on a counter.",
+    "Three white plates with meatball and cheese sandwiches.",
+    "A trio of plates with sandwiches on them.",
+    "There are three plates with what appear to be meatball subs on them.",
+    "Three plates that have sandwiches with melted cheese on them."
+   ],
+   "cands": [
+    {
+     "caption": "five plates of toasted sandwiches are on a counter.",
+     "replaces": 0,
+     "note": "three->five",
+     "kind": "num"
+    },
+    {
+     "caption": "five white plates with meatball and cheese sandwiches.",
+     "replaces": 1,
+     "note": "three->five",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000054345.jpg",
+   "bin": "low",
+   "captions": [
+    "A red truck with a camper on the back by a big forest.",
+    "A red fire truck parked on the side of a road.",
+    "There is a fire patrol truck parked on the street.",
+    "a red emergency truck parked on a city street",
+    "There is a red san francisco fire truck parked"
+   ],
+   "cands": [
+    {
+     "caption": "A blue truck with a camper on the back by a big forest.",
+     "replaces": 0,
+     "note": "red->blue",
+     "kind": "color"
+    },
+    {
+     "caption": "A blue fire truck parked on the side of a road.",
+     "replaces": 1,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000037944.jpg",
+   "bin": "mid",
+   "captions": [
+    "A man in white shirt and shorts holding a tennis racket.",
+    "Male tennis player looking unhappy at a match. ",
+    "A man playing a tennis game with a crowd of people in stands.",
+    "Tennis player with a look of consternation on his face.",
+    "a man in white shorts holding a racket in a tennis court"
+   ],
+   "cands": [
+    {
+     "caption": "A man in black shirt and shorts holding a tennis racket.",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "a man in black shorts holding a racket in a tennis court",
+     "replaces": 4,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000115319.jpg",
+   "bin": "mid",
+   "captions": [
+    "A person in a gray jacket on a pair of skis",
+    "A person in skis is on the snow.",
+    "Skier in grey and green outfit in midair in the snow. ",
+    "A person doing a trick on a pair of skis in the snow.",
+    "Someone in green pants and a grey coat is skiing in the snow"
+   ],
+   "cands": [
+    {
+     "caption": "Skier in grey and yellow outfit in midair in the snow. ",
+     "replaces": 2,
+     "note": "green->yellow",
+     "kind": "color"
+    },
+    {
+     "caption": "A person in a brown jacket on a pair of skis",
+     "replaces": 0,
+     "note": "gray->brown",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000021198.jpg",
+   "bin": "high",
+   "captions": [
+    "A woman sitting at a table inside of a kitchen.",
+    "Two boys sitting at a table while eating.",
+    "A couple of people sitting at a dining room table.",
+    "A kitchen area has hard wood flooring a dining room table and chairs and dark wood cabinets.",
+    "A person sitting in a dark room with a bright light coming in the window."
+   ],
+   "cands": [
+    {
+     "caption": "three boys sitting at a table while eating.",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000281101.jpg",
+   "bin": "high",
+   "captions": [
+    "A man standing on a tennis court holding a racquet.",
+    "a tennis player finishing a swing in front of an audience\n",
+    "a male in a bright shirt and shorts with a white hat on a tennis court",
+    "A tennis player uses his muscles to hit the ball.",
+    "A man swings a tennis racket as people watch from the stands."
+   ],
+   "cands": [
+    {
+     "caption": "a male in a bright shirt and shorts with a black hat on a tennis court",
+     "replaces": 2,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000234665.jpg",
+   "bin": "low",
+   "captions": [
+    "A man swiveling between cones on a skate board",
+    "A person who is riding a skateboard round traffic cones. ",
+    "A man riding a skateboard near orange road cones.",
+    "A man riding on a skateboard weaves between cones.",
+    "a person is riding a skateboard near cones"
+   ],
+   "cands": [
+    {
+     "caption": "A man riding a skateboard near purple road cones.",
+     "replaces": 2,
+     "note": "orange->purple",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000519625.jpg",
+   "bin": "high",
+   "captions": [
+    "A man riding a skateboard down the side of a ramp.",
+    "Skateboarder in a red shirt grinding at a skate park.",
+    "A person riding along an elevated ledge on a skateboard in a park.",
+    "A boy is riding his skateboard in a skate park.",
+    "A skateboarder is on a concrete berm heading down."
+   ],
+   "cands": [
+    {
+     "caption": "Skateboarder in a blue shirt grinding at a skate park.",
+     "replaces": 1,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000085131.jpg",
+   "bin": "mid",
+   "captions": [
+    "there is a cat that is laying inside a luggage",
+    "A cat is sitting in a suitcase, atop clothing.",
+    "A cat relaxing in a piece of luggage ",
+    "a fluffy cat laying in a black suitcase",
+    "A cat lounges inside a packed luggage trunk."
+   ],
+   "cands": [
+    {
+     "caption": "a fluffy cat laying in a red suitcase",
+     "replaces": 3,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000337164.jpg",
+   "bin": "high",
+   "captions": [
+    " Couple of young girls matching pink outfits",
+    "One young girl combing another young girl's hair.",
+    "One little girl brushing another little girls hair.",
+    "a child standing brushing another childs hair ",
+    "a couple of girls that are sitting on the ground"
+   ],
+   "cands": [
+    {
+     "caption": " Couple of young girls matching brown outfits",
+     "replaces": 0,
+     "note": "pink->brown",
+     "kind": "color"
+    },
+    {
+     "caption": "two young girl combing another young girl's hair.",
+     "replaces": 1,
+     "note": "one->two",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000519027.jpg",
+   "bin": "mid",
+   "captions": [
+    "A group of men riding on the back of a white boat.",
+    "A group of people sail a boat in the ocean",
+    "The men in red shirts are riding a sail boat. ",
+    "People in red jackets onboard a sailboat in the water.",
+    "A group of people that are in a boat."
+   ],
+   "cands": [
+    {
+     "caption": "A group of men riding on the back of a black boat.",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "The men in blue shirts are riding a sail boat. ",
+     "replaces": 2,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000299641.jpg",
+   "bin": "high",
+   "captions": [
+    "An old wooden boat sitting in a grassy field. ",
+    "Some sort of a wooden kid's ride at a small local fairground.",
+    "A wooden enclosure outside next to a building",
+    "A wooden boat built into the ground as some sort of display.",
+    "A large brown wooden fence near a wooded area."
+   ],
+   "cands": [
+    {
+     "caption": "A large gray wooden fence near a wooded area.",
+     "replaces": 4,
+     "note": "brown->gray",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000011004.jpg",
+   "bin": "mid",
+   "captions": [
+    "A dollar store with a truck parked in front of it.",
+    "THERE IS A TRUCK PUTTING A SIGN ON A SHOPPING CENTER STORE ",
+    "A large tan building with a white truck in front of it with a ladder attached to it. ",
+    "A truck parked on the outside of a building with a man on the truck fixing the lettering on a building. ",
+    "A truck with a boon is parked outside of a commercial building."
+   ],
+   "cands": [
+    {
+     "caption": "A large tan building with a black truck in front of it with a ladder attached to it. ",
+     "replaces": 2,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000026833.jpg",
+   "bin": "high",
+   "captions": [
+    "A woman and man shitting at a table eating food.",
+    "A smirking woman with strawberry-blonde hair and black glasses flashes a \"thumbs-up\" sign seated at a corner booth next to blank-faced man in a purple shirt.",
+    "Two people sitting at a table with food. ",
+    "A man and woman at a restaurant eating together.",
+    "A couple enjoying a restaurant meal while the woman gives thumbs up."
+   ],
+   "cands": [
+    {
+     "caption": "A smirking woman with strawberry-blonde hair and red glasses flashes a \"thumbs-up\" sign seated at a corner booth next to blank-faced man in a purple shirt.",
+     "replaces": 1,
+     "note": "black->red",
+     "kind": "color"
+    },
+    {
+     "caption": "three people sitting at a table with food. ",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000046405.jpg",
+   "bin": "low",
+   "captions": [
+    "A row of several purple buses at a bus station",
+    "A row of purple buses parked next to each other.",
+    "A fleet of transit buses colored purple sitting in a row.",
+    "Eight pink buses are parked in a row. ",
+    "A parking lot with many large purple buses."
+   ],
+   "cands": [
+    {
+     "caption": "A parking lot with many large orange buses.",
+     "replaces": 4,
+     "note": "purple->orange",
+     "kind": "color"
+    },
+    {
+     "caption": "A row of orange buses parked next to each other.",
+     "replaces": 1,
+     "note": "purple->orange",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000210683.jpg",
+   "bin": "low",
+   "captions": [
+    "Some people laying on some couches with blankets.",
+    "Two people are sleeping on couches in the living rom.",
+    "two people sleeping on couches in a living room",
+    "A couple of men lying on some couches with covers on.",
+    "Two guys are sleeping on the leather couches."
+   ],
+   "cands": [
+    {
+     "caption": "three guys are sleeping on the leather couches.",
+     "replaces": 4,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three people sleeping on couches in a living room",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000521644.jpg",
+   "bin": "low",
+   "captions": [
+    "An adorable brown dog walking on a sidewalk next to a patch of grass.",
+    "A dog walking down a sidewalk by a street.",
+    "closeup of a dog walking near dead grass",
+    "A dog walking down a sidewalk near some grass.",
+    "A terrier walking on a sidewalk next to a patch of grass."
+   ],
+   "cands": [
+    {
+     "caption": "An adorable gray dog walking on a sidewalk next to a patch of grass.",
+     "replaces": 0,
+     "note": "brown->gray",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000371153.jpg",
+   "bin": "mid",
+   "captions": [
+    "A vintage green compact sports car next to an airplane.",
+    "Young woman sitting in a Porsche 914 in front of a single engine propeller plane.",
+    "A small car with a woman inside is parked next to a small plane.",
+    "A young  woman sitting in a sports car with an airplane.",
+    "A cute woman inside of a vintage car beside an airplane."
+   ],
+   "cands": [
+    {
+     "caption": "A vintage yellow compact sports car next to an airplane.",
+     "replaces": 0,
+     "note": "green->yellow",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000070987.jpg",
+   "bin": "mid",
+   "captions": [
+    "A woman with beautiful breast sitting next to another woman and pizzas.",
+    "two people at a table with two boxes of pizza",
+    "Two women have a social interaction over pizza and drinks.",
+    "two female sitting at a table across from eachother eating pizza",
+    "two women sitting on a table eating some pizza from a box "
+   ],
+   "cands": [
+    {
+     "caption": "three people at a table with two boxes of pizza",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three women have a social interaction over pizza and drinks.",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000550277.jpg",
+   "bin": "high",
+   "captions": [
+    "a person standing with a luggage bag with a handle",
+    "This lady and man are standing near a bus.",
+    "A woman in purple pants stands next to a metal item.",
+    "Two people standing with their luggage and hand bags.",
+    "People standing with several items of luggage near a bus."
+   ],
+   "cands": [
+    {
+     "caption": "A woman in orange pants stands next to a metal item.",
+     "replaces": 2,
+     "note": "purple->orange",
+     "kind": "color"
+    },
+    {
+     "caption": "three people standing with their luggage and hand bags.",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000291451.jpg",
+   "bin": "high",
+   "captions": [
+    "Two red trains sitting inside of a garage.",
+    "Two red trains in a train station with the doors open. ",
+    "Two matching red trolleys in a garage area.",
+    "Two identical vehicles in garage stalls right next to each other.",
+    "A couple of buses in a large building."
+   ],
+   "cands": [
+    {
+     "caption": "three matching red trolleys in a garage area.",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three identical vehicles in garage stalls right next to each other.",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000013637.jpg",
+   "bin": "mid",
+   "captions": [
+    "MAN WITH GLASSES KNEELING IN FRONT OF A FIRE HYDRANT",
+    "The young man is crouched on the street.",
+    "a guy  hunkered down in front of a yellow and blue fire hydrant  ",
+    "A fire hydrant is painted yellow and blue and a guy is next to one.",
+    "a man kneeling down to look at a fire hydrant "
+   ],
+   "cands": [
+    {
+     "caption": "A fire hydrant is painted yellow and blue and a guy is next to two.",
+     "replaces": 3,
+     "note": "one->two",
+     "kind": "num"
+    },
+    {
+     "caption": "a guy  hunkered down in front of a yellow and green fire hydrant  ",
+     "replaces": 2,
+     "note": "blue->green",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000128409.jpg",
+   "bin": "low",
+   "captions": [
+    "A plate of chicken and broccoli and a pair of chop sticks.",
+    "A play of food and green broccoli with chop sticks.",
+    "Chopsticks resting on a plate of meat and broccoli",
+    "Food with broccoli and rice on a plate with chopsticks.",
+    "Plate on a table with chicken and broccoli on it."
+   ],
+   "cands": [
+    {
+     "caption": "A play of food and yellow broccoli with chop sticks.",
+     "replaces": 1,
+     "note": "green->yellow",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000256824.jpg",
+   "bin": "low",
+   "captions": [
+    "A man and woman in the sand next to their bikes.",
+    "A man and woman standing outside near their bicycles",
+    "a couple of bikes parked next to two people standing around",
+    "two people standing on the beach next to two bikes ",
+    "two people standing near parked bikes on a dirt ground "
+   ],
+   "cands": [
+    {
+     "caption": "three people standing on the beach next to two bikes ",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "a couple of bikes parked next to three people standing around",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000034920.jpg",
+   "bin": "low",
+   "captions": [
+    "Two giraffes and a zebra are in an enclosure.",
+    "Two giraffes are outside next to a zebra.",
+    "Close up of two giraffes neck and neck with a zebra laying down behind them in the enclosure. ",
+    "Two giraffes with a zebra in the background.",
+    "two giraffes stand near each other while a zebra sits\n\n"
+   ],
+   "cands": [
+    {
+     "caption": "three giraffes stand near each other while a zebra sits\n\n",
+     "replaces": 4,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three giraffes with a zebra in the background.",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000453507.jpg",
+   "bin": "low",
+   "captions": [
+    "A black cat wearing a little party hat.",
+    "A cat wears a tiny top hat with a blanket covering his lower body. ",
+    "A black cat wearing a black top hat.",
+    "A cat with a small hat glares at the camera",
+    "a close up of a hat wearing a small hat"
+   ],
+   "cands": [
+    {
+     "caption": "A red cat wearing a little party hat.",
+     "replaces": 0,
+     "note": "black->red",
+     "kind": "color"
+    },
+    {
+     "caption": "A red cat wearing a black top hat.",
+     "replaces": 2,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000210079.jpg",
+   "bin": "high",
+   "captions": [
+    "various vending trucks serve their patrons on a cloudy day",
+    "A parking lot has several food vans with people near them.",
+    "Woman in red dress standing in front of food bus.",
+    "A group of very large vehicles parked in a row under cloudy skies.",
+    "People visiting food trucks parked in a line on a wet day"
+   ],
+   "cands": [
+    {
+     "caption": "Woman in blue dress standing in front of food bus.",
+     "replaces": 2,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000360216.jpg",
+   "bin": "low",
+   "captions": [
+    "A woman brushing the teeth of a man.",
+    "A girl in a black shirt brushing a boy's teeth.",
+    "The girl seems to be brushing the boys teeth.",
+    "A smiling young woman brushing a young man's teeth.",
+    "a woman is brushing a mans teeth and a guitar"
+   ],
+   "cands": [
+    {
+     "caption": "A girl in a red shirt brushing a boy's teeth.",
+     "replaces": 1,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000380301.jpg",
+   "bin": "mid",
+   "captions": [
+    "Two young girls on swings and other small children on swings behind them, with a man standing near them in a carnival setting.",
+    "A couple of girls holding teddy bears on a fair ride.",
+    "Two girls on a ride at a circus event.",
+    "Two little girls sitting on swings holding teddy bears at a fair. ",
+    "Two young girls sitting on a swing ride."
+   ],
+   "cands": [
+    {
+     "caption": "three young girls on swings and other small children on swings behind them, with a man standing near them in a carnival setting.",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three little girls sitting on swings holding teddy bears at a fair. ",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000397569.jpg",
+   "bin": "high",
+   "captions": [
+    "a desk with two monitors and a laptop",
+    "On top of a table with the light on is a laptop, a computer monitor and a printer and across from it is a flat screen TV.",
+    "a television set a laptop books a monitor and a lamp",
+    "A desk area with a television screen, computer monitor, printer and laptop.",
+    "Two computers sit on a table while a television plays."
+   ],
+   "cands": [
+    {
+     "caption": "a desk with three monitors and a laptop",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three computers sit on a table while a television plays.",
+     "replaces": 4,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000120952.jpg",
+   "bin": "mid",
+   "captions": [
+    "A bus that is sitting on the side of a street.",
+    "A large bus is parked on the side of an empty street.",
+    "A blue, white, red, orange, and pink passenger bus. ",
+    "a large bus that is driving down the aroad",
+    "a bus next to a road on the corner"
+   ],
+   "cands": [
+    {
+     "caption": "A blue, white, blue, orange, and pink passenger bus. ",
+     "replaces": 2,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000173682.jpg",
+   "bin": "mid",
+   "captions": [
+    "A pitcher winding up to throw the baseball.",
+    "Men in Black and gray uniform throwing a baseball from a mound. ",
+    "A baseball pitcher with his arm fully back in a sidearm pitch.",
+    "A man in black jersey throwing a baseball on field.",
+    "The baseball player is throwing the ball from the mound."
+   ],
+   "cands": [
+    {
+     "caption": "Men in red and gray uniform throwing a baseball from a mound. ",
+     "replaces": 1,
+     "note": "black->red",
+     "kind": "color"
+    },
+    {
+     "caption": "A man in red jersey throwing a baseball on field.",
+     "replaces": 3,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000005088.jpg",
+   "bin": "high",
+   "captions": [
+    "An airplane that is on a runway about to fly.",
+    "A white and navy-blue plane is on the ground.",
+    "A private sized airplane that is on a runway. ",
+    "A plane has just landed at an airport.",
+    "A small engine charter plane riding on a runway."
+   ],
+   "cands": [
+    {
+     "caption": "A white and navy-green plane is on the ground.",
+     "replaces": 1,
+     "note": "blue->green",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000314750.jpg",
+   "bin": "mid",
+   "captions": [
+    "Two tiny stuffed animals with one that looks like a bear.",
+    "a close up of stuffed animals on a couch",
+    "A stuffed bear and lamb have been placed on a couch.",
+    "two little stuffed animals sitting next to each other on a couch ",
+    "Two stuffed toys sitting atop of light colored couch."
+   ],
+   "cands": [
+    {
+     "caption": "three little stuffed animals sitting next to each other on a couch ",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three stuffed toys sitting atop of light colored couch.",
+     "replaces": 4,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000371132.jpg",
+   "bin": "high",
+   "captions": [
+    "A wooden desk topped with a couple of laptop computers.",
+    "A desk that has some food on it and some computers.",
+    "A desk with two computers and other work materials.",
+    "A desk and chair complete with an open laptop and a desktop computer with a cat showing on the monitor and with a meal set out with implements and grapes. ",
+    "a large black desk area with several items on top of it"
+   ],
+   "cands": [
+    {
+     "caption": "A desk with three computers and other work materials.",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "a large red desk area with several items on top of it",
+     "replaces": 4,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000417830.jpg",
+   "bin": "mid",
+   "captions": [
+    "A cake with an American flag motif in the layers.",
+    "A cake designed to resemble the united states flag",
+    "A cake designed to look like an American flag.",
+    "A partially eaten patriotic cake of red, white, and blue displayed on a cake stand. ",
+    "A fourth of a cake sitting on top of a cake plate."
+   ],
+   "cands": [
+    {
+     "caption": "A partially eaten patriotic cake of blue, white, and blue displayed on a cake stand. ",
+     "replaces": 3,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000555309.jpg",
+   "bin": "high",
+   "captions": [
+    "Traffic lights at futuristic entrance to public event venue.",
+    "We are looking across the street at a futuristic building.",
+    "A stop light in front of a building.",
+    "A group of cars driving down a street next to a tall building.",
+    "some cars in the road and a street light with a red light "
+   ],
+   "cands": [
+    {
+     "caption": "some cars in the road and a street light with a blue light ",
+     "replaces": 4,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000554809.jpg",
+   "bin": "high",
+   "captions": [
+    "Small public restroom with chrome counter and wall.",
+    "a little bathroom with  a metal wall ",
+    "A small toilet with a toilet and washbasin.",
+    "A white toilet sitting next to a bathroom sink.",
+    "A public bathroom with sink and toilet "
+   ],
+   "cands": [
+    {
+     "caption": "A black toilet sitting next to a bathroom sink.",
+     "replaces": 3,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000559449.jpg",
+   "bin": "low",
+   "captions": [
+    "a bathroom with a sink and a toilet in it",
+    "A bathroom with a sink, toilet, and bathtub in it.",
+    "A typical residential bathroom, including sink, toilet, and bathtub.",
+    "A very clean bathroom with a sink, toilet, and bathtub.",
+    "A standard American style bathroom with all white fixtures."
+   ],
+   "cands": [
+    {
+     "caption": "A standard American style bathroom with all black fixtures.",
+     "replaces": 4,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000434190.jpg",
+   "bin": "low",
+   "captions": [
+    "Two birds sitting on a red towel on a shower pole.",
+    "Two birds are on a towel in a bathroom shower rod.",
+    "Two birds sitting on a towel hanging in a restroom.",
+    "One bird sitting on a shower curtain rod next to another bird hanging on to a wash cloth draped over the same shower curtain rod.",
+    "Two birds perching on a red towel hung over a towel rack."
+   ],
+   "cands": [
+    {
+     "caption": "three birds sitting on a towel hanging in a restroom.",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three birds sitting on a red towel on a shower pole.",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000406976.jpg",
+   "bin": "low",
+   "captions": [
+    "Two dogs lay next to each other on a brown couch.",
+    "Two large dogs sleeping on a large couch.  ",
+    "Two dogs are laying on a couch ",
+    "Two dogs sit on top of a couch. ",
+    "A close up of two dogs sleeping on a couch."
+   ],
+   "cands": [
+    {
+     "caption": "three dogs sit on top of a couch. ",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three dogs lay next to each other on a brown couch.",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000516812.jpg",
+   "bin": "low",
+   "captions": [
+    "A red fire hydrant in front of a tree",
+    "A red fire hydrant in a park next to a  tree.",
+    "A picture of a red fire hydrant in front of a tree.",
+    "A red fire hydrant in a park near a tree. ",
+    "A red fire hydrant is located in a grassy area."
+   ],
+   "cands": [
+    {
+     "caption": "A blue fire hydrant in front of a tree",
+     "replaces": 0,
+     "note": "red->blue",
+     "kind": "color"
+    },
+    {
+     "caption": "A blue fire hydrant in a park near a tree. ",
+     "replaces": 3,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000268798.jpg",
+   "bin": "high",
+   "captions": [
+    "a very large airplane that is blue and white",
+    "An airplane is on the airstrip preparing to take off.",
+    "A man in a safety vest stands in front of a small airplane.",
+    "An airplane is sitting out on the runway.",
+    "The airplane is on the runway of the airport."
+   ],
+   "cands": [
+    {
+     "caption": "a very large airplane that is green and white",
+     "replaces": 0,
+     "note": "blue->green",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000184980.jpg",
+   "bin": "mid",
+   "captions": [
+    "A trolley stopped on a city street with pedestrians walking in front.",
+    "a bus that is on a street with a building",
+    "Some people crossing a big busy city street with traffic.",
+    "Busses, cars and pedestrians on a busy city street.  ",
+    "two public transit buses on a city street"
+   ],
+   "cands": [
+    {
+     "caption": "three public transit buses on a city street",
+     "replaces": 4,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000503399.jpg",
+   "bin": "low",
+   "captions": [
+    "a black and white photo of a bearded man playing tennis",
+    "A young man swinging a tennis racket with two hands.",
+    "A man hitting a tennis ball with a racquet.",
+    "A man is playing a game of tennis.",
+    "A man mid swing with a tennis racket."
+   ],
+   "cands": [
+    {
+     "caption": "A young man swinging a tennis racket with three hands.",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "a black and black photo of a bearded man playing tennis",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000177143.jpg",
+   "bin": "high",
+   "captions": [
+    "A blue table sitting inside of a restaurant with a menu on top of it.",
+    "a restaurant table with some menus and a dirty plate on it ",
+    "A pamphlet sits open at an empty table.",
+    "A kitchen that has a book on a table.",
+    "a table with menus placed on it at a diner"
+   ],
+   "cands": [
+    {
+     "caption": "A green table sitting inside of a restaurant with a menu on top of it.",
+     "replaces": 0,
+     "note": "blue->green",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000437317.jpg",
+   "bin": "low",
+   "captions": [
+    "Two rows of bananas lay on a white surface and are attached to wires.",
+    "Eighteen bananas hooked to wires and plugged into a device.",
+    "Two rows of bananas are attached to electrodes.",
+    "A group of bananas with wires attached to their stems.",
+    "A bunch of bananas hooked up to wires."
+   ],
+   "cands": [
+    {
+     "caption": "three rows of bananas lay on a white surface and are attached to wires.",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three rows of bananas are attached to electrodes.",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000245642.jpg",
+   "bin": "mid",
+   "captions": [
+    "Someones hand holding on to their bike while beside a road with a bunch of sheep",
+    "a long line of sheep walking down the road ",
+    "A view from a bicycle on a small road with many sheep in front.",
+    "A flock of white sheep is on the road.",
+    "Biker going down a road with a large herd of sheep"
+   ],
+   "cands": [
+    {
+     "caption": "A flock of black sheep is on the road.",
+     "replaces": 3,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000521747.jpg",
+   "bin": "low",
+   "captions": [
+    "A dog laying down with his tongue out and a hat on. ",
+    "a dog in a black hat resting on a soft surface",
+    "A pug dog laying down wearing a pirate's hat",
+    "A pug dog wearing a pirate's hat sitting on a couch",
+    "A small dog with a pirate hat laying down."
+   ],
+   "cands": [
+    {
+     "caption": "a dog in a red hat resting on a soft surface",
+     "replaces": 1,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000186009.jpg",
+   "bin": "mid",
+   "captions": [
+    "A brown sheep standing on top of a lush green field.",
+    "A brown sheep in a pasture looking at the camera ",
+    "a sheep standing in a field in front of a house",
+    "A lamb standing on a hillside with a blue house in the background.",
+    "a chocolate colored sheep standing in the grass"
+   ],
+   "cands": [
+    {
+     "caption": "A lamb standing on a hillside with a green house in the background.",
+     "replaces": 3,
+     "note": "blue->green",
+     "kind": "color"
+    },
+    {
+     "caption": "A gray sheep in a pasture looking at the camera ",
+     "replaces": 1,
+     "note": "brown->gray",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000342307.jpg",
+   "bin": "low",
+   "captions": [
+    "A pair of steel scissors sitting on to of a white table.",
+    "A pair of stainless scissors is spreadeagled on a white background.",
+    "a close up of opened scissors on a white background",
+    "a pair of thick scissors laying on a white surface",
+    "There is a silver pair of scissors that is opened"
+   ],
+   "cands": [
+    {
+     "caption": "a pair of thick scissors laying on a black surface",
+     "replaces": 3,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "A pair of steel scissors sitting on to of a black table.",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000263011.jpg",
+   "bin": "mid",
+   "captions": [
+    "a group of people getting off a parked bus",
+    "People milling around a row of two story busses.",
+    "A group of people are standing beside parked double decker buses.",
+    "A group of people are on the grass by busses.",
+    "Rows of double decker busses in grassy area next to people."
+   ],
+   "cands": [
+    {
+     "caption": "People milling around a row of three story busses.",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000093511.jpg",
+   "bin": "mid",
+   "captions": [
+    "A man taking  a swing at a tennis ball",
+    "The tennis player stands ready to swing his racket.",
+    "Man wearing tennis clothing a tennis racket. ",
+    "A man holding a tennis racquet on a tennis court.",
+    "a male tennis player in a white shirt playing tennis"
+   ],
+   "cands": [
+    {
+     "caption": "a male tennis player in a black shirt playing tennis",
+     "replaces": 4,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000484257.jpg",
+   "bin": "low",
+   "captions": [
+    "A bird sitting next to a white plate filled with food.",
+    "A bird is sitting on a table near a plate of food.",
+    "A bird sits on the utensils next to a plate of food.  ",
+    "A bird standing on a utensil by a plate of food.",
+    "A small bird sits next to a plate of food."
+   ],
+   "cands": [
+    {
+     "caption": "A bird sitting next to a black plate filled with food.",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000084403.jpg",
+   "bin": "high",
+   "captions": [
+    "A man flying through the air while riding a snowboard.",
+    "Snowboarder flying in a blue sky over pristinely raked snow",
+    "A snowboarder in the air over groomed snow.",
+    "a person wearing a snowboard jumping across part of a hill ",
+    "A person in the air on a snowboard on a mountain slope."
+   ],
+   "cands": [
+    {
+     "caption": "Snowboarder flying in a green sky over pristinely raked snow",
+     "replaces": 1,
+     "note": "blue->green",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000000962.jpg",
+   "bin": "low",
+   "captions": [
+    "A man prepares to serve a tennis ball.",
+    "a person is holding a ball and tennis racket",
+    "A man is preparing to serve his ball.",
+    "A man with long hair is about to hit a tennis ball.",
+    "A guy holding a tennis ball in one hand with a tennis racket in his other hand. "
+   ],
+   "cands": [
+    {
+     "caption": "A guy holding a tennis ball in two hand with a tennis racket in his other hand. ",
+     "replaces": 4,
+     "note": "one->two",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000434381.jpg",
+   "bin": "high",
+   "captions": [
+    "A large Delta passenger plane sitting on an airport tarmac.",
+    "A Delta Airlines jumbo jet with gangway attached.",
+    "Wide shot of a docked jet airier and luggage cart.",
+    "A Delta airplane parked by a boarding station.",
+    "A white commercial airliner parked on a runway."
+   ],
+   "cands": [
+    {
+     "caption": "A black commercial airliner parked on a runway.",
+     "replaces": 4,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000155231.jpg",
+   "bin": "low",
+   "captions": [
+    "A little boy standing by a red and blue fire hydrant ",
+    "A toddler boy standing next to a fire hydrant .",
+    "Fire hydrant in red, white, and blue in black and white photo with toddler",
+    "A little boy is standing next to a fire hydrant.",
+    "A little boy standing next to a red and blue fire hydrant."
+   ],
+   "cands": [
+    {
+     "caption": "Fire hydrant in blue, white, and blue in black and white photo with toddler",
+     "replaces": 2,
+     "note": "red->blue",
+     "kind": "color"
+    },
+    {
+     "caption": "A little boy standing by a blue and blue fire hydrant ",
+     "replaces": 0,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000296012.jpg",
+   "bin": "high",
+   "captions": [
+    "A small green car has a plaque with writing in front of it. ",
+    "Museum with various cars and motorcycles on display",
+    "A two-tone green unusual car at an automobile show.",
+    "The car has two different shades on green on it ",
+    "Specialty box car on display in car museum."
+   ],
+   "cands": [
+    {
+     "caption": "The car has three different shades on green on it ",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "A three-tone green unusual car at an automobile show.",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000575511.jpg",
+   "bin": "high",
+   "captions": [
+    "A very tall brick structure with a clock tower.",
+    "A castle has a clock and small flag at the top.",
+    "a castle wall with a clock tower with a black and gold clock",
+    "An old stone wall with a large tower on top.",
+    "A caste with a clock tower underneath clear blue skies"
+   ],
+   "cands": [
+    {
+     "caption": "A caste with a clock tower underneath clear green skies",
+     "replaces": 4,
+     "note": "blue->green",
+     "kind": "color"
+    },
+    {
+     "caption": "a castle wall with a clock tower with a red and gold clock",
+     "replaces": 2,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000223401.jpg",
+   "bin": "low",
+   "captions": [
+    "A hand holding a half eaten red apple.",
+    "A woman holding a half eaten piece of fruit. ",
+    "A close-up of a woman's hand holding a half-eaten apple.",
+    "A hand holding an apple in front of some shrubbery.",
+    "A hand holds an apple with bites missing. "
+   ],
+   "cands": [
+    {
+     "caption": "A hand holding a half eaten blue apple.",
+     "replaces": 0,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000286787.jpg",
+   "bin": "mid",
+   "captions": [
+    "a small white oven in a home kitchen",
+    "A barren kitchen with white appliances and cabinets",
+    "Kitchen with appliances and cabinets residence with wood flooring.",
+    "A kitchen with gray wall tiles and a wood floor.",
+    "The kitchen is clean and ready to be used."
+   ],
+   "cands": [
+    {
+     "caption": "A barren kitchen with black appliances and cabinets",
+     "replaces": 1,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "a small black oven in a home kitchen",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000508202.jpg",
+   "bin": "high",
+   "captions": [
+    "A seafood appetizer served at an oriental restaurant\n",
+    "A dining table setting includes a garnished plate of food.",
+    "a dinner plate with soup, meat and seaweed on it",
+    "A plate of tacos ready to be put together",
+    "A white plate topped with slice meat and nuts next to a bowl of sauce."
+   ],
+   "cands": [
+    {
+     "caption": "A black plate topped with slice meat and nuts next to a bowl of sauce.",
+     "replaces": 4,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000465137.jpg",
+   "bin": "high",
+   "captions": [
+    "2 children playing wii together and having a good time",
+    "A brother and sister play a video game in the living room.",
+    "Two kids play a video game in a living room.",
+    "A young boy and a young girl playing with a Wii system.",
+    "There are two people playing nintendo wii together"
+   ],
+   "cands": [
+    {
+     "caption": "There are three people playing nintendo wii together",
+     "replaces": 4,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three kids play a video game in a living room.",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000520316.jpg",
+   "bin": "mid",
+   "captions": [
+    "A large white bath tub in a bathroom near a window.",
+    "BIG ROUND BATH TUB SURROUNDED WITH SHINY TILING",
+    "An ornate bathroom with a large whirlpool tub.",
+    "A view of a white bathtub with beige tile stairs in a bathroom. ",
+    "A bathroom with a round soaker tub and marble tile."
+   ],
+   "cands": [
+    {
+     "caption": "A large black bath tub in a bathroom near a window.",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "A view of a black bathtub with beige tile stairs in a bathroom. ",
+     "replaces": 3,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000367959.jpg",
+   "bin": "low",
+   "captions": [
+    "A gray tiger stripe cay laying on a floor with a banana on top of it.",
+    "A black, grey, and white cat sleeps on the floor with a banana resting on its side.",
+    "a sleeping cat with a banana on it",
+    "A gray and white cat sleeps next to a ripe banana",
+    "A cat laying on the carpet with a banana on top of it."
+   ],
+   "cands": [
+    {
+     "caption": "A black, grey, and black cat sleeps on the floor with a banana resting on its side.",
+     "replaces": 1,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "A brown tiger stripe cay laying on a floor with a banana on top of it.",
+     "replaces": 0,
+     "note": "gray->brown",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000536820.jpg",
+   "bin": "high",
+   "captions": [
+    "A herd of elephants walking across a green grass covered field.",
+    "Trio of elephants walking past a large log",
+    "an image of a herd of elephants in the wilderness",
+    "Elephants walking in a field by a fallen tree.",
+    "Three elephants walk in a line across a large piece of wood in an enclosed grassy area."
+   ],
+   "cands": [
+    {
+     "caption": "A herd of elephants walking across a yellow grass covered field.",
+     "replaces": 0,
+     "note": "green->yellow",
+     "kind": "color"
+    },
+    {
+     "caption": "five elephants walk in a line across a large piece of wood in an enclosed grassy area.",
+     "replaces": 4,
+     "note": "three->five",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000423588.jpg",
+   "bin": "high",
+   "captions": [
+    "A group of people snowboarding in the mountains.",
+    "A crew of four near a small shelter in a snowy landscape.",
+    "Several people are shoveling snow near a shack.",
+    "A group of people resting on a hill above a cabin.",
+    "Four persons skiing on snow clad mountains and slopes."
+   ],
+   "cands": [
+    {
+     "caption": "six persons skiing on snow clad mountains and slopes.",
+     "replaces": 4,
+     "note": "four->six",
+     "kind": "num"
+    },
+    {
+     "caption": "A crew of six near a small shelter in a snowy landscape.",
+     "replaces": 1,
+     "note": "four->six",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000236117.jpg",
+   "bin": "low",
+   "captions": [
+    "A black and white cat laying on a couch holding a stuffed animal.",
+    "A black and white cat with a red stuffed toy.",
+    "A sleepy cat on its back playing with a stuffed animal",
+    "A cat lies on the couch next to a computer while holding a red stuffed toy.",
+    "A black and white cat is cuddled with a red toy."
+   ],
+   "cands": [
+    {
+     "caption": "A black and black cat laying on a couch holding a stuffed animal.",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "A black and white cat is cuddled with a blue toy.",
+     "replaces": 4,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000339210.jpg",
+   "bin": "mid",
+   "captions": [
+    "Some green broccoli and leaf on a stalk.",
+    "A broccoli plant growing out in the field",
+    "A close up of plant life with moisture on the leaves",
+    "A large broccoli plant sitting on top of leaves.",
+    "a drop of dew on a broccoli plant"
+   ],
+   "cands": [
+    {
+     "caption": "Some yellow broccoli and leaf on a stalk.",
+     "replaces": 0,
+     "note": "green->yellow",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000297182.jpg",
+   "bin": "high",
+   "captions": [
+    "Three people posing with a tennis racket for the camera.",
+    "A group of friends standing next to each other while holding a tennis racquet.",
+    "Three people are making funny faces one of them is holding a tennis racquet.",
+    "two males and one female dressed in costumes",
+    "Three people in costumes are posing with funny faces."
+   ],
+   "cands": [
+    {
+     "caption": "Three people are making funny faces two of them is holding a tennis racquet.",
+     "replaces": 2,
+     "note": "one->two",
+     "kind": "num"
+    },
+    {
+     "caption": "five people in costumes are posing with funny faces.",
+     "replaces": 4,
+     "note": "three->five",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000521094.jpg",
+   "bin": "mid",
+   "captions": [
+    "A man riding a board on top of a wave in the ocean.",
+    "a man riding a boogie board in the water",
+    "a male belly boarder wearing a blue shirt riding a wave",
+    "A surfer is on the lake on his board. ",
+    "I man on a boogie board wears flippers as he rides a wave.  "
+   ],
+   "cands": [
+    {
+     "caption": "a male belly boarder wearing a green shirt riding a wave",
+     "replaces": 2,
+     "note": "blue->green",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000356733.jpg",
+   "bin": "low",
+   "captions": [
+    "Five matching teddy bears are laying on the bed.",
+    "Five Teddy Bears are displayed lying on a couch.",
+    "a group of teddy bears in the same outfits sitting together ",
+    "A pile of identical teddy bears lays on top of some pillows.",
+    "Four teddy bears laying on a bed on top of throw pillows. "
+   ],
+   "cands": [
+    {
+     "caption": "three matching teddy bears are laying on the bed.",
+     "replaces": 0,
+     "note": "five->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three Teddy Bears are displayed lying on a couch.",
+     "replaces": 1,
+     "note": "five->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000511221.jpg",
+   "bin": "mid",
+   "captions": [
+    "A little girl sitting at a wooden table in front of two bowls of food.",
+    "A child is stitting with two bowls of vegetables.",
+    "The tot is making a face to indicate a distatse for certain vegetables.",
+    "a child at a table with two bowls of food",
+    "Young child making a face having to eat her vegetables."
+   ],
+   "cands": [
+    {
+     "caption": "A child is stitting with three bowls of vegetables.",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "a child at a table with three bowls of food",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000274759.jpg",
+   "bin": "low",
+   "captions": [
+    "A woman sits on a bench writing on some paper.",
+    "Woman sitting on a park bench writing with orange marker. ",
+    "A beautiful woman sitting down writing with an orange marker.",
+    "A black haired girl is writing with an orange marker",
+    "A woman writing while sitting on a bench."
+   ],
+   "cands": [
+    {
+     "caption": "A red haired girl is writing with an orange marker",
+     "replaces": 3,
+     "note": "black->red",
+     "kind": "color"
+    },
+    {
+     "caption": "A beautiful woman sitting down writing with an purple marker.",
+     "replaces": 2,
+     "note": "orange->purple",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000418429.jpg",
+   "bin": "high",
+   "captions": [
+    "A vintage photo shows a parade taking place on two sides of a road.",
+    "A vintage photograph of city with electricity poles in the middle of the street.",
+    "People are standing along a street while cars drive by.",
+    "A crowd on the sidewalks near a vehicle on the street.",
+    "this old photo shows many people on the street"
+   ],
+   "cands": [
+    {
+     "caption": "A vintage photo shows a parade taking place on three sides of a road.",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000493972.jpg",
+   "bin": "high",
+   "captions": [
+    "Man dressed in black snowboarding down a mountain.",
+    "A snowboarder in mid air doing a jump.",
+    "A snowboarder is jumping near a wooded area.",
+    "A man in the air with a snowboard next to trees.",
+    "A snowboarder performing a jump on a mountain."
+   ],
+   "cands": [
+    {
+     "caption": "Man dressed in red snowboarding down a mountain.",
+     "replaces": 0,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000291262.jpg",
+   "bin": "high",
+   "captions": [
+    "Some people water sailing on a lake and a boat.",
+    "A person on a surfboard in the water.",
+    "a person riding a surf board with a sail",
+    "two people standing on surfboards in the ocean",
+    "A bunch of people windsurfing under a dark sky."
+   ],
+   "cands": [
+    {
+     "caption": "three people standing on surfboards in the ocean",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000128522.jpg",
+   "bin": "mid",
+   "captions": [
+    "A white birthday cake with a picture of a dog's face on top.",
+    "A birthday cake is topped with a dog's head made out of frosting.",
+    "A birthday cake with a dog on it is shown here.",
+    "White cake with green lettering and picture of a dog. ",
+    "The birthday cookie has icing shaped like a dog."
+   ],
+   "cands": [
+    {
+     "caption": "black cake with green lettering and picture of a dog. ",
+     "replaces": 3,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "A black birthday cake with a picture of a dog's face on top.",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000453968.jpg",
+   "bin": "high",
+   "captions": [
+    "Two women walk together carrying many tennis rackets.",
+    "Two young women walk holding wooden tennis rackets.",
+    "an old black and white photo of a tennis player",
+    "The female tennis players are carrying their rackets.",
+    "A group of women walking near a tall wooden gate."
+   ],
+   "cands": [
+    {
+     "caption": "three young women walk holding wooden tennis rackets.",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three women walk together carrying many tennis rackets.",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000487421.jpg",
+   "bin": "high",
+   "captions": [
+    "A food closeup shows a blend of pasta noodles, corn, tomato bits, sections of broccoli, and croutons.",
+    "A blue bowl filled with noodles and vegetables.",
+    "A bowl full of a pasta dish looks very yummy.",
+    "Food consisting of noodles, broccoli, tomatoes, bread crumbs and seasoning.",
+    "Some type of pasta salad with noodles, corn, and broccoli."
+   ],
+   "cands": [
+    {
+     "caption": "A green bowl filled with noodles and vegetables.",
+     "replaces": 1,
+     "note": "blue->green",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000564003.jpg",
+   "bin": "low",
+   "captions": [
+    "A restroom stall with a white toilet and a toilet paper dispenser.",
+    "A public toilet seat with public toilet paper.",
+    "The small room contains a toilet and toilet paper dispenser. ",
+    "A toilet sits under a toilet paper dispenser.",
+    "A toilet and toilet paper dispenser are in the stall."
+   ],
+   "cands": [
+    {
+     "caption": "A restroom stall with a black toilet and a toilet paper dispenser.",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000225398.jpg",
+   "bin": "mid",
+   "captions": [
+    "a dog catches a frisbe as it jumps in the air ",
+    "a black and white dog jumping for a colorful frisbee ",
+    "A dog jumping in the air catching a toy in their mouth.",
+    "A dog jumps in the air to catch a frisbee.",
+    "Dog airborne has he catches a frisbee in his mouth."
+   ],
+   "cands": [
+    {
+     "caption": "a black and black dog jumping for a colorful frisbee ",
+     "replaces": 1,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000419723.jpg",
+   "bin": "high",
+   "captions": [
+    "A plate of food, including a sandwich and salad, is pictured here.",
+    "a white plastic fork is laying in some food",
+    "A plate with some meat, bread and salad on it",
+    "a dish resting on a plate with a plastic fork",
+    "A plate consisting of meat,inside bread beside a small bowl of chopped vegetables. "
+   ],
+   "cands": [
+    {
+     "caption": "a black plastic fork is laying in some food",
+     "replaces": 1,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000297116.jpg",
+   "bin": "low",
+   "captions": [
+    "Two young ladies sitting next to a man at a table filled with wine glasses.",
+    "A group of three are sitting at a table with wine glasses.",
+    "Two women and a man smile and laugh as they sit at a table with empty glass goblets and paperwork.",
+    "Two women and a man, all smiling, sitting at a table with empty wineglasses.",
+    "Three young people are sitting at a table with several wine glasses."
+   ],
+   "cands": [
+    {
+     "caption": "three women and a man smile and laugh as they sit at a table with empty glass goblets and paperwork.",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three women and a man, all smiling, sitting at a table with empty wineglasses.",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000293218.jpg",
+   "bin": "high",
+   "captions": [
+    "An airplane flies low to the ground near a mountain range.",
+    "A large plane is taking off from a runway.",
+    "A white plane taking off from a airport",
+    "A airplane fliyng near a mountain with its wheels out to land",
+    "A vintage quadruple propellor plane leaves the runway."
+   ],
+   "cands": [
+    {
+     "caption": "A black plane taking off from a airport",
+     "replaces": 2,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000159296.jpg",
+   "bin": "low",
+   "captions": [
+    "a table with a cup, muffin and banana on it ",
+    "A banana, a muffin and a cup sit on a table in an outside seating area with purple and white furniture. ",
+    "Purple seating arrangement next to a white arrangement and a table with a banana, a muffin and a cup.",
+    "A muffin, bananas, and cup on top of a table.",
+    "A muffin, cup, and banana placed on a table that sits outside."
+   ],
+   "cands": [
+    {
+     "caption": "Purple seating arrangement next to a black arrangement and a table with a banana, a muffin and a cup.",
+     "replaces": 2,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "A banana, a muffin and a cup sit on a table in an outside seating area with purple and black furniture. ",
+     "replaces": 1,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000352945.jpg",
+   "bin": "high",
+   "captions": [
+    "Four giraffes of various sizes walking through a grassy field.",
+    "A herd of giraffe walking along a grass covered field.",
+    "A group of zebras in grassy area next to trees.",
+    "A group of giraffes running in an open field.",
+    "Four giraffes walk across the savannah with trees in the background."
+   ],
+   "cands": [
+    {
+     "caption": "six giraffes walk across the savannah with trees in the background.",
+     "replaces": 4,
+     "note": "four->six",
+     "kind": "num"
+    },
+    {
+     "caption": "six giraffes of various sizes walking through a grassy field.",
+     "replaces": 0,
+     "note": "four->six",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000084147.jpg",
+   "bin": "mid",
+   "captions": [
+    "this is a picture of a boy getting ready to play frizbee .",
+    "a small child in a red shirt is holding a blue frisbee",
+    "a kid covers his face with a frisbe ",
+    "Child in a red shirt holding up a blue frisbee in a park. ",
+    "A child wearing a red shirt hiding their face with a blue frisbee. "
+   ],
+   "cands": [
+    {
+     "caption": "Child in a blue shirt holding up a blue frisbee in a park. ",
+     "replaces": 3,
+     "note": "red->blue",
+     "kind": "color"
+    },
+    {
+     "caption": "A child wearing a blue shirt hiding their face with a blue frisbee. ",
+     "replaces": 4,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000031561.jpg",
+   "bin": "low",
+   "captions": [
+    "A wooden desk topped with a laptop computer taken apart.",
+    "A laptop that is taken apart as well as some tools.",
+    "A laptop taken apart and sitting on a desk next to some tools and a mouse.",
+    "A laptop on a wooden desk cluttered with many items.",
+    "A laptop disassembled on a messy brown desk."
+   ],
+   "cands": [
+    {
+     "caption": "A laptop disassembled on a messy gray desk.",
+     "replaces": 4,
+     "note": "brown->gray",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000546695.jpg",
+   "bin": "mid",
+   "captions": [
+    "A slice of chocolate raspberry cake on top of a white plate.",
+    "A piece of cake with pink and black frosting on a plate.",
+    "A slice of cake with black and pink icing.",
+    "A worn and tattered pink and black bag.",
+    "a well baked cake with cream on it on a plate and a fork"
+   ],
+   "cands": [
+    {
+     "caption": "A piece of cake with pink and red frosting on a plate.",
+     "replaces": 1,
+     "note": "black->red",
+     "kind": "color"
+    },
+    {
+     "caption": "A worn and tattered pink and red bag.",
+     "replaces": 3,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000421771.jpg",
+   "bin": "high",
+   "captions": [
+    "A man looking at two airplanes at a airshow.",
+    "The small airplane with a propeller on its nose.",
+    "Prop planes are parked in a field with a water tower behind them.",
+    "The front portion of a sliver plane with a propeller.",
+    "A single engine plane with a man standing to watch."
+   ],
+   "cands": [
+    {
+     "caption": "A man looking at three airplanes at a airshow.",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000268603.jpg",
+   "bin": "mid",
+   "captions": [
+    "A cow standing on top of a grass covered hill.",
+    "a cow is standing off in a field",
+    "A cow is grazing in an open field.",
+    "there's one black cow in the forefront and a few cows in the distance",
+    "A cow grazing in a field with mountain on the horizon."
+   ],
+   "cands": [
+    {
+     "caption": "there's two black cow in the forefront and a few cows in the distance",
+     "replaces": 3,
+     "note": "one->two",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000176195.jpg",
+   "bin": "mid",
+   "captions": [
+    "Two cows and many pigeons on a street.",
+    "Two cows that are standing among a large number of pigeons.",
+    "hundreds of  pigeon birds surrounding two brown cows",
+    "Two cows are surrounded by many birds in a public area.",
+    "A couple of cows surrounded by thousands of pigeons."
+   ],
+   "cands": [
+    {
+     "caption": "three cows are surrounded by many birds in a public area.",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "hundreds of  pigeon birds surrounding three brown cows",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000346138.jpg",
+   "bin": "mid",
+   "captions": [
+    "five different pictures of different food items ",
+    "A split picture shows different bowls of food.",
+    "Several dishes of food are shown including noodles, rice and egg.",
+    "Pictures of different bowls and plates of food.",
+    "some pasta dishes are in plates and bowls"
+   ],
+   "cands": [
+    {
+     "caption": "three different pictures of different food items ",
+     "replaces": 0,
+     "note": "five->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000176318.jpg",
+   "bin": "low",
+   "captions": [
+    "a small girl with a red shirt is talking on a cell phone",
+    "A little girl in a pink shirt is talking on the phone.",
+    "A little, blond girl with bangs talks on a silver cell phone.",
+    "a young girl holding a cell phone to her ear",
+    "A girl stands while talking on a cell phone. "
+   ],
+   "cands": [
+    {
+     "caption": "A little girl in a brown shirt is talking on the phone.",
+     "replaces": 1,
+     "note": "pink->brown",
+     "kind": "color"
+    },
+    {
+     "caption": "a small girl with a blue shirt is talking on a cell phone",
+     "replaces": 0,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000569058.jpg",
+   "bin": "low",
+   "captions": [
+    "A clock mounted on a pale blue wall.",
+    "An analog clock on the wall showing 2:08.",
+    "A closeup of a black and white clock on a light green wall.",
+    "A plain white clock showing the time 2:08",
+    "An analog clock on a green wall showing the time of 2:07."
+   ],
+   "cands": [
+    {
+     "caption": "A closeup of a black and black clock on a light green wall.",
+     "replaces": 2,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "A plain black clock showing the time 2:08",
+     "replaces": 3,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000470539.jpg",
+   "bin": "low",
+   "captions": [
+    "A red teddy bear sitting on a stool in a garden.",
+    "A red teddy bear sitting in a chair with potted plants all around.",
+    "A teddy bear is sitting in a chair in front of pots with plants. ",
+    "A teddy bear is sitting outside on a chair near flowers.",
+    "A stuffed bear sits in a chair with potted plants at its feet. "
+   ],
+   "cands": [
+    {
+     "caption": "A blue teddy bear sitting in a chair with potted plants all around.",
+     "replaces": 1,
+     "note": "red->blue",
+     "kind": "color"
+    },
+    {
+     "caption": "A blue teddy bear sitting on a stool in a garden.",
+     "replaces": 0,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000457476.jpg",
+   "bin": "high",
+   "captions": [
+    "Two snowboarders are carrying their boards as they walk.",
+    "A bunch of skiers at a ski resort.",
+    "two people in bright outfits holding onto snowboards",
+    "Two people walk around over a snowy area.",
+    "A close view of two snowboarders caring their boards."
+   ],
+   "cands": [
+    {
+     "caption": "three people walk around over a snowy area.",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three people in bright outfits holding onto snowboards",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000315229.jpg",
+   "bin": "low",
+   "captions": [
+    "a clear umbrella in front of a row of bicycles",
+    "There is an umbrella sitting next to bicycles.",
+    "A see through umbrella with a white handle sitting on a sidewalk.",
+    "A clear umbrella is sitting on the ground next to bicycles.",
+    "A clear umbrella that has been placed on the ground."
+   ],
+   "cands": [
+    {
+     "caption": "A see through umbrella with a black handle sitting on a sidewalk.",
+     "replaces": 2,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000361901.jpg",
+   "bin": "high",
+   "captions": [
+    "Food items in basket with wine glass on table.",
+    "a couple of sandwiches are sitting on a table",
+    "some sandwiches wrapped in white paper and a drink",
+    "There are two sandwiches in the basket lined with paper.",
+    "a basket that has some kind of sandwich on it"
+   ],
+   "cands": [
+    {
+     "caption": "some sandwiches wrapped in black paper and a drink",
+     "replaces": 2,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "There are three sandwiches in the basket lined with paper.",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000187454.jpg",
+   "bin": "high",
+   "captions": [
+    "A pair of doughnuts sitting next to a kettle pot.",
+    "a plate with a pastry on it next to a teapot.",
+    "A plate with a couple of scones and a kettle that may be tea.",
+    "A buttermilk donut is on a white plate.",
+    "A doughnut and a tea pot sit on plates on a table."
+   ],
+   "cands": [
+    {
+     "caption": "A buttermilk donut is on a black plate.",
+     "replaces": 3,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000125242.jpg",
+   "bin": "low",
+   "captions": [
+    "there are two slices of different pizzas on a paper plate",
+    "Two slices of different kinds of pizza are on a plate.",
+    "There is a piece of pepperoni pizza and a piece of sausage pizza.",
+    "A plate of two different types of pizza slices on a table",
+    "Two different slices of pizza with tissue paper under it on a paper plate."
+   ],
+   "cands": [
+    {
+     "caption": "A plate of three different types of pizza slices on a table",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "there are three slices of different pizzas on a paper plate",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000319541.jpg",
+   "bin": "mid",
+   "captions": [
+    "A person sitting on top of a bench with their arms spread out.",
+    "A person sites  on a bench on a tree lined street.",
+    "Two people sitting on a park bench in the park.",
+    "A couple relaxes on a bench in a landscaped park..",
+    "A man sitting next to woman with her arms outstretched on a park bench surrounding by grass and trees."
+   ],
+   "cands": [
+    {
+     "caption": "three people sitting on a park bench in the park.",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000168454.jpg",
+   "bin": "low",
+   "captions": [
+    "A black and white photo of some food in a bowl.",
+    "A single banana is resting in a butcher block bowl.",
+    "A black and white photo of a banana in a wooden bowl",
+    "A old banana sitting in a wooden bowl.",
+    "A ripe banana sitting inside of a wooden bowl."
+   ],
+   "cands": [
+    {
+     "caption": "A black and black photo of a banana in a wooden bowl",
+     "replaces": 2,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "A black and black photo of some food in a bowl.",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000401400.jpg",
+   "bin": "low",
+   "captions": [
+    "Two young men smiling at the camera sitting at a table with wine glasses",
+    "Two men sitting at a table together with glasses of wine.",
+    "the men are sitting around the table with glasses in their hands",
+    "The two young men are enjoying a glass of wine in the apartment",
+    "Two men holding wine glasses and sitting at a table."
+   ],
+   "cands": [
+    {
+     "caption": "three men holding wine glasses and sitting at a table.",
+     "replaces": 4,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three men sitting at a table together with glasses of wine.",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000108042.jpg",
+   "bin": "mid",
+   "captions": [
+    "A baby elephant standing next to a person and a wooden fence.",
+    "A small gray elephant standing next to a wood fence.",
+    "There is an elephant in a wooden fenced area",
+    "A small baby elephant butting the leg of a person",
+    "A baby elephant following his owner around the park."
+   ],
+   "cands": [
+    {
+     "caption": "A small brown elephant standing next to a wood fence.",
+     "replaces": 1,
+     "note": "gray->brown",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000468086.jpg",
+   "bin": "high",
+   "captions": [
+    "A woman riding on the back of a white horse.",
+    "A woman on a horse with a suit on by a man on a horse.",
+    "Some very nicely dressed people on some pretty horses.",
+    "A woman in a hat is riding a white horse.",
+    "Two fancy dressed people ride on horses down the street. "
+   ],
+   "cands": [
+    {
+     "caption": "three fancy dressed people ride on horses down the street. ",
+     "replaces": 4,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "A woman riding on the back of a black horse.",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000278171.jpg",
+   "bin": "mid",
+   "captions": [
+    "A boy that is standing in the snow.",
+    "Boy gives two thumbs up next to train track while holding ski poles",
+    "A young woman standing with skiing gear on the snow",
+    "A person standing in snow holding ski poles up in each hand with both thumbs up and smiling, with trees, hills and partially overcast sky behind.",
+    "A person holding two ski poles while standing in the snow."
+   ],
+   "cands": [
+    {
+     "caption": "Boy gives three thumbs up next to train track while holding ski poles",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "A person holding three ski poles while standing in the snow.",
+     "replaces": 4,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000156885.jpg",
+   "bin": "mid",
+   "captions": [
+    "Two kids wearing helmets playing around the base of a clock in a park.",
+    "two boys play around a clock that stands in a park.",
+    "Two children play on the post of a street side clock. ",
+    "Two young children pretend to pick up a pole with a clock on it.",
+    "a couple of kids play around a pole with a clock on it "
+   ],
+   "cands": [
+    {
+     "caption": "three boys play around a clock that stands in a park.",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three kids wearing helmets playing around the base of a clock in a park.",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000498438.jpg",
+   "bin": "mid",
+   "captions": [
+    "A street that has cars and street lights on it.",
+    "A group of green traffic lights at night time.",
+    "a number of cars on a city street with traffic lights ",
+    "A darkened night street with lights in starburst patterns.",
+    "A fire truck is driving down the street at night."
+   ],
+   "cands": [
+    {
+     "caption": "A group of yellow traffic lights at night time.",
+     "replaces": 1,
+     "note": "green->yellow",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000387606.jpg",
+   "bin": "low",
+   "captions": [
+    "A man holding a black baseball bat on a  field.",
+    "A baseball player is getting ready to go to bat. ",
+    "a baseball player with a black bat and fans",
+    "A man in a baseball uniform holding a bat.",
+    "The baseball player is getting ready to take his turn at bat."
+   ],
+   "cands": [
+    {
+     "caption": "a baseball player with a red bat and fans",
+     "replaces": 2,
+     "note": "black->red",
+     "kind": "color"
+    },
+    {
+     "caption": "A man holding a red baseball bat on a  field.",
+     "replaces": 0,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000511111.jpg",
+   "bin": "low",
+   "captions": [
+    "A glass of Orange juice next to a juicer",
+    "A orange and a juicer on a counter.",
+    "A juicer is used to make fresh orange juice. ",
+    "A glass of orange juice sitting under a juicer.",
+    "A juicer has a glass and an orange on top."
+   ],
+   "cands": [
+    {
+     "caption": "A glass of purple juice next to a juicer",
+     "replaces": 0,
+     "note": "orange->purple",
+     "kind": "color"
+    },
+    {
+     "caption": "A glass of purple juice sitting under a juicer.",
+     "replaces": 3,
+     "note": "orange->purple",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000263784.jpg",
+   "bin": "mid",
+   "captions": [
+    "A bathroom with a toilet, tub and a bucket in the tub. ",
+    "a batroom with black walls and a big tub ",
+    "a bath room with a toilet and a bath tub ",
+    "There is a bathroom with an old bathtub and toilet.",
+    "a black seat on a toilet in a bathroom"
+   ],
+   "cands": [
+    {
+     "caption": "a red seat on a toilet in a bathroom",
+     "replaces": 4,
+     "note": "black->red",
+     "kind": "color"
+    },
+    {
+     "caption": "a batroom with red walls and a big tub ",
+     "replaces": 1,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000267969.jpg",
+   "bin": "low",
+   "captions": [
+    "Two people cross country skiing up a slope.",
+    "two people wearing skis on a snowy surface",
+    "Two people wearing skis on a snowy slope.",
+    "A bunch of mean skiing on a snowy hill.",
+    "Two people skiing up hill on a mountain. "
+   ],
+   "cands": [
+    {
+     "caption": "three people wearing skis on a snowy surface",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three people wearing skis on a snowy slope.",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000570259.jpg",
+   "bin": "high",
+   "captions": [
+    "Lunch today is a chicken sandwich with cole slaw.",
+    "a burger is sitting on a white plate",
+    "A chicken sandwich with tomato and lettuce with onion on the side.",
+    "The chicken sandwich is next to lettuce, tomato, and a bowl of cole slaw. ",
+    "A plate with a sandiwhc and a soup are put out "
+   ],
+   "cands": [
+    {
+     "caption": "a burger is sitting on a black plate",
+     "replaces": 1,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000324646.jpg",
+   "bin": "low",
+   "captions": [
+    "A man is skiing down a snowy hill.",
+    "A skier skiing down a slop of white snow.",
+    "A man is skiing down a snowy mountain.",
+    "A man in all black downhill skiing on a show covered slope with a mountain in the background.",
+    "A person is skiing down a mountain side"
+   ],
+   "cands": [
+    {
+     "caption": "A man in all red downhill skiing on a show covered slope with a mountain in the background.",
+     "replaces": 3,
+     "note": "black->red",
+     "kind": "color"
+    },
+    {
+     "caption": "A skier skiing down a slop of black snow.",
+     "replaces": 1,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000154880.jpg",
+   "bin": "low",
+   "captions": [
+    "Yellow umbrellas are scattered around the beach along with one chair.",
+    "Yellow umbrella stands sitting on a beach with one chair.",
+    "Many umbrellas shade the beach from the sun.",
+    "A beach with several yellow umbrellas by a chair.",
+    "Cabana and umbrellas on beach next to a resort"
+   ],
+   "cands": [
+    {
+     "caption": "A beach with several red umbrellas by a chair.",
+     "replaces": 3,
+     "note": "yellow->red",
+     "kind": "color"
+    },
+    {
+     "caption": "Yellow umbrella stands sitting on a beach with two chair.",
+     "replaces": 1,
+     "note": "one->two",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000393325.jpg",
+   "bin": "high",
+   "captions": [
+    "Three bison standing outside around a watering trough.",
+    "Long haired cows are gathered around a watering trough.",
+    "Three water buffalo look into a feeding or water trough.",
+    "A herd of oxen gathered around a feeding trough.",
+    "Cows feeding in a field surrounded by a stone wall."
+   ],
+   "cands": [
+    {
+     "caption": "five water buffalo look into a feeding or water trough.",
+     "replaces": 2,
+     "note": "three->five",
+     "kind": "num"
+    },
+    {
+     "caption": "five bison standing outside around a watering trough.",
+     "replaces": 0,
+     "note": "three->five",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000177863.jpg",
+   "bin": "high",
+   "captions": [
+    "A man riding skis down a snow covered slope.",
+    "The skier in a blue jacket and goggles is moving swiftly.",
+    "A person in blue jacket skiing next to trees.",
+    "A man riding his ski's through the snow .",
+    " A person skiing down a snowy hill"
+   ],
+   "cands": [
+    {
+     "caption": "The skier in a green jacket and goggles is moving swiftly.",
+     "replaces": 1,
+     "note": "blue->green",
+     "kind": "color"
+    },
+    {
+     "caption": "A person in green jacket skiing next to trees.",
+     "replaces": 2,
+     "note": "blue->green",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000330562.jpg",
+   "bin": "high",
+   "captions": [
+    "Two plates have doughnuts served on top of them.",
+    "Two plates with different kinds of donuts on the table.",
+    "Square and round iced donuts on plates at a cafe",
+    "A table with a glass of water and two pastries, one square-shaped glazed doughnut and one with chocolate sprinkles",
+    "A square doughnut sitting on a plate by a chocolate doughnut."
+   ],
+   "cands": [
+    {
+     "caption": "three plates have doughnuts served on top of them.",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three plates with different kinds of donuts on the table.",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000199855.jpg",
+   "bin": "low",
+   "captions": [
+    "Two yellowish green vases sitting on a counter.",
+    "Two green ceramic vases on a speckled counter.",
+    "two green vases next to each other ",
+    "Two lime colored jars are gilded with metal.",
+    "Two green flower vases are side by side."
+   ],
+   "cands": [
+    {
+     "caption": "three yellowish green vases sitting on a counter.",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three green ceramic vases on a speckled counter.",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000470348.jpg",
+   "bin": "mid",
+   "captions": [
+    "this is a white sink and a white toilet",
+    "An all white bathroom with a tub shower combination.",
+    "A room with a toilet, sink and a bathtub.",
+    "a white toilet and sink in a bathroom",
+    "A small bathroom with no shower curtain or rug."
+   ],
+   "cands": [
+    {
+     "caption": "this is a black sink and a white toilet",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "An all black bathroom with a tub shower combination.",
+     "replaces": 1,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000262418.jpg",
+   "bin": "low",
+   "captions": [
+    "A man gets ready to throw a Frisbee.",
+    "A man in a hooded jacket is playing frisbee.",
+    "A man in a dog park preparing to throw a frisbee.",
+    "A man at the park ready to throw a Frisbee.",
+    "A man in a blue hoodie with a blue frisbee in his hand and a dog in the far background of a yard."
+   ],
+   "cands": [
+    {
+     "caption": "A man in a green hoodie with a blue frisbee in his hand and a dog in the far background of a yard.",
+     "replaces": 4,
+     "note": "blue->green",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000275850.jpg",
+   "bin": "low",
+   "captions": [
+    "A man wearing multiple neck ties making a goofy face.",
+    "A man in a white shirt wearing very many ties.",
+    "a man with ties on poses for a picture ",
+    "A man wearing multiple ties on his neck.",
+    "A young man smiles while wearing several ties. "
+   ],
+   "cands": [
+    {
+     "caption": "A man in a black shirt wearing very many ties.",
+     "replaces": 1,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000156534.jpg",
+   "bin": "mid",
+   "captions": [
+    "two people near a giraffe near many trees",
+    "A couple hug affectionately standing next to a giraffe.",
+    "A couple embracing each other near a giraffe.",
+    "A couple poses with a giraffe at the zoo",
+    "The couple has decided to pose for a picture with the giraffe."
+   ],
+   "cands": [
+    {
+     "caption": "three people near a giraffe near many trees",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000400123.jpg",
+   "bin": "high",
+   "captions": [
+    "Bathroom decorated in blues and greens with a mirror over the vanity.",
+    "A minimally cluttered bathroom view shows a white sink and toilet, mirror, towel ring, a blue wall and a shower space with a patterned but not colorful shower curtain. ",
+    "A clean bathroom is seen in this image.",
+    "A bathroom with a green hand towel and blue walls. ",
+    "A towel that is hanging near a mirror."
+   ],
+   "cands": [
+    {
+     "caption": "A minimally cluttered bathroom view shows a white sink and toilet, mirror, towel ring, a green wall and a shower space with a patterned but not colorful shower curtain. ",
+     "replaces": 1,
+     "note": "blue->green",
+     "kind": "color"
+    },
+    {
+     "caption": "A bathroom with a green hand towel and green walls. ",
+     "replaces": 3,
+     "note": "blue->green",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000260888.jpg",
+   "bin": "mid",
+   "captions": [
+    "A black and white photo with a man on a bench and a woman that is hard to see. ",
+    "A person laying down on a bench outside. ",
+    "An outdoor park area with a bench that has a man laying on his back and sleeping.",
+    "this is a black and white photo of a person laying on a park bench",
+    "A blurry man standing next to another man laying on a bench."
+   ],
+   "cands": [
+    {
+     "caption": "this is a black and black photo of a person laying on a park bench",
+     "replaces": 3,
+     "note": "white->black",
+     "kind": "color"
+    },
+    {
+     "caption": "A black and black photo with a man on a bench and a woman that is hard to see. ",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000389705.jpg",
+   "bin": "high",
+   "captions": [
+    "A few baby Zebras are walking by their parent. ",
+    "Group of zebras sitting next to a gravel road together. ",
+    "Two baby zebras stand next to an adult zebra near grass.",
+    "Several zebras are seen walking along the grass.",
+    "3 zebras walking down a gravel path in front of a grassy area."
+   ],
+   "cands": [
+    {
+     "caption": "three baby zebras stand next to an adult zebra near grass.",
+     "replaces": 2,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000469480.jpg",
+   "bin": "low",
+   "captions": [
+    "A brown bird perched on the handle bars of a bike.",
+    "Little bird relaxing on a bike handle. ",
+    "A small bird sitting on the handle bars of a motor bike.",
+    "A brown bird perched on the handle of a bike.",
+    "A bird is using the handlebars of a bicycle for its perch."
+   ],
+   "cands": [
+    {
+     "caption": "A gray bird perched on the handle of a bike.",
+     "replaces": 3,
+     "note": "brown->gray",
+     "kind": "color"
+    },
+    {
+     "caption": "A gray bird perched on the handle bars of a bike.",
+     "replaces": 0,
+     "note": "brown->gray",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000388677.jpg",
+   "bin": "low",
+   "captions": [
+    "A cop riding a motorcycle next to a  white van.",
+    "A male police officer riding a blue and yellow motorcycle.",
+    "A police officer travels along on a checkered motorcycle.",
+    "The police officer is riding a police motorcycle.",
+    "A police office riding a police bike in a city area."
+   ],
+   "cands": [
+    {
+     "caption": "A male police officer riding a green and yellow motorcycle.",
+     "replaces": 1,
+     "note": "blue->green",
+     "kind": "color"
+    },
+    {
+     "caption": "A cop riding a motorcycle next to a  black van.",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000286720.jpg",
+   "bin": "low",
+   "captions": [
+    "A cat that is sitting on a toilet seat.",
+    "A black cat is drinking from the toilet.",
+    "A cat is standing on the rim of a toilet.",
+    "there is a black cat that is standing on a toilet",
+    "a cat on a toilet looking in the bowl"
+   ],
+   "cands": [
+    {
+     "caption": "there is a red cat that is standing on a toilet",
+     "replaces": 3,
+     "note": "black->red",
+     "kind": "color"
+    },
+    {
+     "caption": "A red cat is drinking from the toilet.",
+     "replaces": 1,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000267014.jpg",
+   "bin": "mid",
+   "captions": [
+    "a woman taking a bit out of a type of food",
+    "A woman eating some sort of breaded food.",
+    "A woman holding a croissant while eating it. ",
+    "A woman takes a photo while eating food",
+    "A woman eating a powdered donut against a green wall."
+   ],
+   "cands": [
+    {
+     "caption": "A woman eating a powdered donut against a yellow wall.",
+     "replaces": 4,
+     "note": "green->yellow",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000012597.jpg",
+   "bin": "high",
+   "captions": [
+    "A large gray elephant walking on a brush covered hill.",
+    "An elephant with its trunk curled back standing in weeds.",
+    "A large elephant with tusks walks among the brush.",
+    "A very large adult elephant standing a lone in a large field.",
+    "A elephant stands in a thicket while glaring for a photo."
+   ],
+   "cands": [
+    {
+     "caption": "A large brown elephant walking on a brush covered hill.",
+     "replaces": 0,
+     "note": "gray->brown",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000111727.jpg",
+   "bin": "low",
+   "captions": [
+    "there is a cat that is sitting inside of a sink",
+    "A cat is laying in the bathroom sink. ",
+    "A cat sitting in a white sink in a bathroom",
+    "A cat laying in a sink staring up.",
+    "A cat that is sitting in side of a sink."
+   ],
+   "cands": [
+    {
+     "caption": "A cat sitting in a black sink in a bathroom",
+     "replaces": 2,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000307400.jpg",
+   "bin": "high",
+   "captions": [
+    "The ducks appear to be watching something as they wait silently.",
+    "A pond with water lilies and plant life on the waters surface, along with ducks on a nest made of vegetation.",
+    "A couple of ducks that are standing next to a pond.",
+    "Two ducks that are by a nest in front of a pond.",
+    "The duck is looking for a place to swim"
+   ],
+   "cands": [
+    {
+     "caption": "three ducks that are by a nest in front of a pond.",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000038756.jpg",
+   "bin": "mid",
+   "captions": [
+    "Two woman at a table with plates of food",
+    "two women at a restaurant table with a big pile of meat in front of them",
+    "THERE ARE PEOPLE THAT ARE EATING FOOD AT THE TABLE \n",
+    "two people sitting at a dining table with a plate of meat in front of them",
+    "a couple of ladies smile in front of some meat "
+   ],
+   "cands": [
+    {
+     "caption": "three woman at a table with plates of food",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three women at a restaurant table with a big pile of meat in front of them",
+     "replaces": 1,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000481370.jpg",
+   "bin": "mid",
+   "captions": [
+    "A computer keyboard sitting on top of a desk.",
+    "A keyboard sits in front of a charging ipod shuffle.",
+    "A keyboard, some cables and an mini iPod",
+    "A keyboard with a mouse and monitor sitting next to an ipod.",
+    "A picture of someone's white computer keyboard sitting on their desk."
+   ],
+   "cands": [
+    {
+     "caption": "A picture of someone's black computer keyboard sitting on their desk.",
+     "replaces": 4,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000243190.jpg",
+   "bin": "high",
+   "captions": [
+    "A variety of foods are mixed in a bowl.",
+    "A white bowl with a salad that includes carrots and crab.",
+    "A carrot salad mixed with other shredded vegetables and raisins.",
+    "A coleslaw mixture in a bowl with a spoon.",
+    "an image of a bowl of vegetables strewn together"
+   ],
+   "cands": [
+    {
+     "caption": "A black bowl with a salad that includes carrots and crab.",
+     "replaces": 1,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000237718.jpg",
+   "bin": "low",
+   "captions": [
+    "A street sign that reads \"CURLY DICK RD\" above a green street sign.",
+    "A street sign that reads curly dick road",
+    "A mileage and street sign saying, \"Tarana 13; Oberon 39; Curly Dick Rd.\"",
+    "Two different street signs stand at an intersection.",
+    "A green sign pointing to Tarana and Oberon near Curly Dick Road"
+   ],
+   "cands": [
+    {
+     "caption": "A yellow sign pointing to Tarana and Oberon near Curly Dick Road",
+     "replaces": 4,
+     "note": "green->yellow",
+     "kind": "color"
+    },
+    {
+     "caption": "A street sign that reads \"CURLY DICK RD\" above a yellow street sign.",
+     "replaces": 0,
+     "note": "green->yellow",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000112899.jpg",
+   "bin": "low",
+   "captions": [
+    "A black leather couch with a University of Southern California pillow on it.",
+    "A living room with a cat on a chair, a window with curtains, a shelf, a side table, an air conditioner, and a sofa with a pillow on it.",
+    "There is a black leather couch in a living room",
+    "A black leather couch with red and yellow pillow",
+    "A living room with black leather couch and SC pillow"
+   ],
+   "cands": [
+    {
+     "caption": "A living room with red leather couch and SC pillow",
+     "replaces": 4,
+     "note": "black->red",
+     "kind": "color"
+    },
+    {
+     "caption": "A black leather couch with blue and yellow pillow",
+     "replaces": 3,
+     "note": "red->blue",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000129957.jpg",
+   "bin": "high",
+   "captions": [
+    "there is a bus going down the street and many cars going behind it",
+    "A group of cars that are parked on the side of the street.",
+    "Three vehicles are approaching the stop sign by the gate. ",
+    "a number of cars behind a city bus",
+    "Traffic stopped at a stop sign, waiting for a train to pass through."
+   ],
+   "cands": [
+    {
+     "caption": "five vehicles are approaching the stop sign by the gate. ",
+     "replaces": 2,
+     "note": "three->five",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000578250.jpg",
+   "bin": "low",
+   "captions": [
+    "Two women are cooking in an old fashioned kitchen.",
+    "Two women are cooking at the pan on a stove. ",
+    "Two people in a kitchen cooking over a stove. ",
+    "Two women prepare food in an old-fashioned kitchen.",
+    "looks like two women in the nineteen fifties cooking "
+   ],
+   "cands": [
+    {
+     "caption": "three women prepare food in an old-fashioned kitchen.",
+     "replaces": 3,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three women are cooking in an old fashioned kitchen.",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000329476.jpg",
+   "bin": "low",
+   "captions": [
+    "A man in tie and fedora standing in front of people",
+    "A man wearing a hat and a black tie.",
+    "A man in a fancy hat in a crowded dark room.",
+    "The man is dressed in a shirt, tie, and hat. ",
+    "A man wearing a tie and a hat in a room."
+   ],
+   "cands": [
+    {
+     "caption": "A man wearing a hat and a red tie.",
+     "replaces": 1,
+     "note": "black->red",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000397958.jpg",
+   "bin": "low",
+   "captions": [
+    "A black and white cow standing next to a barbed wire fence.",
+    "A cow standing behind a barbed wire fence. ",
+    "A cow is standing in a field near a wire fence.",
+    "a cow stares outside of a fence ",
+    "A cow in a field behind a single line of chicken wire. "
+   ],
+   "cands": [
+    {
+     "caption": "A black and black cow standing next to a barbed wire fence.",
+     "replaces": 0,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000344724.jpg",
+   "bin": "low",
+   "captions": [
+    "this is two cops riding on back of horses",
+    "Two uniformed personnel are riding horses in a crowd",
+    "a couple of people are riding on the back of horses",
+    "A man and woman that are sitting on horses.",
+    "Two police officers riding through a crowd on top of horses."
+   ],
+   "cands": [
+    {
+     "caption": "this is three cops riding on back of horses",
+     "replaces": 0,
+     "note": "two->three",
+     "kind": "num"
+    },
+    {
+     "caption": "three police officers riding through a crowd on top of horses.",
+     "replaces": 4,
+     "note": "two->three",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000176273.jpg",
+   "bin": "mid",
+   "captions": [
+    "Three horses covered in blankets are walking through a field.",
+    "Three horses are walking through the grass wearing blankets.",
+    "A herd of horses walking across a lush green field.",
+    "A couple of horses sitting in the middle of field.",
+    "Three horse wearing coats walk around a large field."
+   ],
+   "cands": [
+    {
+     "caption": "five horse wearing coats walk around a large field.",
+     "replaces": 4,
+     "note": "three->five",
+     "kind": "num"
+    },
+    {
+     "caption": "five horses covered in blankets are walking through a field.",
+     "replaces": 0,
+     "note": "three->five",
+     "kind": "num"
+    }
+   ]
+  },
+  {
+   "image": "000000028858.jpg",
+   "bin": "high",
+   "captions": [
+    "A woman opening the trunk of her car.",
+    "Green wooden chairs in yard area next to street.",
+    "a group of Adirondack chairs in a front yard",
+    "green lawn chairs facing a road in sand",
+    "A woman looks in a car trunk next to a bench and some chairs. "
+   ],
+   "cands": [
+    {
+     "caption": "yellow wooden chairs in yard area next to street.",
+     "replaces": 1,
+     "note": "green->yellow",
+     "kind": "color"
+    },
+    {
+     "caption": "yellow lawn chairs facing a road in sand",
+     "replaces": 3,
+     "note": "green->yellow",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000091408.jpg",
+   "bin": "mid",
+   "captions": [
+    "a table that has a big blue and white cake on it",
+    "A table with a cake, cookies and flowers on it. ",
+    "A table full of desserts with a large cake in the center.",
+    "A formal cake has white frosting and light blue trim, with matching cookies.",
+    "A person takes a picture of a white and teal cake on a table."
+   ],
+   "cands": [
+    {
+     "caption": "A formal cake has white frosting and light green trim, with matching cookies.",
+     "replaces": 3,
+     "note": "blue->green",
+     "kind": "color"
+    },
+    {
+     "caption": "A person takes a picture of a black and teal cake on a table.",
+     "replaces": 4,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000575403.jpg",
+   "bin": "low",
+   "captions": [
+    "Some sheep sit in the grass of a field.",
+    "A herd of sheep grazing on a lush green field.",
+    "White sheep graze, and rest in a green field.",
+    "A herd of sheep relax on a grassy green field.",
+    "the sheep are grazing in the green grass"
+   ],
+   "cands": [
+    {
+     "caption": "A herd of sheep grazing on a lush yellow field.",
+     "replaces": 1,
+     "note": "green->yellow",
+     "kind": "color"
+    },
+    {
+     "caption": "black sheep graze, and rest in a green field.",
+     "replaces": 2,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000248133.jpg",
+   "bin": "mid",
+   "captions": [
+    "A grumpy cat inside of a suit case.",
+    "A white and brown cat laying in a packed suitcase. ",
+    "A cat lying in a suitcase among clothes and a blow dryer.",
+    "The cat is curled up inside the suitcase.",
+    "A suitcase is open with a cat in it."
+   ],
+   "cands": [
+    {
+     "caption": "A black and brown cat laying in a packed suitcase. ",
+     "replaces": 1,
+     "note": "white->black",
+     "kind": "color"
+    }
+   ]
+  },
+  {
+   "image": "000000440819.jpg",
+   "bin": "mid",
+   "captions": [
+    "A dog and a horse looking at one another while a woman stands over them.",
+    "A brown horse standing next to a dog.",
+    "A dog and a man with a horse by a house.",
+    "A woman petting a pony who is staring at a dog.",
+    "A woman stands next to a horse which is sniffing a dog. "
+   ],
+   "cands": [
+    {
+     "caption": "A gray horse standing next to a dog.",
+     "replaces": 1,
+     "note": "brown->gray",
+     "kind": "color"
+    },
+    {
+     "caption": "A dog and a horse looking at two another while a woman stands over them.",
+     "replaces": 0,
+     "note": "one->two",
+     "kind": "num"
+    }
+   ]
+  }
+ ]
+}
